@@ -3,19 +3,15 @@
 #define DUNAMIS_H
 
 #include "../servers/visual_server/VisualServer.h"
+#include "../core/debugger/Debugger.h"
 
 
 class Dunamis {
 public:
     Dunamis();
-    ~Dunamis();
-
-    void start();
-
-    void run();
-
 
 private:
+    VisualServer visualServer;
 
 };
 

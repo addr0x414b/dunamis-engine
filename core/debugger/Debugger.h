@@ -1,6 +1,3 @@
-//
-// Created by alex on 1/28/24.
-//
 
 #ifndef DEBUGGER_H
 #define DEBUGGER_H
@@ -15,6 +12,8 @@ public:
     static void print(const char* message, bool error = false, source_location l = source_location::current());
 
     static void section(const char* sectionName);
+    static void subSection(const char* subSectionName);
+    static void subSubSection(const char* subSubSectionName);
 };
 
 

@@ -5,7 +5,7 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_vulkan.h>
 #include "../../drivers/vulkan/VulkanContext.h"
-
+#include "../../core/debugger/Debugger.h"
 
 class VisualServer {
 public:
@@ -14,6 +14,8 @@ public:
 private:
     VulkanContext vulkanContext;
     SDL_Window *window;
+    void run();
+    void cleanup();
 
 };
 
