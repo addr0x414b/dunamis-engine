@@ -7,6 +7,10 @@
 #include "../../drivers/vulkan/VulkanContext.h"
 #include "../../core/debugger/Debugger.h"
 
+#include "../../thirdparty/imgui/imgui.h"
+#include "../../thirdparty/imgui/imgui_impl_sdl2.h"
+#include "../../thirdparty/imgui/imgui_impl_vulkan.h"
+
 class VisualServer {
 public:
     void init();

@@ -24,6 +24,7 @@ void VisualServer::init() {
     Debugger::subSection("Initialize SDL2\n");
     vulkanContext.setWindow(window);
     vulkanContext.initVulkan();
+    vulkanContext.initImgui();
 
     Debugger::section("Initialize Visual Server\n");
 
@@ -36,6 +37,7 @@ void VisualServer::run() {
     bool bQuit = false;
     while (!bQuit) {
         while (SDL_PollEvent(&e)) {
+            ImGui_ImplSDL2_ProcessEvent(&e);
             if (e.type == SDL_QUIT || e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
                 bQuit = true;
             }

@@ -22,11 +22,16 @@
 #include <assimp/scene.h>
 #include <assimp/Importer.hpp>
 
+#include "../../thirdparty/imgui/imgui.h"
+#include "../../thirdparty/imgui/imgui_impl_sdl2.h"
+#include "../../thirdparty/imgui/imgui_impl_vulkan.h"
+
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/hash.hpp>
+
 
 #ifdef NDEBUG
 const bool enableValidationLayers = false;
@@ -114,6 +119,7 @@ class VulkanContext {
 public:
     void setWindow(SDL_Window* sdlWindow);
     void initVulkan();
+    void initImgui();
     void drawFrame();
     void cleanup();
 private:
@@ -177,6 +183,8 @@ private:
                                  VkImageTiling tiling,
                                  VkFormatFeatureFlags features);
 
+    bool my_tool_active = true;
+
     void createDescriptorSetLayout();
     VkDescriptorSetLayout descriptorSetLayout;
 
@@ -185,6 +193,9 @@ private:
     VkShaderModule createShaderModule(const std::vector<char>& code);
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
+
+    VkPipelineCache pipelineCache = VK_NULL_HANDLE;
+
 
     void createCommandPool();
     VkCommandPool commandPool;
@@ -295,7 +306,6 @@ private:
     void recreateSwapchain();
     void cleanupSwapchain();
     bool framebufferResized = false;
-
 
     void destroyDebugUtilsMessengerEXT(VkInstance instance,
                                        VkDebugUtilsMessengerEXT debugMessenger,
