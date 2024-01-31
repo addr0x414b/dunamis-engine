@@ -20,3 +20,4 @@ target_link_libraries(visual_server
 )
 
 target_link_libraries(visual_server PRIVATE vulkan_context)
+target_link_libraries(visual_server PRIVATE editor)

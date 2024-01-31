@@ -23,7 +23,7 @@ find_package(Vulkan REQUIRED)
 target_link_libraries(vulkan_context PRIVATE Vulkan::Vulkan)
 
 find_package(assimp CONFIG REQUIRED)
-target_link_libraries(vulkan_context PRIVATE assimp::assimp)
+target_link_libraries(vulkan_context PUBLIC assimp::assimp)
 
 find_package(glm CONFIG REQUIRED)
 target_link_libraries(vulkan_context PRIVATE glm::glm)

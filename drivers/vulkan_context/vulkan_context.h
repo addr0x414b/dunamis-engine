@@ -12,6 +12,7 @@
 #include <imgui_impl_sdl2.h>
 #include <imgui_impl_vulkan.h>
 #include <vulkan/vulkan.h>
+#include <vulkan/vk_enum_string_helper.h>
 
 #include <algorithm>
 #include <array>
@@ -26,6 +27,7 @@
 #include <vector>
 
 #include "../../core/debugger/debugger.h"
+#include "../../editor/editor.h"
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -119,6 +121,7 @@ struct UniformBufferObject {
 class VulkanContext {
    public:
     void setWindow(SDL_Window* sdlWindow);
+    void setEditor(Editor* editor);
     void initVulkan();
     void initImgui();
     void drawFrame();
@@ -126,6 +129,8 @@ class VulkanContext {
 
    private:
     SDL_Window* window = nullptr;
+
+    Editor* editor = nullptr;
 
     void createInstance();
     bool checkValidationLayerSupport();
@@ -315,6 +320,10 @@ class VulkanContext {
     void destroyDebugUtilsMessengerEXT(VkInstance instance,
                                        VkDebugUtilsMessengerEXT debugMessenger,
                                        const VkAllocationCallbacks* pAllocator);
+    
+    static void checkImguiVkResult(VkResult err);
+
+    void drawImguiFrame(VkCommandBuffer commandBuffer);
 };
 
 #endif  // VULKAN_CONTEXT_H

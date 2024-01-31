@@ -44,7 +44,7 @@ void VulkanContext::initVulkan() {
     createCommandBuffers();
     createSyncObjects();
 
-    Debugger::subSection("Initialize Vulkan");
+    Debugger::subSection("Initialize Vulkan\n");
 }
 
 void VulkanContext::setWindow(SDL_Window* sdlWindow) { window = sdlWindow; }
@@ -783,13 +783,9 @@ void VulkanContext::createGraphicsPipeline() {
     Debugger::subSubSection("Create Vulkan Graphics Pipeline");
 
     Debugger::print("Reading vertex shader code...");
-    auto vertShaderCode = readFile(
-        "drivers/vulkan_context/shaders/vert.spv"
-    );
+    auto vertShaderCode = readFile("drivers/vulkan_context/shaders/vert.spv");
     Debugger::print("Reading fragment shader code...");
-    auto fragShaderCode = readFile(
-        "drivers/vulkan_context/shaders/frag.spv"
-    );
+    auto fragShaderCode = readFile("drivers/vulkan_context/shaders/frag.spv");
 
     VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
     VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
@@ -1225,9 +1221,8 @@ void VulkanContext::createTextureImage() {
     int texWidth, texHeight, texChannels;
 
     Debugger::print("Reading texture file...");
-    stbi_uc* pixels = stbi_load(
-        "test_models/textures/dennis.jpg",
-        &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+    stbi_uc* pixels = stbi_load("test_models/textures/dennis.jpg", &texWidth,
+                                &texHeight, &texChannels, STBI_rgb_alpha);
     VkDeviceSize imageSize = texWidth * texHeight * 4;
 
     if (!pixels) {
@@ -1469,9 +1464,9 @@ void VulkanContext::loadModel() {
     Debugger::subSubSection("Load Model");
 
     Debugger::print("Reading in model file...");
-    const aiScene* scene = importer.ReadFile(
-        "test_models/models/dennis.obj",
-        aiProcess_Triangulate | aiProcess_FlipUVs);
+    const aiScene* scene =
+        importer.ReadFile("test_models/models/dennis.obj",
+                          aiProcess_Triangulate | aiProcess_FlipUVs);
 
     if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE ||
         !scene->mRootNode) {
@@ -1938,51 +1933,27 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
     // 1, 0,
     //                 0, 0);
 
-    // (Where your code calls SDL_PollEvent())
-    // ImGui_ImplSDL2_ProcessEvent(&event); // Forward your event to backend
 
-    // (After event loop)
-    // Start the Dear ImGui frame
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplSDL2_NewFrame();
-    ImGui::NewFrame();
-    ImGui::ShowDemoWindow();  // Show demo window! :)
-
-    static float f = 0.0f;
-    static int counter = 0;
-
-    ImGui::Begin("Hello, world!");  // Create a window called "Hello, world!"
-                                    // and append into it.
-
-    ImGui::Text("This is some useful text.");  // Display some text (you can use
-                                               // a format strings too)
-    // ImGui::Checkbox("Demo Window", &show_demo_window);      // Edit bools
-    // storing our window open/close state ImGui::Checkbox("Another Window",
-    // &show_another_window);
-
-    ImGui::SliderFloat("float", &f, 0.0f,
-                       1.0f);  // Edit 1 float using a slider from 0.0f to 1.0f
-    // ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats
-    // representing a color
-
-    if (ImGui::Button("Button"))  // Buttons return true when clicked (most
-                                  // widgets return true when edited/activated)
-        counter++;
-    ImGui::SameLine();
-    ImGui::Text("counter = %d", counter);
-
-    // ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f /
-    // io.Framerate, io.Framerate);
-    ImGui::End();
-
-    ImGui::Render();
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
+    // Draw imgui stuff
+    drawImguiFrame(commandBuffer);
 
     vkCmdEndRenderPass(commandBuffer);
 
     if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
         Debugger::print("Failed to record command buffer!", true);
     }
+}
+
+void VulkanContext::drawImguiFrame(VkCommandBuffer commandBuffer) {
+    ImGui_ImplVulkan_NewFrame();
+    ImGui_ImplSDL2_NewFrame();
+    ImGui::NewFrame();
+    ImGui::ShowDemoWindow();  // Show demo window! :)
+
+    editor->showMenuBar();
+
+    ImGui::Render();
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
 }
 
 void VulkanContext::cleanup() {
@@ -2078,6 +2049,19 @@ void VulkanContext::cleanup() {
     Debugger::subSection("Clean up Vulkan\n");
 }
 
+void VulkanContext::checkImguiVkResult(VkResult err) {
+    if (err == 0) {
+        return;
+    }
+    Debugger::print("Imgui error: ");
+    Debugger::print(string_VkResult(err));
+
+    if (err < 0) {
+        Debugger::print("Fatal imgui error: ");
+        Debugger::print(string_VkResult(err), true);
+    }
+}
+
 void VulkanContext::initImgui() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -2091,7 +2075,6 @@ void VulkanContext::initImgui() {
 
     QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 
-    // Setup Platform/Renderer backends
     ImGui_ImplSDL2_InitForVulkan(window);
     ImGui_ImplVulkan_InitInfo init_info = {};
     init_info.Instance = instance;
@@ -2102,10 +2085,14 @@ void VulkanContext::initImgui() {
     init_info.PipelineCache = NULL;
     init_info.DescriptorPool = descriptorPool;
     init_info.Subpass = 0;
-    init_info.MinImageCount = 2;
-    init_info.ImageCount = 2;
+    init_info.MinImageCount = MAX_FRAMES_IN_FLIGHT;
+    init_info.ImageCount = MAX_FRAMES_IN_FLIGHT;
     init_info.MSAASamples = msaaSamples;
     init_info.Allocator = NULL;
-    // init_info.CheckVkResultFn = check_vk_result;
+    init_info.CheckVkResultFn = checkImguiVkResult;
     ImGui_ImplVulkan_Init(&init_info, renderPass);
+}
+
+void VulkanContext::setEditor(Editor* editor) {
+    this->editor = editor;
 }
