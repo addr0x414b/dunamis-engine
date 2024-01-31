@@ -30,3 +30,12 @@
 *.exe
 *.out
 *.app
+
+# Ignore vcpkg
+vcpkg/
+
+# Ignore build directory
+build/
+
+# Ignore test models and textures
+test_models/

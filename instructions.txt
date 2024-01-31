@@ -1,0 +1,9 @@
+Requirements:
+1) cmake
+2) vcpkg
+3) Set the tool chain file in CMakePresets.json to the vcpkg installed directory
+
+Steps:
+1) cmake --preset=debug
+2) cmake --build build
+3) navigate to build and run "DunamisEngine"
