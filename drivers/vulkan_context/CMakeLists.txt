@@ -32,3 +32,4 @@ find_package(imgui CONFIG REQUIRED)
 target_link_libraries(vulkan_context PRIVATE imgui::imgui)
 
 target_link_libraries(vulkan_context PRIVATE stb_image)
+target_link_libraries(vulkan_context PRIVATE scene)

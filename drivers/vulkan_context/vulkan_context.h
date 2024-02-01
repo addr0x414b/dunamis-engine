@@ -28,6 +28,7 @@
 
 #include "../../core/debugger/debugger.h"
 #include "../../editor/editor.h"
+#include "../../scene/scene.h"
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -56,7 +57,7 @@ struct SwapchainSupportDetails {
     std::vector<VkPresentModeKHR> presentModes;
 };
 
-struct Vertex {
+/*struct Vertex {
     glm::vec3 pos;
     glm::vec3 color;
     glm::vec2 texCoord;
@@ -96,11 +97,11 @@ struct Vertex {
 
         return attributeDescriptions;
     }
-};
+};*/
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
-namespace std {
+/*namespace std {
 template <>
 struct hash<Vertex> {
     size_t operator()(Vertex const& vertex) const {
@@ -110,25 +111,28 @@ struct hash<Vertex> {
                (hash<glm::vec2>()(vertex.texCoord) << 1);
     }
 };
-}  // namespace std
+}  // namespace std*/
 
-struct UniformBufferObject {
+/*struct UniformBufferObject {
     glm::mat4 model;
     glm::mat4 view;
     glm::mat4 proj;
-};
+};*/
 
 class VulkanContext {
    public:
     void setWindow(SDL_Window* sdlWindow);
     void setEditor(Editor* editor);
+    void setScene(Scene* scene);
     void initVulkan();
     void initImgui();
     void drawFrame();
     void cleanup();
+    VkDevice device;
 
    private:
     SDL_Window* window = nullptr;
+    Scene* scene = nullptr;
 
     Editor* editor = nullptr;
 
@@ -164,7 +168,6 @@ class VulkanContext {
     VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
 
     void createLogicalDevice();
-    VkDevice device;
     VkQueue graphicsQueue;
     VkQueue presentQueue;
 
@@ -280,7 +283,7 @@ class VulkanContext {
     VkBuffer indexBuffer2;
     VkDeviceMemory indexBufferMemory2;
 
-    void createUniformBuffers();
+    //void createUniformBuffers();
     std::vector<VkBuffer> uniformBuffers;
     std::vector<VkDeviceMemory> uniformBuffersMemory;
     std::vector<void*> uniformBuffersMapped;
@@ -292,7 +295,7 @@ class VulkanContext {
     void createDescriptorPool();
     VkDescriptorPool descriptorPool;
 
-    void createDescriptorSets();
+    //void createDescriptorSets();
     std::vector<VkDescriptorSet> descriptorSets;
     void createDescriptorSets2();
     std::vector<VkDescriptorSet> descriptorSets2;
@@ -324,6 +327,14 @@ class VulkanContext {
     static void checkImguiVkResult(VkResult err);
 
     void drawImguiFrame(VkCommandBuffer commandBuffer);
+
+    void createTextureImages();
+    void createTextureImageViews();
+    void createTextureSamplers();
+    void createVertexBuffers();
+    void createIndexBuffers();
+    void createUniformBuffers();
+    void createDescriptorSets();
 };
 
 #endif  // VULKAN_CONTEXT_H

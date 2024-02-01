@@ -10,6 +10,7 @@ add_subdirectory(servers)
 add_subdirectory(drivers)
 add_subdirectory(third_party)
 add_subdirectory(editor)
+add_subdirectory(scene)
 
 target_link_libraries(DunamisEngine PRIVATE dunamis)
 

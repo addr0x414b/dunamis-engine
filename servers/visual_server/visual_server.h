@@ -6,6 +6,8 @@
 #include "../../drivers/vulkan_context/vulkan_context.h"
 #include "../../core/debugger/debugger.h"
 #include "../../editor/editor.h"
+#include "../../scene/scene.h"
+#include "../../scene/3d/game_object.h"
 
 
 class VisualServer {
@@ -15,6 +17,7 @@ public:
 private:
     VulkanContext vulkanContext;
     Editor editor;
+    Scene scene;
     SDL_Window *window;
     void run();
     void cleanup();

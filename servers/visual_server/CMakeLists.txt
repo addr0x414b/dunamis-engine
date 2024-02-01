@@ -21,3 +21,5 @@ target_link_libraries(visual_server
 
 target_link_libraries(visual_server PRIVATE vulkan_context)
 target_link_libraries(visual_server PRIVATE editor)
+target_link_libraries(visual_server PRIVATE scene)
+target_link_libraries(visual_server PRIVATE game_object)
