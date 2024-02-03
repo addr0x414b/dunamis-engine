@@ -1,23 +1,107 @@
 #include "editor.h"
 
-void Editor::processEvent(const SDL_Event* event) {
+void Editor::processEvent(SDL_Event* event) {
     ImGui_ImplSDL2_ProcessEvent(event);
+
+     if (event->type == SDL_MOUSEMOTION) {
+        processMouseMovement(event->motion.xrel, event->motion.yrel);
+    }
+}
+
+void Editor::processInput() {
+    const Uint8* keystate = SDL_GetKeyboardState(NULL);
+
+    const float cameraSpeed = 0.05f;
+
+    int xPos;
+    int yPos;
+
+    if (SDL_GetMouseState(&xPos, &yPos) & SDL_BUTTON(3)) {
+        SDL_ShowCursor(SDL_DISABLE);
+         SDL_SetRelativeMouseMode(SDL_TRUE);
+        movingMouse = true;
+
+        if (keystate[SDL_SCANCODE_W]) {
+            editorCamera.position += cameraSpeed * editorCamera.front;
+        }
+
+        if (keystate[SDL_SCANCODE_S]) {
+            editorCamera.position -= cameraSpeed * editorCamera.front;
+        }
+
+        if (keystate[SDL_SCANCODE_A]) {
+            editorCamera.position -= glm::normalize(glm::cross(
+                                         editorCamera.front, editorCamera.up)) *
+                                     cameraSpeed;
+        }
+
+        if (keystate[SDL_SCANCODE_D]) {
+            editorCamera.position += glm::normalize(glm::cross(
+                                         editorCamera.front, editorCamera.up)) *
+                                     cameraSpeed;
+        }
+        //processMouseMovement(xPos, yPos);
+    } else {
+        if (movingMouse) {
+            //SDL_WarpMouseInWindow(window, 1000, 300);
+        }
+        movingMouse = false;
+        SDL_SetRelativeMouseMode(SDL_FALSE);
+        //SDL_WarpMouseInWindow(window, 960, 540);
+    }
+}
+void Editor::setWindow(SDL_Window* window) { this->window = window; }
+
+void Editor::processMouseMovement(double xPos, double yPos) {
+    if (movingMouse) {
+        if (firstMouse) {
+            lastX = xPos;
+            lastY = yPos;
+            firstMouse = false;
+        }
+
+        float xOffset = xPos;
+        float yOffset = -yPos;
+        lastX = xPos;
+        lastY = yPos;
+
+        float sensitivity = 0.1f;
+        xOffset *= sensitivity;
+        yOffset *= sensitivity;
+
+        yaw += xOffset;
+        pitch += yOffset;
+
+        if (pitch > 89.0f) {
+            pitch = 89.0f;
+        }
+        if (pitch < -89.0f) {
+            pitch = -89.0f;
+        }
+
+        glm::vec3 direction;
+        direction.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+        direction.y = sin(glm::radians(pitch));
+        direction.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+        editorCamera.front = glm::normalize(direction);
+        SDL_WarpMouseInWindow(window, 960, 540);
+    }
 }
 
 void Editor::showMenuBar() {
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
-            //ShowExampleMenuFile();
-            if(ImGui::MenuItem("New Project")) {
+            // ShowExampleMenuFile();
+            if (ImGui::MenuItem("New Project")) {
             }
 
-            if(ImGui::MenuItem("New Scene")) {
+            if (ImGui::MenuItem("New Scene")) {
             }
 
-            if(ImGui::MenuItem("Load Project")) {
+            if (ImGui::MenuItem("Load Project")) {
             }
 
-            if(ImGui::BeginMenu("Load Scene")) {
+            if (ImGui::BeginMenu("Load Scene")) {
                 if (ImGui::MenuItem("Main Menu")) {
                     Debugger::print("Loading Main Menu Scene");
                 }
@@ -27,7 +111,7 @@ void Editor::showMenuBar() {
                 ImGui::EndMenu();
             }
 
-            if(ImGui::MenuItem("Quit")) {
+            if (ImGui::MenuItem("Quit")) {
                 quit = true;
             }
             ImGui::EndMenu();

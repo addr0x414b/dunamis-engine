@@ -235,14 +235,6 @@ class VulkanContext {
     VkImageView colorImageView;
     VkImageView depthImageView;
 
-    void createTextureImage();
-    uint32_t mipLevels;
-    VkImage textureImage;
-    VkDeviceMemory textureImageMemory;
-    void createTextureImage2();
-    uint32_t mipLevels2;
-    VkImage textureImage2;
-    VkDeviceMemory textureImageMemory2;
     void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width,
                            uint32_t height);
     void generateMipmaps(VkImage image, VkFormat imageFormat, int32_t texWidth,
@@ -251,54 +243,10 @@ class VulkanContext {
                       VkMemoryPropertyFlags properties, VkBuffer& buffer,
                       VkDeviceMemory& bufferMemory);
 
-    void createTextureImageView();
-    VkImageView textureImageView;
-    void createTextureImageView2();
-    VkImageView textureImageView2;
-
-    void createTextureSampler();
-    VkSampler textureSampler;
-    void createTextureSampler2();
-    VkSampler textureSampler2;
-
-    Assimp::Importer importer;
-    void loadModel();
-    std::vector<Vertex> vertices;
-    std::vector<uint32_t> indices;
-    void loadModel2();
-    std::vector<uint32_t> indices2;
-
-    void createVertexBuffer();
-    VkBuffer vertexBuffer;
-    VkDeviceMemory vertexBufferMemory;
-    void createVertexBuffer2();
-    VkBuffer vertexBuffer2;
-    VkDeviceMemory vertexBufferMemory2;
     void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
-
-    void createIndexBuffer();
-    VkBuffer indexBuffer;
-    VkDeviceMemory indexBufferMemory;
-    void createIndexBuffer2();
-    VkBuffer indexBuffer2;
-    VkDeviceMemory indexBufferMemory2;
-
-    //void createUniformBuffers();
-    std::vector<VkBuffer> uniformBuffers;
-    std::vector<VkDeviceMemory> uniformBuffersMemory;
-    std::vector<void*> uniformBuffersMapped;
-    void createUniformBuffers2();
-    std::vector<VkBuffer> uniformBuffers2;
-    std::vector<VkDeviceMemory> uniformBuffersMemory2;
-    std::vector<void*> uniformBuffersMapped2;
 
     void createDescriptorPool();
     VkDescriptorPool descriptorPool;
-
-    //void createDescriptorSets();
-    std::vector<VkDescriptorSet> descriptorSets;
-    void createDescriptorSets2();
-    std::vector<VkDescriptorSet> descriptorSets2;
 
     void createCommandBuffers();
     std::vector<VkCommandBuffer> commandBuffers;

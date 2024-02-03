@@ -24,15 +24,16 @@ void VisualServer::init() {
     }
     Debugger::subSection("Initialize SDL2\n");
     vulkanContext.setWindow(window);
+    editor.setWindow(window);
 
     GameObject test("test_models/models/dennis.obj",
-                    "test_models/textures/dennis.jpg");
+                    "test_models/textures/dennis.jpg", "Dennis 1");
     test.scale = glm::vec3(0.01f, 0.01f, 0.01f);
     test.position = glm::vec3(0.0f, -80.0f, -100.0f);
     scene.gameObjects.push_back(&test);
 
     GameObject test2("test_models/models/dennis.obj",
-                    "test_models/textures/dennis.jpg");
+                    "test_models/textures/dennis.jpg", "Dennis Big Boy");
     test2.scale = glm::vec3(0.01f, 0.01f, 0.01f);
     test2.position = glm::vec3(0.0f, -80.0f, -100.0f);
     test2.rotation = glm::vec3(0.0f, 90.0f, 0.0f);
@@ -62,7 +63,6 @@ void VisualServer::run() {
     bool bQuit = false;
     while (!bQuit) {
         while (SDL_PollEvent(&e)) {
-            // ImGui_ImplSDL2_ProcessEvent(&e);
             editor.processEvent(&e);
             if (e.type == SDL_QUIT ||
                 e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
@@ -72,6 +72,7 @@ void VisualServer::run() {
         if (editor.quit == true) {
             bQuit = true;
         }
+        editor.processInput();
         scene.gameObjects[0]->rotation.y += 1.0f;
         scene.gameObjects[2]->rotation.x += 2.0f;
         vulkanContext.drawFrame();

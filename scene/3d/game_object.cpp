@@ -1,6 +1,8 @@
 #include "game_object.h"
 
-GameObject::GameObject(const char* modelPath, const char* texturePath) {
+GameObject::GameObject(const char* modelPath,
+                       const char* texturePath, const char* name) {
+    this->name = name;
     this->modelPath = modelPath;
     this->texturePath = texturePath;
     loadModel(modelPath);
@@ -11,8 +13,7 @@ void GameObject::loadModel(const char* modelPath) {
 
     Debugger::print("Reading in model file...");
     const aiScene* scene =
-        importer.ReadFile(modelPath,
-                          aiProcess_Triangulate | aiProcess_FlipUVs);
+        importer.ReadFile(modelPath, aiProcess_Triangulate | aiProcess_FlipUVs);
 
     if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE ||
         !scene->mRootNode) {

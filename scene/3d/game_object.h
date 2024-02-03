@@ -6,19 +6,18 @@
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_ENABLE_EXPERIMENTAL
+#include <assimp/postprocess.h>
+#include <assimp/scene.h>
 #include <string.h>
 #include <vulkan/vulkan.h>
 
+#include <assimp/Importer.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/hash.hpp>
+#include <unordered_map>
 
 #include "../../core/debugger/debugger.h"
 #include "camera.h"
-
-#include <assimp/postprocess.h>
-#include <assimp/scene.h>
-#include <assimp/Importer.hpp>
-#include <unordered_map>
 
 struct Vertex {
     glm::vec3 pos;
@@ -82,7 +81,8 @@ struct hash<Vertex> {
 
 class GameObject {
    public:
-    GameObject(const char* modelPath, const char* texturePath);
+    GameObject(const char* modelPath, const char* texturePath,
+               const char* name = "GameObject");
 
     glm::vec3 position = glm::vec3(0.0f);
     glm::vec3 scale = glm::vec3(1.0f);
@@ -90,6 +90,7 @@ class GameObject {
 
     const char* modelPath;
     const char* texturePath;
+    const char* name;
 
     void start();
     void run();
