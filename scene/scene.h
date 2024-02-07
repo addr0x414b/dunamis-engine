@@ -9,7 +9,9 @@
 class Scene {
    public:
     std::vector<GameObject*> gameObjects;
+    std::vector<Camera*> cameras;
     Camera sceneCamera;
+    bool simulating = false;
 
    private:
 };

@@ -2,6 +2,7 @@
 #define EDITOR_H
 
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <imgui_impl_sdl2.h>
 #include <imgui_impl_vulkan.h>
 #include <SDL2/SDL.h>
@@ -15,7 +16,9 @@ class Editor {
     void processEvent(SDL_Event* event);
     void processInput();
     void showMenuBar();
+    void showSideBar();
     void setWindow(SDL_Window* window);
+    void setScene(Scene* scene);
     bool quit = false;
     Camera editorCamera;
 
@@ -30,6 +33,7 @@ class Editor {
     bool firstMouse = true;
     bool movingMouse = false;
     SDL_Window *window;
+    float cameraSpeed = 0.05f;
 };
 
 #endif  // EDITOR_H

@@ -46,7 +46,14 @@ void VisualServer::init() {
     //test3.rotation = glm::vec3(0.0f, 90.0f, 0.0f);
     scene.gameObjects.push_back(&test3);
 
+    Camera sceneCam;
+    sceneCam.position = glm::vec3(0.0f, 0.0f, 20.0f);
+    scene.sceneCamera = sceneCam;
+    sceneCam.name = "Main Scene Camera";
+    scene.cameras.push_back(&sceneCam);
+
     vulkanContext.setScene(&scene);
+    editor.setScene(&scene);
     vulkanContext.initVulkan();
     vulkanContext.setEditor(&editor);
     vulkanContext.initImgui();
@@ -73,8 +80,10 @@ void VisualServer::run() {
             bQuit = true;
         }
         editor.processInput();
-        scene.gameObjects[0]->rotation.y += 1.0f;
-        scene.gameObjects[2]->rotation.x += 2.0f;
+        if (scene.simulating) {
+            scene.gameObjects[0]->rotation.y += 1.0f;
+            scene.gameObjects[2]->rotation.x += 2.0f;
+        }
         vulkanContext.drawFrame();
     }
     Debugger::section("Shutdown Initiated\n");

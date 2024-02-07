@@ -3,22 +3,25 @@
 void Editor::processEvent(SDL_Event* event) {
     ImGui_ImplSDL2_ProcessEvent(event);
 
-     if (event->type == SDL_MOUSEMOTION) {
+    if (event->type == SDL_MOUSEMOTION) {
         processMouseMovement(event->motion.xrel, event->motion.yrel);
     }
 }
 
 void Editor::processInput() {
-    const Uint8* keystate = SDL_GetKeyboardState(NULL);
 
-    const float cameraSpeed = 0.05f;
+    if (scene->simulating) {
+        return;
+    }
+
+    const Uint8* keystate = SDL_GetKeyboardState(NULL);
 
     int xPos;
     int yPos;
 
     if (SDL_GetMouseState(&xPos, &yPos) & SDL_BUTTON(3)) {
         SDL_ShowCursor(SDL_DISABLE);
-         SDL_SetRelativeMouseMode(SDL_TRUE);
+        SDL_SetRelativeMouseMode(SDL_TRUE);
         movingMouse = true;
 
         if (keystate[SDL_SCANCODE_W]) {
@@ -40,17 +43,27 @@ void Editor::processInput() {
                                          editorCamera.front, editorCamera.up)) *
                                      cameraSpeed;
         }
-        //processMouseMovement(xPos, yPos);
-    } else {
-        if (movingMouse) {
-            //SDL_WarpMouseInWindow(window, 1000, 300);
+
+        if (keystate[SDL_SCANCODE_SPACE]) {
+            editorCamera.position += cameraSpeed * editorCamera.up;
         }
+
+        if (keystate[SDL_SCANCODE_LCTRL]) {
+            editorCamera.position -= cameraSpeed * editorCamera.up;
+        }
+
+        if (keystate[SDL_SCANCODE_LSHIFT]) {
+            cameraSpeed = 0.2f;
+        } else {
+            cameraSpeed = 0.05f;
+        }
+    } else {
         movingMouse = false;
         SDL_SetRelativeMouseMode(SDL_FALSE);
-        //SDL_WarpMouseInWindow(window, 960, 540);
     }
 }
 void Editor::setWindow(SDL_Window* window) { this->window = window; }
+void Editor::setScene(Scene* scene) { this->scene = scene; }
 
 void Editor::processMouseMovement(double xPos, double yPos) {
     if (movingMouse) {
@@ -134,81 +147,41 @@ void Editor::showMenuBar() {
     }
 }
 
-void Editor::ShowExampleMenuFile() {
-    ImGui::MenuItem("(demo menu)", NULL, false, false);
-    if (ImGui::MenuItem("New")) {
+void Editor::showSideBar() {
+    int w;
+    int h;
+
+    SDL_GetWindowSize(window, &w, &h);
+    int offset = 19;
+
+    ImGui::SetNextWindowSize(ImVec2(250, h - offset));
+    ImGui::SetNextWindowPos(ImVec2(0, offset));
+
+    ImGui::Begin("My First Tool", NULL,
+                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                     ImGuiWindowFlags_NoMove);
+
+    if (ImGui::Button("Play")) {
+        scene->simulating = true;
     }
-    if (ImGui::MenuItem("Open", "Ctrl+O")) {
-    }
-    if (ImGui::BeginMenu("Open Recent")) {
-        ImGui::MenuItem("fish_hat.c");
-        ImGui::MenuItem("fish_hat.inl");
-        ImGui::MenuItem("fish_hat.h");
-        if (ImGui::BeginMenu("More..")) {
-            ImGui::MenuItem("Hello");
-            ImGui::MenuItem("Sailor");
-            if (ImGui::BeginMenu("Recurse..")) {
-                ShowExampleMenuFile();
-                ImGui::EndMenu();
-            }
-            ImGui::EndMenu();
-        }
-        ImGui::EndMenu();
-    }
-    if (ImGui::MenuItem("Save", "Ctrl+S")) {
-    }
-    if (ImGui::MenuItem("Save As..")) {
+    ImGui::SameLine();
+
+    if (ImGui::Button("Stop")) {
+        scene->simulating = false;
     }
 
-    ImGui::Separator();
-    if (ImGui::BeginMenu("Options")) {
-        static bool enabled = true;
-        ImGui::MenuItem("Enabled", "", &enabled);
-        ImGui::BeginChild("child", ImVec2(0, 60), ImGuiChildFlags_Border);
-        for (int i = 0; i < 10; i++) ImGui::Text("Scrolling Text %d", i);
-        ImGui::EndChild();
-        static float f = 0.5f;
-        static int n = 0;
-        ImGui::SliderFloat("Value", &f, 0.0f, 1.0f);
-        ImGui::InputFloat("Input", &f, 0.1f);
-        ImGui::Combo("Combo", &n, "Yes\0No\0Maybe\0\0");
-        ImGui::EndMenu();
+    // Display contents in a scrolling region
+    ImGui::SeparatorText("Scene Objects");
+    ImGui::BeginChild("Scrolling");
+    // for (int n = 0; n < 5000; n++) ImGui::Text("%04d: Some text", n);
+
+    for (const auto& camera : scene->cameras) {
+        ImGui::Text(camera->name);
+    }
+    for (const auto& gameObject : scene->gameObjects) {
+        ImGui::Text(gameObject->name);
     }
 
-    if (ImGui::BeginMenu("Colors")) {
-        float sz = ImGui::GetTextLineHeight();
-        for (int i = 0; i < ImGuiCol_COUNT; i++) {
-            const char* name = ImGui::GetStyleColorName((ImGuiCol)i);
-            ImVec2 p = ImGui::GetCursorScreenPos();
-            ImGui::GetWindowDrawList()->AddRectFilled(
-                p, ImVec2(p.x + sz, p.y + sz), ImGui::GetColorU32((ImGuiCol)i));
-            ImGui::Dummy(ImVec2(sz, sz));
-            ImGui::SameLine();
-            ImGui::MenuItem(name);
-        }
-        ImGui::EndMenu();
-    }
-
-    // Here we demonstrate appending again to the "Options" menu (which we
-    // already created above) Of course in this demo it is a little bit silly
-    // that this function calls BeginMenu("Options") twice. In a real code-base
-    // using it would make senses to use this feature from very different code
-    // locations.
-    if (ImGui::BeginMenu("Options"))  // <-- Append!
-    {
-        static bool b = true;
-        ImGui::Checkbox("SomeOption", &b);
-        ImGui::EndMenu();
-    }
-
-    if (ImGui::BeginMenu("Disabled", false))  // Disabled
-    {
-        IM_ASSERT(0);
-    }
-    if (ImGui::MenuItem("Checked", NULL, true)) {
-    }
-    ImGui::Separator();
-    if (ImGui::MenuItem("Quit", "Alt+F4")) {
-        quit = true;
-    }
+    ImGui::EndChild();
+    ImGui::End();
 }

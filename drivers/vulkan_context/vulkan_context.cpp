@@ -1723,7 +1723,11 @@ void VulkanContext::drawFrame() {
 
 
     for (auto& obj : scene->gameObjects) {
-        obj->updateUniformBuffer(currentFrame, editor->editorCamera, swapchainExtent);
+        if (scene->simulating) {
+            obj->updateUniformBuffer(currentFrame, scene->sceneCamera, swapchainExtent);
+        } else {
+            obj->updateUniformBuffer(currentFrame, editor->editorCamera, swapchainExtent);
+        }
     }
 
     VkSubmitInfo submitInfo{};
@@ -1871,6 +1875,7 @@ void VulkanContext::drawImguiFrame(VkCommandBuffer commandBuffer) {
     ImGui::ShowDemoWindow();  // Show demo window! :)
 
     editor->showMenuBar();
+    editor->showSideBar();
 
     ImGui::Render();
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
