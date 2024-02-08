@@ -9,7 +9,6 @@ void Editor::processEvent(SDL_Event* event) {
 }
 
 void Editor::processInput() {
-
     if (scene->simulating) {
         return;
     }
@@ -175,13 +174,77 @@ void Editor::showSideBar() {
     ImGui::BeginChild("Scrolling");
     // for (int n = 0; n < 5000; n++) ImGui::Text("%04d: Some text", n);
 
-    for (const auto& camera : scene->cameras) {
+    /*for (const auto& camera : scene->cameras) {
         ImGui::Text(camera->name);
     }
     for (const auto& gameObject : scene->gameObjects) {
         ImGui::Text(gameObject->name);
+    }*/
+
+    static int selected = -1;
+
+    for (int i = 0; i < scene->gameObjects.size(); i++) {
+        char buf[32];
+        sprintf(buf, scene->gameObjects[i]->name);
+        if (ImGui::Selectable(buf, selected == i)) {
+            selected = i;
+            selectedObject = scene->gameObjects[i];
+        }
     }
 
     ImGui::EndChild();
+    ImGui::End();
+}
+
+void Editor::showEditorBar() {
+    int w;
+    int h;
+
+    SDL_GetWindowSize(window, &w, &h);
+    int offset = 19;
+
+    ImGui::SetNextWindowSize(ImVec2(250, h - offset));
+    ImGui::SetNextWindowPos(ImVec2(w - 250, offset));
+
+    ImGui::Begin("Tool Bro", NULL,
+                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                     ImGuiWindowFlags_NoMove);
+
+    ImGui::SeparatorText("Inspector");
+    
+    if (selectedObject != nullptr) {
+        ImGui::Text(selectedObject->name);
+        ImGui::DragFloat3("Position", &selectedObject->position[0], 0.1f);
+        ImGui::DragFloat3("Scale", &selectedObject->scale[0], 0.1f);
+        ImGui::DragFloat3("Rotation", &selectedObject->rotation[0], 0.1f);
+        if (ImGui::Button("Play")) {
+            scene->simulating = true;
+        }
+        ImGui::SameLine();
+
+        if (ImGui::Button("Stop")) {
+            scene->simulating = false;
+        }
+
+        // ImGui::DragFloat3("Pos 1", &editorCamera.position[0], 0.1f);
+        // ImGui::DragFloat3("Pos 2", &scene->sceneCamera.position[0], 0.1f);
+        ImGui::DragFloat3("Pos 1", &scene->gameObjects[0]->position[0], 0.1f);
+        ImGui::DragFloat3("Pos 2", &scene->gameObjects[1]->position[0], 0.1f);
+        ImGui::DragFloat3("Pos 3", &scene->gameObjects[2]->position[0], 0.1f);
+
+        // Display contents in a scrolling region
+        ImGui::SeparatorText("Scene Objects");
+        ImGui::BeginChild("Scrolling");
+        // for (int n = 0; n < 5000; n++) ImGui::Text("%04d: Some text", n);
+
+        for (const auto& camera : scene->cameras) {
+            ImGui::Text(camera->name);
+        }
+        for (const auto& gameObject : scene->gameObjects) {
+            ImGui::Text(gameObject->name);
+        }
+
+        ImGui::EndChild();
+    }
     ImGui::End();
 }

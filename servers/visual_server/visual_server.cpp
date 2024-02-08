@@ -83,6 +83,9 @@ void VisualServer::run() {
         if (scene.simulating) {
             scene.gameObjects[0]->rotation.y += 1.0f;
             scene.gameObjects[2]->rotation.x += 2.0f;
+        } else {
+            scene.gameObjects[0]->rotation = glm::vec3(0.0f);
+            scene.gameObjects[2]->rotation = glm::vec3(0.0f);
         }
         vulkanContext.drawFrame();
     }

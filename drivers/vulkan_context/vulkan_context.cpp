@@ -1876,6 +1876,7 @@ void VulkanContext::drawImguiFrame(VkCommandBuffer commandBuffer) {
 
     editor->showMenuBar();
     editor->showSideBar();
+    editor->showEditorBar();
 
     ImGui::Render();
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);

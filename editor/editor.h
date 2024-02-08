@@ -17,6 +17,7 @@ class Editor {
     void processInput();
     void showMenuBar();
     void showSideBar();
+    void showEditorBar();
     void setWindow(SDL_Window* window);
     void setScene(Scene* scene);
     bool quit = false;
@@ -34,6 +35,7 @@ class Editor {
     bool movingMouse = false;
     SDL_Window *window;
     float cameraSpeed = 0.05f;
+    GameObject* selectedObject = nullptr;
 };
 
 #endif  // EDITOR_H
