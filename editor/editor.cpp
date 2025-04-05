@@ -185,7 +185,7 @@ void Editor::showSideBar() {
 
     for (int i = 0; i < scene->gameObjects.size(); i++) {
         char buf[32];
-        sprintf(buf, scene->gameObjects[i]->name);
+        sprintf(buf, "%d: %s", i, scene->gameObjects[i]->name.c_str());
         if (ImGui::Selectable(buf, selected == i)) {
             selected = i;
             selectedObject = scene->gameObjects[i];
@@ -211,9 +211,17 @@ void Editor::showEditorBar() {
                      ImGuiWindowFlags_NoMove);
 
     ImGui::SeparatorText("Inspector");
+    char buf[32];
     
     if (selectedObject != nullptr) {
-        ImGui::Text(selectedObject->name);
+        //ImGui::Text(selectedObject->name);
+        strncpy(buf, selectedObject->name.c_str(), (sizeof buf) - 1);
+        buf[sizeof(buf) - 1] = '\0';
+        if (ImGui::InputText("Default", buf, IM_ARRAYSIZE(buf), ImGuiInputTextFlags_EnterReturnsTrue)) {
+            //selectedObject->name = buf;
+            //strncpy(selectedObject->name, buf, (sizeof selectedObject->name) - 1);
+            selectedObject->name = buf;
+        }
         ImGui::DragFloat3("Position", &selectedObject->position[0], 0.1f);
         ImGui::DragFloat3("Scale", &selectedObject->scale[0], 0.1f);
         ImGui::DragFloat3("Rotation", &selectedObject->rotation[0], 0.1f);
@@ -241,7 +249,7 @@ void Editor::showEditorBar() {
             ImGui::Text(camera->name);
         }
         for (const auto& gameObject : scene->gameObjects) {
-            ImGui::Text(gameObject->name);
+            ImGui::Text(gameObject->name.c_str());
         }
 
         ImGui::EndChild();

@@ -1,7 +1,8 @@
 #include "game_object.h"
 
 GameObject::GameObject(const char* modelPath,
-                       const char* texturePath, const char* name) {
+                       //const char* texturePath, const char* name) {
+                       const char* texturePath, std::string name) {
     this->name = name;
     this->modelPath = modelPath;
     this->texturePath = texturePath;

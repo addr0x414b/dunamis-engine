@@ -18,6 +18,7 @@
 
 #include "../../core/debugger/debugger.h"
 #include "camera.h"
+#include <string.h>
 
 struct Vertex {
     glm::vec3 pos;
@@ -82,7 +83,8 @@ struct hash<Vertex> {
 class GameObject {
    public:
     GameObject(const char* modelPath, const char* texturePath,
-               const char* name = "GameObject");
+               //const char* name = "GameObject");
+               std::string name = "GameObject");
 
     glm::vec3 position = glm::vec3(0.0f);
     glm::vec3 scale = glm::vec3(1.0f);
@@ -90,7 +92,7 @@ class GameObject {
 
     const char* modelPath;
     const char* texturePath;
-    const char* name;
+    std::string name;
 
     void start();
     void run();

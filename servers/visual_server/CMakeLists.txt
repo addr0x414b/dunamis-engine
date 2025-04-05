@@ -12,14 +12,12 @@ target_include_directories(visual_server
         ${CMAKE_CURRENT_LIST_DIR}
 )
 
-find_package(SDL2 CONFIG REQUIRED)
 target_link_libraries(visual_server
     PRIVATE
-    $<TARGET_NAME_IF_EXISTS:SDL2::SDL2main>
-    $<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>
+        vulkan_context
+        editor
+        scene
+        game_object
+        imgui
+        ${SDL2_LIBRARIES}
 )
-
-target_link_libraries(visual_server PRIVATE vulkan_context)
-target_link_libraries(visual_server PRIVATE editor)
-target_link_libraries(visual_server PRIVATE scene)
-target_link_libraries(visual_server PRIVATE game_object)

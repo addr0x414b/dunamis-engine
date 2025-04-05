@@ -1997,8 +1997,8 @@ void VulkanContext::initImgui() {
         ImGuiConfigFlags_NavEnableKeyboard;  // Enable Keyboard Controls
     io.ConfigFlags |=
         ImGuiConfigFlags_NavEnableGamepad;  // Enable Gamepad Controls
-    io.ConfigFlags |=
-        ImGuiConfigFlags_DockingEnable;  // IF using Docking Branch
+    //io.ConfigFlags |=
+        //ImGuiConfigFlags_DockingEnable;  // IF using Docking Branch
 
     QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 
@@ -2017,7 +2017,8 @@ void VulkanContext::initImgui() {
     init_info.MSAASamples = msaaSamples;
     init_info.Allocator = NULL;
     init_info.CheckVkResultFn = checkImguiVkResult;
-    ImGui_ImplVulkan_Init(&init_info, renderPass);
+    init_info.RenderPass = renderPass;
+    ImGui_ImplVulkan_Init(&init_info);
 }
 
 void VulkanContext::setEditor(Editor* editor) { this->editor = editor; }

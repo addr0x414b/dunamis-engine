@@ -14,8 +14,9 @@ target_include_directories(dunamis
         ${CMAKE_CURRENT_LIST_DIR}
 )
 
-target_link_libraries(dunamis debugger)
-target_link_libraries(dunamis visual_server)
-
-find_package(assimp CONFIG REQUIRED)
-target_link_libraries(dunamis assimp::assimp)
+target_link_libraries(dunamis
+    PUBLIC
+        debugger
+        visual_server
+        vulkan_context
+        assimp)

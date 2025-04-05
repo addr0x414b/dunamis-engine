@@ -1,5 +1,7 @@
-cmake_minimum_required(VERSION 3.28)
+cmake_minimum_required(VERSION 4.0)
 project(DunamisEngine)
+
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/dependencies.cmake)
 
 set(CMAKE_CXX_STANDARD 23)
 

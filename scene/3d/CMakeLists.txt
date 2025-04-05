@@ -1,3 +1,4 @@
+# Game Object
 add_library(game_object "")
 
 target_sources(game_object
@@ -12,12 +13,7 @@ target_include_directories(game_object
         ${CMAKE_CURRENT_LIST_DIR}
 )
 
-find_package(glm CONFIG REQUIRED)
-target_link_libraries(game_object PUBLIC glm::glm)
-
-find_package(Vulkan REQUIRED)
-target_link_libraries(game_object PUBLIC Vulkan::Vulkan)
-
+# Camera
 add_library(camera "")
 
 target_sources(camera
@@ -32,9 +28,12 @@ target_include_directories(camera
         ${CMAKE_CURRENT_LIST_DIR}
 )
 
-target_link_libraries(game_object PUBLIC camera)
-target_link_libraries(camera PUBLIC glm::glm)
-target_link_libraries(game_object PUBLIC debugger)
+target_link_libraries(camera PUBLIC glm)
 
-find_package(assimp CONFIG REQUIRED)
-target_link_libraries(game_object PUBLIC assimp::assimp)
+target_link_libraries(game_object 
+    PUBLIC
+        assimp
+        glm
+        Vulkan::Vulkan
+        camera
+        debugger)

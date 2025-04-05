@@ -14,5 +14,8 @@ target_include_directories(scene
         ${CMAKE_CURRENT_LIST_DIR}
 )
 
-target_link_libraries(scene PUBLIC camera)
-target_link_libraries(scene PUBLIC game_object)
+target_link_libraries(scene 
+    PUBLIC 
+        camera
+        game_object
+)
