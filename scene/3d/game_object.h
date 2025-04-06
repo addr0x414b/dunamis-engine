@@ -94,8 +94,14 @@ class GameObject {
     const char* texturePath;
     std::string name;
 
-    void start();
-    void run();
+    virtual void start();
+    virtual void run();
+    void stop();
+
+    void storeDetails();
+    glm::vec3 storedPos = glm::vec3(0.0f);
+    glm::vec3 storedScale = glm::vec3(1.0f);
+    glm::vec3 storedRotation = glm::vec3(0.0f);
 
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;

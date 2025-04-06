@@ -18,7 +18,7 @@ void Editor::processInput() {
     int xPos;
     int yPos;
 
-    if (SDL_GetMouseState(&xPos, &yPos) & SDL_BUTTON(3)) {
+    if (!ImGui::GetIO().WantCaptureMouse && SDL_GetMouseState(&xPos, &yPos) & SDL_BUTTON(3)) {
         SDL_ShowCursor(SDL_DISABLE);
         SDL_SetRelativeMouseMode(SDL_TRUE);
         movingMouse = true;
@@ -162,11 +162,19 @@ void Editor::showSideBar() {
 
     if (ImGui::Button("Play")) {
         scene->simulating = true;
+        if (!scene->isStarted) {
+            scene->start();
+            scene->isStarted = true;
+        }
     }
     ImGui::SameLine();
 
     if (ImGui::Button("Stop")) {
         scene->simulating = false;
+        if (scene->isStarted) {
+            scene->stop();
+        }
+        scene->isStarted = false;
     }
 
     // Display contents in a scrolling region
@@ -217,7 +225,7 @@ void Editor::showEditorBar() {
         //ImGui::Text(selectedObject->name);
         strncpy(buf, selectedObject->name.c_str(), (sizeof buf) - 1);
         buf[sizeof(buf) - 1] = '\0';
-        if (ImGui::InputText("Default", buf, IM_ARRAYSIZE(buf), ImGuiInputTextFlags_EnterReturnsTrue)) {
+        if (ImGui::InputText("Name", buf, IM_ARRAYSIZE(buf), ImGuiInputTextFlags_EnterReturnsTrue)) {
             //selectedObject->name = buf;
             //strncpy(selectedObject->name, buf, (sizeof selectedObject->name) - 1);
             selectedObject->name = buf;
@@ -225,34 +233,34 @@ void Editor::showEditorBar() {
         ImGui::DragFloat3("Position", &selectedObject->position[0], 0.1f);
         ImGui::DragFloat3("Scale", &selectedObject->scale[0], 0.1f);
         ImGui::DragFloat3("Rotation", &selectedObject->rotation[0], 0.1f);
-        if (ImGui::Button("Play")) {
-            scene->simulating = true;
-        }
-        ImGui::SameLine();
+        //if (ImGui::Button("Play")) {
+        //    scene->simulating = true;
+        //}
+        //ImGui::SameLine();
 
-        if (ImGui::Button("Stop")) {
-            scene->simulating = false;
-        }
+        //if (ImGui::Button("Stop")) {
+        //    scene->simulating = false;
+        //}
 
         // ImGui::DragFloat3("Pos 1", &editorCamera.position[0], 0.1f);
         // ImGui::DragFloat3("Pos 2", &scene->sceneCamera.position[0], 0.1f);
-        ImGui::DragFloat3("Pos 1", &scene->gameObjects[0]->position[0], 0.1f);
-        ImGui::DragFloat3("Pos 2", &scene->gameObjects[1]->position[0], 0.1f);
-        ImGui::DragFloat3("Pos 3", &scene->gameObjects[2]->position[0], 0.1f);
+        // ImGui::DragFloat3("Pos 1", &scene->gameObjects[0]->position[0], 0.1f);
+        // ImGui::DragFloat3("Pos 2", &scene->gameObjects[1]->position[0], 0.1f);
+        // ImGui::DragFloat3("Pos 3", &scene->gameObjects[2]->position[0], 0.1f);
 
         // Display contents in a scrolling region
-        ImGui::SeparatorText("Scene Objects");
-        ImGui::BeginChild("Scrolling");
+        // ImGui::SeparatorText("Scene Objects");
+        // ImGui::BeginChild("Scrolling");
         // for (int n = 0; n < 5000; n++) ImGui::Text("%04d: Some text", n);
 
-        for (const auto& camera : scene->cameras) {
-            ImGui::Text(camera->name);
-        }
-        for (const auto& gameObject : scene->gameObjects) {
-            ImGui::Text(gameObject->name.c_str());
-        }
+        //for (const auto& camera : scene->cameras) {
+        //    ImGui::Text(camera->name);
+        //}
+        //for (const auto& gameObject : scene->gameObjects) {
+        //    ImGui::Text(gameObject->name.c_str());
+        //}
 
-        ImGui::EndChild();
+        //ImGui::EndChild();
     }
     ImGui::End();
 }

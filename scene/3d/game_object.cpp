@@ -9,6 +9,26 @@ GameObject::GameObject(const char* modelPath,
     loadModel(modelPath);
 }
 
+void GameObject::start() {
+    position = glm::vec3(1.0f);
+}
+
+void GameObject::run() {
+    rotation.x += 1.0f;
+}
+
+void GameObject::stop() {
+    position = storedPos;
+    scale = storedScale;
+    rotation = storedRotation;
+}
+
+void GameObject::storeDetails() {
+    storedPos = position;
+    storedScale = scale;
+    storedRotation = rotation;
+}
+
 void GameObject::loadModel(const char* modelPath) {
     Debugger::subSubSection("Load Model");
 

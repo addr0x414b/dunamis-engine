@@ -12,6 +12,11 @@ class Scene {
     std::vector<Camera*> cameras;
     Camera sceneCamera;
     bool simulating = false;
+    bool isStarted = false;
+
+    void start();
+    void run();
+    void stop();
 
    private:
 };
