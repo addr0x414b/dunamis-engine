@@ -26,32 +26,7 @@ void VisualServer::init() {
     vulkanContext.setWindow(window);
     editor.setWindow(window);
 
-    GameObject test("test_models/models/dennis.obj",
-                    "test_models/textures/dennis.jpg", "Dennis 1");
-    test.scale = glm::vec3(0.01f, 0.01f, 0.01f);
-    test.position = glm::vec3(0.0f, -80.0f, -100.0f);
-    scene.gameObjects.push_back(&test);
-
-    GameObject test2("test_models/models/dennis.obj",
-                    "test_models/textures/dennis.jpg", "Dennis Big Boy");
-    test2.scale = glm::vec3(0.01f, 0.01f, 0.01f);
-    test2.position = glm::vec3(0.0f, -80.0f, -100.0f);
-    test2.rotation = glm::vec3(0.0f, 90.0f, 0.0f);
-    scene.gameObjects.push_back(&test2);
-
-    GameObject test3("test_models/models/dennis.obj",
-                    "test_models/textures/dennis.jpg");
-    test3.scale = glm::vec3(0.01f, 0.01f, 0.01f);
-    test3.position = glm::vec3(20.0f, -40.0f, -100.0f);
-    //test3.rotation = glm::vec3(0.0f, 90.0f, 0.0f);
-    scene.gameObjects.push_back(&test3);
-
-    Camera sceneCam;
-    sceneCam.position = glm::vec3(0.0f, 0.0f, 20.0f);
-    scene.sceneCamera = sceneCam;
-    sceneCam.name = "Main Scene Camera";
-    scene.cameras.push_back(&sceneCam);
-
+    scene.init();
     vulkanContext.setScene(&scene);
     editor.setScene(&scene);
     vulkanContext.initVulkan();

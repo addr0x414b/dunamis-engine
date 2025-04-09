@@ -18,6 +18,10 @@ class Scene {
     void run();
     void stop();
 
+    void init();
+
+    ~Scene();
+
    private:
 };
 

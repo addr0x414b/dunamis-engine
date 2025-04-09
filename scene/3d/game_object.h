@@ -89,10 +89,10 @@ class GameObject {
     glm::vec3 position = glm::vec3(0.0f);
     glm::vec3 scale = glm::vec3(1.0f);
     glm::vec3 rotation = glm::vec3(0.0f);
+    std::string name;
 
     const char* modelPath;
     const char* texturePath;
-    std::string name;
 
     virtual void start();
     virtual void run();
