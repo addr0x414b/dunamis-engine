@@ -2,6 +2,7 @@
 #define SCENE_H
 
 #include "game_object.h"
+#include "../input/input_manager.h"
 #include "camera.h"
 #include <vector>
 
@@ -14,11 +15,13 @@ public:
 
     std::vector<std::unique_ptr<GameObject>> gameObjects;
     //Camera* camera = nullptr;
-    std::unique_ptr<Camera> camera;
+    std::shared_ptr<Camera> camera;
 
     std::string name;
+    std::shared_ptr<InputManager> inputManager;
 
 private:
+
 };
 
 #endif

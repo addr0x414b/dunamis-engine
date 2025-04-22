@@ -14,18 +14,27 @@ void Level1::init() {
     test->loadModel(test->mesh.modelPath);
     gameObjects.push_back(std::move(test));
 
-    auto c = std::make_unique<Camera>();
-    c->position.z = 150.0f;
-    camera = std::move(c);
+    //auto c = std::make_unique<Camera>();
+    //c->position.z = 150.0f;
+    //camera = std::move(c);
+
+    player.init();
+    camera = player.camera;
 
     spdlog::info("Scene successfully initialized");
 
 } 
 
 void Level1::start() {
-
+    for (auto& obj : gameObjects) {
+        obj->start();
+    }
+    player.start(inputManager);
 }
 
 void Level1::update() {
-
+    for (auto& obj : gameObjects) {
+        obj->update();
+    }
+    player.update(inputManager);
 }

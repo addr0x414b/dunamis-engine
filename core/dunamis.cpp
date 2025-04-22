@@ -7,7 +7,11 @@ Dunamis::Dunamis() {
     level1.name = "Level 1";
     level1.init();
 
+    inputManager = std::make_shared<InputManager>();
+    level1.inputManager = inputManager;
+
     visualServer.init(&level1);
+    inputManager->window = visualServer.window;
 
     run();
 }
@@ -28,9 +32,11 @@ void Dunamis::run() {
                     running = false;
                 }
             }
+            inputManager->handleEvent(e);
         }
         level1.update();
         visualServer.run();
+        inputManager->clearKeys();
     }
     spdlog::info("Shutting down Dunamis Engine...");
 }

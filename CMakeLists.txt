@@ -10,6 +10,7 @@ add_subdirectory(rendering)
 add_subdirectory(scene)
 add_subdirectory(game)
 add_subdirectory(third_party)
+add_subdirectory(input)
 
 add_executable(DunamisEngine main.cpp)
 

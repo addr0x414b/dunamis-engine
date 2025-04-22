@@ -13,9 +13,9 @@ public:
     ~VisualServer();
     void init(Scene* scene);
     void run();
+    SDL_Window *window;
 
 private:
-    SDL_Window *window;
     VulkanContext vulkanContext;
     void initGameObjects();
     Scene* currentScene;

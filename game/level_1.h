@@ -3,6 +3,7 @@
 
 #include "spdlog/spdlog.h"
 
+#include "player.h"
 #include "../scene/scene.h"
 
 class Level1 : public Scene {
@@ -12,6 +13,7 @@ public:
     void update() override;
 
 private:
+    Player player;
 };
 
 #endif
