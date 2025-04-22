@@ -1,24 +1,13 @@
-#ifndef GAME_OBJECT_H
-#define GAME_OBJECT_H
-
-#include <vector>
+#ifndef VULKAN_UTILS_H
+#define VULKAN_UTILS_H
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_ENABLE_EXPERIMENTAL
-#include <assimp/postprocess.h>
-#include <assimp/scene.h>
-#include <string.h>
-#include <vulkan/vulkan.h>
-
-#include <assimp/Importer.hpp>
+#include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/hash.hpp>
-#include <unordered_map>
-
-#include "../../core/debugger/debugger.h"
-#include "camera.h"
-#include <string.h>
+#include <vulkan/vulkan.h>
 
 struct Vertex {
     glm::vec3 pos;
@@ -80,51 +69,31 @@ struct hash<Vertex> {
 };
 }  // namespace std
 
-class GameObject {
-   public:
-    GameObject(const char* modelPath, const char* texturePath,
-               //const char* name = "GameObject");
-               std::string name = "GameObject");
-
-    glm::vec3 position = glm::vec3(0.0f);
-    glm::vec3 scale = glm::vec3(1.0f);
-    glm::vec3 rotation = glm::vec3(0.0f);
-    std::string name;
-
+struct Mesh {
     const char* modelPath;
-    const char* texturePath;
-
-    virtual void start();
-    virtual void run();
-    void stop();
-
-    void storeDetails();
-    glm::vec3 storedPos = glm::vec3(0.0f);
-    glm::vec3 storedScale = glm::vec3(1.0f);
-    glm::vec3 storedRotation = glm::vec3(0.0f);
-
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
+    VkBuffer vertexBuffer;
+    VkDeviceMemory vertexBufferMemory;
+    VkBuffer indexBuffer;
+    VkDeviceMemory indexBufferMemory;
+};
+
+struct Material {
+    const char* texturePath;
     uint32_t mipLevels;
     VkImage textureImage;
     VkDeviceMemory textureImageMemory;
     VkImageView textureImageView;
     VkSampler textureSampler;
-    VkBuffer vertexBuffer;
-    VkDeviceMemory vertexBufferMemory;
-    VkBuffer indexBuffer;
-    VkDeviceMemory indexBufferMemory;
+};
+
+struct RenderData {
     std::vector<VkBuffer> uniformBuffers;
     std::vector<VkDeviceMemory> uniformBuffersMemory;
     std::vector<void*> uniformBuffersMapped;
     std::vector<VkDescriptorSet> descriptorSets;
-
-    void updateUniformBuffer(uint32_t currentImage, Camera& camera,
-                             VkExtent2D swapchainExtent);
-
-   private:
-    void loadModel(const char* modelPath);
-    Assimp::Importer importer;
 };
 
-#endif  // GAME_OBJECT_H
+
+#endif

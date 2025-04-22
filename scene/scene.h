@@ -1,28 +1,24 @@
 #ifndef SCENE_H
 #define SCENE_H
 
+#include "game_object.h"
+#include "camera.h"
 #include <vector>
 
-#include "3d/camera.h"
-#include "3d/game_object.h"
-
 class Scene {
-   public:
-    std::vector<GameObject*> gameObjects;
-    std::vector<Camera*> cameras;
-    Camera sceneCamera;
-    bool simulating = false;
-    bool isStarted = false;
+public:
+    virtual void init() = 0;
+    virtual void start() = 0;
+    virtual void update() = 0;
+    virtual ~Scene() = default;
 
-    void start();
-    void run();
-    void stop();
+    std::vector<std::unique_ptr<GameObject>> gameObjects;
+    //Camera* camera = nullptr;
+    std::unique_ptr<Camera> camera;
 
-    void init();
+    std::string name;
 
-    ~Scene();
-
-   private:
+private:
 };
 
-#endif  // SCENE_H
+#endif

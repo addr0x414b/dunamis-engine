@@ -1,23 +1,22 @@
 cmake_minimum_required(VERSION 4.0)
 project(DunamisEngine)
 
+set(CMAKE_CXX_STANDARD 17)
+
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/dependencies.cmake)
 
-set(CMAKE_CXX_STANDARD 23)
+add_subdirectory(core)
+add_subdirectory(rendering)
+add_subdirectory(scene)
+add_subdirectory(game)
+add_subdirectory(third_party)
 
 add_executable(DunamisEngine main.cpp)
 
-add_subdirectory(core)
-add_subdirectory(servers)
-add_subdirectory(drivers)
-add_subdirectory(third_party)
-add_subdirectory(editor)
-add_subdirectory(scene)
+target_link_libraries(DunamisEngine PRIVATE Dunamis VulkanUtils assimp)
 
-target_link_libraries(DunamisEngine PRIVATE dunamis)
-
-set(SHADER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/drivers/vulkan_context/shaders")
-set(SHADER_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/drivers/vulkan_context/shaders")
+set(SHADER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/rendering/shaders")
+set(SHADER_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/rendering/shaders")
 
 add_custom_command(
         TARGET DunamisEngine POST_BUILD
@@ -25,12 +24,11 @@ add_custom_command(
         ${SHADER_SOURCE_DIR} ${SHADER_BINARY_DIR}
 )
 
-
-set(TEST_MODELS_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/test_models/")
-set(TEST_MODELS_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/test_models/")
+set(MODELS_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/game/assets/")
+set(MODELS_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/game/assets/")
 
 add_custom_command(
         TARGET DunamisEngine POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${TEST_MODELS_SOURCE_DIR} ${TEST_MODELS_BINARY_DIR}
+        ${MODELS_SOURCE_DIR} ${MODELS_BINARY_DIR}
 )

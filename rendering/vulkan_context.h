@@ -1,40 +1,18 @@
-
 #ifndef VULKAN_CONTEXT_H
 #define VULKAN_CONTEXT_H
 
-#include <iostream>
-
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_vulkan.h>
-#include <assimp/postprocess.h>
-#include <assimp/scene.h>
-#include <imgui.h>
-#include <imgui_impl_sdl2.h>
-#include <imgui_impl_vulkan.h>
-#include <vulkan/vulkan.h>
-#include <vulkan/vk_enum_string_helper.h>
-
 #include <algorithm>
-#include <array>
-#include <assimp/Importer.hpp>
-#include <filesystem>
 #include <fstream>
-#include <limits>
 #include <optional>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_vulkan.h>
 #include <set>
-#include <string>
-#include <unordered_map>
-#include <vector>
-
-#include "../../core/debugger/debugger.h"
-#include "../../editor/editor.h"
-#include "../../scene/scene.h"
-
-#define GLM_FORCE_RADIANS
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#define GLM_ENABLE_EXPERIMENTAL
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtx/hash.hpp>
+#include "spdlog/spdlog.h"
+#include <vulkan/vulkan.h>
+#include "utils/vulkan_utils.h"
+#include "../scene/game_object.h"
+#include "../scene/scene.h"
+#include <glm/glm.hpp>
 
 #ifdef NDEBUG
 const bool enableValidationLayers = false;
@@ -57,84 +35,35 @@ struct SwapchainSupportDetails {
     std::vector<VkPresentModeKHR> presentModes;
 };
 
-/*struct Vertex {
-    glm::vec3 pos;
-    glm::vec3 color;
-    glm::vec2 texCoord;
-
-    bool operator==(const Vertex& other) const {
-        return pos == other.pos && color == other.color &&
-               texCoord == other.texCoord;
-    }
-
-    static VkVertexInputBindingDescription getBindingDescription() {
-        VkVertexInputBindingDescription bindingDescription{};
-        bindingDescription.binding = 0;
-        bindingDescription.stride = sizeof(Vertex);
-        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-        return bindingDescription;
-    }
-
-    static std::array<VkVertexInputAttributeDescription, 3>
-    getAttributeDescriptions() {
-        std::array<VkVertexInputAttributeDescription, 3>
-            attributeDescriptions{};
-
-        attributeDescriptions[0].binding = 0;
-        attributeDescriptions[0].location = 0;
-        attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[0].offset = offsetof(Vertex, pos);
-
-        attributeDescriptions[1].binding = 0;
-        attributeDescriptions[1].location = 1;
-        attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[1].offset = offsetof(Vertex, color);
-
-        attributeDescriptions[2].binding = 0;
-        attributeDescriptions[2].location = 2;
-        attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
-        attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
-
-        return attributeDescriptions;
-    }
-};*/
-
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
-/*namespace std {
-template <>
-struct hash<Vertex> {
-    size_t operator()(Vertex const& vertex) const {
-        return ((hash<glm::vec3>()(vertex.pos) ^
-                 (hash<glm::vec3>()(vertex.color) << 1)) >>
-                1) ^
-               (hash<glm::vec2>()(vertex.texCoord) << 1);
-    }
-};
-}  // namespace std*/
-
-/*struct UniformBufferObject {
-    glm::mat4 model;
-    glm::mat4 view;
-    glm::mat4 proj;
-};*/
-
 class VulkanContext {
-   public:
-    void setWindow(SDL_Window* sdlWindow);
-    void setEditor(Editor* editor);
-    void setScene(Scene* scene);
-    void initVulkan();
-    void initImgui();
-    void drawFrame();
-    void cleanup();
-    VkDevice device;
+public:
+    void init(SDL_Window* w);
+    void cleanup(Scene* scene);
 
-   private:
-    SDL_Window* window = nullptr;
-    Scene* scene = nullptr;
+    void createTextureImages(std::unique_ptr<GameObject>& gameObject);
+    void createTextureImageViews(std::unique_ptr<GameObject>& gameObject);
+    void createTextureSamplers(std::unique_ptr<GameObject>& gameObject);
+    void createVertexBuffers(std::unique_ptr<GameObject>& gameObject);
+    void createIndexBuffers(std::unique_ptr<GameObject>& gameObject);
+    void createUniformBuffers(std::unique_ptr<GameObject>& gameObject);
+    void createDescriptorPool(uint32_t numOfObjects);
+    void createDescriptorSets(std::unique_ptr<GameObject>& gameObject);
 
-    Editor* editor = nullptr;
+    void drawFrame(Scene* scene);
+
+private:
+    VkDescriptorPool descriptorPool;
+    SDL_Window* window;
+
+    bool framebufferResized = false;
+
+    void updateUniformBuffer(uint32_t currentImage, std::unique_ptr<GameObject>& gameObject, glm::vec3 camPos, glm::vec3 camFront, glm::vec3 camUp);
+
+    void recreateSwapchain();
+    void recordCommandBuffer(VkCommandBuffer commandBuffer,
+                            uint32_t imageIndex, Scene* scene);
 
     void createInstance();
     bool checkValidationLayerSupport();
@@ -144,7 +73,7 @@ class VulkanContext {
     void populateDebugMessengerCreateInfo(
         VkDebugUtilsMessengerCreateInfoEXT& createInfo);
     VkInstance instance;
-
+    
     void setupDebugMessenger();
     VkDebugUtilsMessengerEXT debugMessenger;
     VkResult createDebugUtilsMessengerEXT(
@@ -152,6 +81,9 @@ class VulkanContext {
         const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
         const VkAllocationCallbacks* pAllocator,
         VkDebugUtilsMessengerEXT* pDebugMessenger);
+    void destroyDebugUtilsMessengerEXT(VkInstance instance,
+                                       VkDebugUtilsMessengerEXT debugMessenger,
+                                       const VkAllocationCallbacks* pAllocator);
 
     void createSurface();
     VkSurfaceKHR surface;
@@ -170,6 +102,7 @@ class VulkanContext {
     void createLogicalDevice();
     VkQueue graphicsQueue;
     VkQueue presentQueue;
+    VkDevice device;
 
     void createSwapchain();
     VkSurfaceFormatKHR chooseSwapSurfaceFormat(
@@ -181,6 +114,7 @@ class VulkanContext {
     std::vector<VkImage> swapchainImages;
     VkFormat swapchainImageFormat;
     VkExtent2D swapchainExtent;
+    void cleanupSwapchain();
 
     void createImageViews();
     std::vector<VkImageView> swapchainImageViews;
@@ -195,8 +129,6 @@ class VulkanContext {
                                  VkImageTiling tiling,
                                  VkFormatFeatureFlags features);
 
-    bool my_tool_active = true;
-
     void createDescriptorSetLayout();
     VkDescriptorSetLayout descriptorSetLayout;
 
@@ -205,13 +137,13 @@ class VulkanContext {
     VkShaderModule createShaderModule(const std::vector<char>& code);
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
-
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
 
     void createCommandPool();
     VkCommandPool commandPool;
 
     void createColorResources();
+    VkImageView colorImageView;
     VkDeviceMemory colorImageMemory;
     VkImage colorImage;
     void createImage(uint32_t width, uint32_t height, uint32_t mipLevels,
@@ -224,16 +156,18 @@ class VulkanContext {
 
     void createDepthResources();
     VkImage depthImage;
+    VkImageView depthImageView;
     VkDeviceMemory depthImageMemory;
     void transitionImageLayout(VkImage image, VkFormat format,
                                VkImageLayout oldLayout, VkImageLayout newLayout,
                                uint32_t mipLevels);
     bool hasStencilComponent(VkFormat format);
 
+    VkCommandBuffer beginSingleTimeCommands();
+    void endSingleTimeCommands(VkCommandBuffer commandBuffer);
+
     void createFramebuffers();
     std::vector<VkFramebuffer> swapchainFramebuffers;
-    VkImageView colorImageView;
-    VkImageView depthImageView;
 
     void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width,
                            uint32_t height);
@@ -242,12 +176,8 @@ class VulkanContext {
     void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                       VkMemoryPropertyFlags properties, VkBuffer& buffer,
                       VkDeviceMemory& bufferMemory);
-
     void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
-
-    void createDescriptorPool();
-    VkDescriptorPool descriptorPool;
-
+    
     void createCommandBuffers();
     std::vector<VkCommandBuffer> commandBuffers;
 
@@ -257,32 +187,6 @@ class VulkanContext {
     std::vector<VkFence> inFlightFences;
     uint32_t currentFrame = 0;
 
-    void recordCommandBuffer(VkCommandBuffer commandBuffer,
-                             uint32_t imageIndex);
-    void updateUniformBuffer(uint32_t currentImage);
-    void updateUniformBuffer2(uint32_t currentImage);
-
-    VkCommandBuffer beginSingleTimeCommands();
-    void endSingleTimeCommands(VkCommandBuffer commandBuffer);
-    void recreateSwapchain();
-    void cleanupSwapchain();
-    bool framebufferResized = false;
-
-    void destroyDebugUtilsMessengerEXT(VkInstance instance,
-                                       VkDebugUtilsMessengerEXT debugMessenger,
-                                       const VkAllocationCallbacks* pAllocator);
-    
-    static void checkImguiVkResult(VkResult err);
-
-    void drawImguiFrame(VkCommandBuffer commandBuffer);
-
-    void createTextureImages();
-    void createTextureImageViews();
-    void createTextureSamplers();
-    void createVertexBuffers();
-    void createIndexBuffers();
-    void createUniformBuffers();
-    void createDescriptorSets();
 };
 
-#endif  // VULKAN_CONTEXT_H
+#endif

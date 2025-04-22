@@ -1,1 +1,0 @@
-add_subdirectory(visual_server)

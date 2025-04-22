@@ -1,7 +1,38 @@
 #include "dunamis.h"
 
-
 Dunamis::Dunamis() {
-    Debugger::print("Starting Dunamis v0.1\n");
-    visualServer.init();
+    spdlog::info("Dunamis Engine v0.2");
+
+    // Initialize the scene. Eventually replace with a scene manager
+    level1.name = "Level 1";
+    level1.init();
+
+    visualServer.init(&level1);
+
+    run();
 }
+
+void Dunamis::run() {
+    spdlog::info("Begin running Dunamis Engine...");
+    bool running = true;
+
+    level1.start();
+
+    while (running) {
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_EVENT_QUIT) {
+                running = false;
+            } else if (e.type == SDL_EVENT_KEY_DOWN) {
+                if (e.key.key == SDLK_ESCAPE) {
+                    running = false;
+                }
+            }
+        }
+        level1.update();
+        visualServer.run();
+    }
+    spdlog::info("Shutting down Dunamis Engine...");
+}
+
+Dunamis::~Dunamis() {}

@@ -1,21 +1,11 @@
-add_subdirectory(3d)
+add_library(GameObject STATIC game_object.cpp)
+target_include_directories(GameObject PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(GameObject PUBLIC spdlog VulkanUtils glm assimp)
 
-add_library(scene "")
+add_library(Camera STATIC camera.cpp)
+target_include_directories(Camera PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(Camera PRIVATE spdlog glm GameObject)
 
-target_sources(scene
-    PRIVATE
-        ${CMAKE_CURRENT_LIST_DIR}/scene.cpp
-    PUBLIC
-        ${CMAKE_CURRENT_LIST_DIR}/scene.h
-)
-
-target_include_directories(scene
-    PUBLIC
-        ${CMAKE_CURRENT_LIST_DIR}
-)
-
-target_link_libraries(scene 
-    PUBLIC 
-        camera
-        game_object
-)
+add_library(Scene STATIC scene.cpp)
+target_include_directories(Scene PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(Scene PRIVATE spdlog glm GameObject Camera)

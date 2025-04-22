@@ -37,7 +37,4 @@ vcpkg/
 # Ignore build directory
 build/
 
-# Ignore test models and textures
-test_models/
-
 .vscode/
