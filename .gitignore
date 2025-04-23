@@ -38,3 +38,4 @@ vcpkg/
 build/
 
 .vscode/
+game/assets/

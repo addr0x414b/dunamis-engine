@@ -20,14 +20,14 @@ public:
     void setRelativeMouseMode(bool enabled);
 
     SDL_Window* window = nullptr;
-    double relMouseX = 0;
-    double relMouseY = 0;
 
 private:
     std::unordered_map<SDL_Keycode, bool> currentKeys;
     std::unordered_map<SDL_Keycode, bool> pressedKeys;
     std::unordered_map<SDL_Keycode, bool> releasedKeys;
 
+    double relMouseX = 0;
+    double relMouseY = 0;
 
 
 };

@@ -23,6 +23,7 @@ public:
     Mesh mesh;
     Material material;
     RenderData renderData;
+    std::vector<MeshInstance> meshInstances;
 
     void loadModel(const char* modelPath);
 

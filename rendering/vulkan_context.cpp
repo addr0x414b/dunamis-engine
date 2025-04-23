@@ -1118,7 +1118,7 @@ void VulkanContext::createFramebuffers() {
 
 void VulkanContext::createTextureImages(std::unique_ptr<GameObject>& gameObject) {
 
-    int texWidth, texHeight, texChannels;
+    /*int texWidth, texHeight, texChannels;
 
     //spdlog::info("Reading texture file for {}...", gameObject->name);
     stbi_uc* pixels = stbi_load(gameObject->material.texturePath, &texWidth, &texHeight,
@@ -1131,106 +1131,131 @@ void VulkanContext::createTextureImages(std::unique_ptr<GameObject>& gameObject)
 
     gameObject->material.mipLevels = static_cast<uint32_t>(std::floor(
                             std::log2(std::max(texWidth, texHeight)))) +
-                        1;
+                        1;*/
+    
+    for (auto& instance : gameObject->meshInstances) {
 
-    VkBuffer stagingBuffer;
-    VkDeviceMemory stagingBufferMemory;
+        if (instance.material.texWidth != 0 && instance.material.texWidth != 0) {
+            VkDeviceSize imageSize = instance.material.texWidth *
+                                    instance.material.texHeight * 4;
 
-    createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                    stagingBuffer, stagingBufferMemory);
+            VkBuffer stagingBuffer;
+            VkDeviceMemory stagingBufferMemory;
 
-    void* data;
-    vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
-    memcpy(data, pixels, static_cast<size_t>(imageSize));
-    vkUnmapMemory(device, stagingBufferMemory);
-    stbi_image_free(pixels);
+            createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                            stagingBuffer, stagingBufferMemory);
 
-    createImage(texWidth, texHeight, gameObject->material.mipLevels, VK_SAMPLE_COUNT_1_BIT,
-                VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
-                VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                    VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                    VK_IMAGE_USAGE_SAMPLED_BIT,
-                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, gameObject->material.textureImage,
-                gameObject->material.textureImageMemory);
 
-    transitionImageLayout(gameObject->material.textureImage, VK_FORMAT_R8G8B8A8_SRGB,
-                            VK_IMAGE_LAYOUT_UNDEFINED,
-                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                            gameObject->material.mipLevels);
-    copyBufferToImage(stagingBuffer, gameObject->material.textureImage,
-                        static_cast<uint32_t>(texWidth),
-                        static_cast<uint32_t>(texHeight));
+            void* data;
+            vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
+            memcpy(data, instance.material.pixels, static_cast<size_t>(imageSize));
+            vkUnmapMemory(device, stagingBufferMemory);
+            stbi_image_free(instance.material.pixels);
 
-    generateMipmaps(gameObject->material.textureImage, VK_FORMAT_R8G8B8A8_SRGB, texWidth,
-                    texHeight, gameObject->material.mipLevels);
+            createImage(instance.material.texWidth, instance.material.texHeight, instance.material.mipLevels, VK_SAMPLE_COUNT_1_BIT,
+                        VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
+                        VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                            VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                            VK_IMAGE_USAGE_SAMPLED_BIT,
+                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, instance.material.textureImage,
+                        instance.material.textureImageMemory);
 
-    vkDestroyBuffer(device, stagingBuffer, nullptr);
-    vkFreeMemory(device, stagingBufferMemory, nullptr);
+            transitionImageLayout(instance.material.textureImage, VK_FORMAT_R8G8B8A8_SRGB,
+                                    VK_IMAGE_LAYOUT_UNDEFINED,
+                                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                    instance.material.mipLevels);
+            copyBufferToImage(stagingBuffer, instance.material.textureImage,
+                                static_cast<uint32_t>(instance.material.texWidth),
+                                static_cast<uint32_t>(instance.material.texHeight));
 
+            generateMipmaps(instance.material.textureImage, VK_FORMAT_R8G8B8A8_SRGB, instance.material.texWidth,
+                            instance.material.texHeight, instance.material.mipLevels);
+
+            vkDestroyBuffer(device, stagingBuffer, nullptr);
+            vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+        }
+    }
 }
 
 void VulkanContext::createTextureImageViews(std::unique_ptr<GameObject>& gameObject) {
-    gameObject->material.textureImageView =
-        createImageView(gameObject->material.textureImage, VK_FORMAT_R8G8B8A8_SRGB,
-                        VK_IMAGE_ASPECT_COLOR_BIT, gameObject->material.mipLevels);
+    for (auto& instance : gameObject->meshInstances) {
+        if (instance.material.texWidth != 0 && instance.material.texHeight != 0) {
+            instance.material.textureImageView =
+                createImageView(instance.material.textureImage,
+                                VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT,
+                                instance.material.mipLevels);
+        }
+    }
+    //gameObject->material.textureImageView =
+    //    createImageView(gameObject->material.textureImage, VK_FORMAT_R8G8B8A8_SRGB,
+    //                    VK_IMAGE_ASPECT_COLOR_BIT, gameObject->material.mipLevels);
 }
 
 void VulkanContext::createTextureSamplers(std::unique_ptr<GameObject>& gameObject) {
 
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = VK_FILTER_LINEAR;
-    samplerInfo.minFilter = VK_FILTER_LINEAR;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    samplerInfo.anisotropyEnable = VK_TRUE;
+    for (auto& instance : gameObject->meshInstances) {
 
-    VkPhysicalDeviceProperties properties{};
-    vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+        if (instance.material.texWidth != 0 && instance.material.texHeight != 0) {
+            VkSamplerCreateInfo samplerInfo{};
+            samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            samplerInfo.magFilter = VK_FILTER_LINEAR;
+            samplerInfo.minFilter = VK_FILTER_LINEAR;
+            samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            samplerInfo.anisotropyEnable = VK_TRUE;
 
-    samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
-    samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-    samplerInfo.unnormalizedCoordinates = VK_FALSE;
-    samplerInfo.compareEnable = VK_FALSE;
-    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    samplerInfo.mipLodBias = 0.0f;
-    samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = static_cast<float>(gameObject->material.mipLevels / 2);
+            VkPhysicalDeviceProperties properties{};
+            vkGetPhysicalDeviceProperties(physicalDevice, &properties);
 
-    if (vkCreateSampler(device, &samplerInfo, nullptr, &gameObject->material.textureSampler) !=
-        VK_SUCCESS) {
-        spdlog::error("Failed to create texture sampler!", true);
+            samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
+            samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+            samplerInfo.unnormalizedCoordinates = VK_FALSE;
+            samplerInfo.compareEnable = VK_FALSE;
+            samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+            samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            samplerInfo.mipLodBias = 0.0f;
+            samplerInfo.minLod = 0.0f;
+            samplerInfo.maxLod = static_cast<float>(instance.material.mipLevels / 2);
+
+            if (vkCreateSampler(device, &samplerInfo, nullptr, &instance.material.textureSampler) !=
+                VK_SUCCESS) {
+                spdlog::error("Failed to create texture sampler!", true);
+            }
+
+        }
     }
 }
 
 void VulkanContext::createVertexBuffers(std::unique_ptr<GameObject>& gameObject) {
 
-    VkDeviceSize bufferSize = sizeof(gameObject->mesh.vertices[0]) * gameObject->mesh.vertices.size();
-    VkBuffer stagingBuffer;
-    VkDeviceMemory stagingBufferMemory;
-    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                stagingBuffer, stagingBufferMemory);
+    for (auto& instance : gameObject->meshInstances) {
+        VkDeviceSize bufferSize = sizeof(instance.mesh.vertices[0]) * instance.mesh.vertices.size();
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    stagingBuffer, stagingBufferMemory);
 
-    void* data;
-    vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-    memcpy(data, gameObject->mesh.vertices.data(), (size_t)bufferSize);
-    vkUnmapMemory(device, stagingBufferMemory);
+        void* data;
+        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+        memcpy(data, instance.mesh.vertices.data(), (size_t)bufferSize);
+        vkUnmapMemory(device, stagingBufferMemory);
 
-    createBuffer(
-        bufferSize,
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, gameObject->mesh.vertexBuffer, gameObject->mesh.vertexBufferMemory);
+        createBuffer(
+            bufferSize,
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, instance.mesh.vertexBuffer, instance.mesh.vertexBufferMemory);
 
-    copyBuffer(stagingBuffer, gameObject->mesh.vertexBuffer, bufferSize);
+        copyBuffer(stagingBuffer, instance.mesh.vertexBuffer, bufferSize);
 
-    vkDestroyBuffer(device, stagingBuffer, nullptr);
-    vkFreeMemory(device, stagingBufferMemory, nullptr);
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
+    }
 }
 
 void VulkanContext::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer,
@@ -1245,49 +1270,55 @@ void VulkanContext::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer,
 
 void VulkanContext::createIndexBuffers(std::unique_ptr<GameObject>& gameObject) {
 
-    VkDeviceSize bufferSize = sizeof(gameObject->mesh.indices[0]) * gameObject->mesh.indices.size();
+    for (auto& instance : gameObject->meshInstances) {
+        VkDeviceSize bufferSize = sizeof(instance.mesh.indices[0]) * instance.mesh.indices.size();
 
-    VkBuffer stagingBuffer;
-    VkDeviceMemory stagingBufferMemory;
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
 
-    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                stagingBuffer, stagingBufferMemory);
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    stagingBuffer, stagingBufferMemory);
 
-    void* data;
-    vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-    memcpy(data, gameObject->mesh.indices.data(), (size_t)bufferSize);
-    vkUnmapMemory(device, stagingBufferMemory);
+        void* data;
+        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+        memcpy(data, instance.mesh.indices.data(), (size_t)bufferSize);
+        vkUnmapMemory(device, stagingBufferMemory);
 
-    createBuffer(
-        bufferSize,
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, gameObject->mesh.indexBuffer, gameObject->mesh.indexBufferMemory);
+        createBuffer(
+            bufferSize,
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, instance.mesh.indexBuffer, instance.mesh.indexBufferMemory);
 
-    copyBuffer(stagingBuffer, gameObject->mesh.indexBuffer, bufferSize);
+        copyBuffer(stagingBuffer, instance.mesh.indexBuffer, bufferSize);
 
-    vkDestroyBuffer(device, stagingBuffer, nullptr);
-    vkFreeMemory(device, stagingBufferMemory, nullptr);
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
+    }
+
 
 }
 
 void VulkanContext::createUniformBuffers(std::unique_ptr<GameObject>& gameObject) {
 
-    VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+    for (auto& instance : gameObject->meshInstances) {
+        VkDeviceSize bufferSize = sizeof(UniformBufferObject);
 
-    gameObject->renderData.uniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
-    gameObject->renderData.uniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
-    gameObject->renderData.uniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);
+        instance.renderData.uniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+        instance.renderData.uniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
+        instance.renderData.uniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);
 
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                    gameObject->renderData.uniformBuffers[i], gameObject->renderData.uniformBuffersMemory[i]);
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                        instance.renderData.uniformBuffers[i], instance.renderData.uniformBuffersMemory[i]);
 
-        vkMapMemory(device, gameObject->renderData.uniformBuffersMemory[i], 0, bufferSize, 0,
-                    &gameObject->renderData.uniformBuffersMapped[i]);
+            vkMapMemory(device, instance.renderData.uniformBuffersMemory[i], 0, bufferSize, 0,
+                        &instance.renderData.uniformBuffersMapped[i]);
+        }
+
     }
 
 }
@@ -1296,22 +1327,19 @@ void VulkanContext::createDescriptorPool(uint32_t numOfObjects) {
 
     std::array<VkDescriptorPoolSize, 2> poolSizes{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    // TIMES 2, OR ALL THE OBJECTS IN THE SCENE WE WANT TO DRAW
-    //std::cout << scene->gameObjects.size() << std::endl;
-    //int size = scene->gameObjects.size() + 3;
-    int size = numOfObjects;
     poolSizes[0].descriptorCount =
-        static_cast<uint32_t>(size * MAX_FRAMES_IN_FLIGHT);
+        static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT);
+
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount =
-        static_cast<uint32_t>(size * MAX_FRAMES_IN_FLIGHT);
+        static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT);
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
-    poolInfo.maxSets = static_cast<uint32_t>(size * MAX_FRAMES_IN_FLIGHT);
+    poolInfo.maxSets = static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT);
 
     if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) !=
         VK_SUCCESS) {
@@ -1323,53 +1351,57 @@ void VulkanContext::createDescriptorPool(uint32_t numOfObjects) {
 
 void VulkanContext::createDescriptorSets(std::unique_ptr<GameObject>& gameObject) {
 
-    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT,
-                                            descriptorSetLayout);
-    VkDescriptorSetAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = descriptorPool;
-    allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
-    allocInfo.pSetLayouts = layouts.data();
+    for (auto& instance : gameObject->meshInstances) {
 
-    gameObject->renderData.descriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
-    if (vkAllocateDescriptorSets(device, &allocInfo, gameObject->renderData.descriptorSets.data()) !=
-        VK_SUCCESS) {
-        spdlog::error("Failed to allocate descriptor sets!");
-    }
+        std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT,
+                                                descriptorSetLayout);
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = descriptorPool;
+        allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+        allocInfo.pSetLayouts = layouts.data();
 
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        VkDescriptorBufferInfo bufferInfo{};
-        bufferInfo.buffer = gameObject->renderData.uniformBuffers[i];
-        bufferInfo.offset = 0;
-        bufferInfo.range = sizeof(UniformBufferObject);
+        instance.renderData.descriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+        if (vkAllocateDescriptorSets(device, &allocInfo, instance.renderData.descriptorSets.data()) !=
+            VK_SUCCESS) {
+            spdlog::error("Failed to allocate descriptor sets!");
+        }
 
-        VkDescriptorImageInfo imageInfo{};
-        imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        imageInfo.imageView = gameObject->material.textureImageView;
-        imageInfo.sampler = gameObject->material.textureSampler;
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            VkDescriptorBufferInfo bufferInfo{};
+            bufferInfo.buffer = instance.renderData.uniformBuffers[i];
+            bufferInfo.offset = 0;
+            bufferInfo.range = sizeof(UniformBufferObject);
 
-        std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+            VkDescriptorImageInfo imageInfo{};
+            imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            imageInfo.imageView = instance.material.textureImageView;
+            imageInfo.sampler = instance.material.textureSampler;
 
-        descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrites[0].dstSet = gameObject->renderData.descriptorSets[i];
-        descriptorWrites[0].dstBinding = 0;
-        descriptorWrites[0].dstArrayElement = 0;
-        descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        descriptorWrites[0].descriptorCount = 1;
-        descriptorWrites[0].pBufferInfo = &bufferInfo;
+            std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
 
-        descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrites[1].dstSet = gameObject->renderData.descriptorSets[i];
-        descriptorWrites[1].dstBinding = 1;
-        descriptorWrites[1].dstArrayElement = 0;
-        descriptorWrites[1].descriptorType =
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        descriptorWrites[1].descriptorCount = 1;
-        descriptorWrites[1].pImageInfo = &imageInfo;
+            descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[0].dstSet = instance.renderData.descriptorSets[i];
+            descriptorWrites[0].dstBinding = 0;
+            descriptorWrites[0].dstArrayElement = 0;
+            descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            descriptorWrites[0].descriptorCount = 1;
+            descriptorWrites[0].pBufferInfo = &bufferInfo;
 
-        vkUpdateDescriptorSets(device,
-                            static_cast<uint32_t>(descriptorWrites.size()),
-                            descriptorWrites.data(), 0, nullptr);
+            descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[1].dstSet = instance.renderData.descriptorSets[i];
+            descriptorWrites[1].dstBinding = 1;
+            descriptorWrites[1].dstArrayElement = 0;
+            descriptorWrites[1].descriptorType =
+                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            descriptorWrites[1].descriptorCount = 1;
+            descriptorWrites[1].pImageInfo = &imageInfo;
+
+            vkUpdateDescriptorSets(device,
+                                static_cast<uint32_t>(descriptorWrites.size()),
+                                descriptorWrites.data(), 0, nullptr);
+        }
+
     }
 
 }
@@ -1577,30 +1609,33 @@ void VulkanContext::cleanupSwapchain() {
 }
 
 void VulkanContext::updateUniformBuffer(uint32_t currentImage, std::unique_ptr<GameObject>& gameObject, glm::vec3 camPos, glm::vec3 camFront, glm::vec3 camUp) {
-    UniformBufferObject ubo{};
+    for (auto& instance : gameObject->meshInstances) {
+        UniformBufferObject ubo{};
 
-    ubo.model = glm::mat4(1.0f);
+        ubo.model = glm::mat4(1.0f);
 
-    ubo.model = glm::translate(ubo.model, gameObject->position);
+        ubo.model = glm::translate(ubo.model, gameObject->position);
 
-    ubo.model = glm::rotate(ubo.model, glm::radians(gameObject->rotation.x),
-                           glm::vec3(1.0f, 0.0f, 0.0f));
-    ubo.model = glm::rotate(ubo.model, glm::radians(gameObject->rotation.y),
-                           glm::vec3(0.0f, 1.0f, 0.0f));
-    ubo.model = glm::rotate(ubo.model, glm::radians(gameObject->rotation.z),
-                           glm::vec3(0.0f, 0.0f, 1.0f));
-    
-    ubo.model = glm::scale(ubo.model, gameObject->scale);
+        ubo.model = glm::rotate(ubo.model, glm::radians(gameObject->rotation.x),
+                            glm::vec3(1.0f, 0.0f, 0.0f));
+        ubo.model = glm::rotate(ubo.model, glm::radians(gameObject->rotation.y),
+                            glm::vec3(0.0f, 1.0f, 0.0f));
+        ubo.model = glm::rotate(ubo.model, glm::radians(gameObject->rotation.z),
+                            glm::vec3(0.0f, 0.0f, 1.0f));
+        
+        ubo.model = glm::scale(ubo.model, gameObject->scale);
 
-    ubo.view =
-        glm::lookAt(camPos, camPos + camFront, camUp);
+        ubo.view =
+            glm::lookAt(camPos, camPos + camFront, camUp);
 
-    ubo.proj = glm::perspective(
-        glm::radians(45.0f),
-        swapchainExtent.width / (float)swapchainExtent.height, 0.1f, 10000.0f);
+        ubo.proj = glm::perspective(
+            glm::radians(45.0f),
+            swapchainExtent.width / (float)swapchainExtent.height, 0.1f, 10000.0f);
 
-    ubo.proj[1][1] *= -1;
-    memcpy(gameObject->renderData.uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
+        ubo.proj[1][1] *= -1;
+        memcpy(instance.renderData.uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
+
+    }
 }
 
 void VulkanContext::drawFrame(Scene* scene) {
@@ -1723,17 +1758,20 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
     for (auto& obj : scene->gameObjects) {
-        VkBuffer vertexBuffers[] = {obj->mesh.vertexBuffer};
-        VkDeviceSize offsets[] = {0};
-        vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-        vkCmdBindIndexBuffer(commandBuffer, obj->mesh.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        for (auto& instance : obj->meshInstances) {
+            VkBuffer vertexBuffers[] = {instance.mesh.vertexBuffer};
+            VkDeviceSize offsets[] = {0};
+            vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+            vkCmdBindIndexBuffer(commandBuffer, instance.mesh.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                pipelineLayout, 0, 1, &obj->renderData.descriptorSets[currentFrame],
-                                0, nullptr);
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    pipelineLayout, 0, 1, &instance.renderData.descriptorSets[currentFrame],
+                                    0, nullptr);
 
-        vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(obj->mesh.indices.size()), 1, 0,
-                        0, 0);
+            vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(instance.mesh.indices.size()), 1, 0,
+                            0, 0);
+        }
+
     }
 
     // Draw imgui stuff
@@ -1783,41 +1821,45 @@ void VulkanContext::cleanup(Scene* scene) {
 
     for (auto& obj : scene->gameObjects) {
 
-        vkDestroySampler(device, obj->material.textureSampler, nullptr);
-        //Debugger::print("Destroyed Vulkan texture sampler");
+        for (auto& instance : obj->meshInstances) {
+            vkDestroySampler(device, instance.material.textureSampler, nullptr);
+            //Debugger::print("Destroyed Vulkan texture sampler");
 
-        vkDestroyImageView(device, obj->material.textureImageView, nullptr);
-        //Debugger::print("Destroyed Vulkan texture image view");
+            vkDestroyImageView(device, instance.material.textureImageView, nullptr);
+            //Debugger::print("Destroyed Vulkan texture image view");
 
-        vkDestroyImage(device, obj->material.textureImage, nullptr);
-        //Debugger::print("Destroyed Vulkan texture image");
+            vkDestroyImage(device, instance.material.textureImage, nullptr);
+            //Debugger::print("Destroyed Vulkan texture image");
 
-        vkFreeMemory(device, obj->material.textureImageMemory, nullptr);
-        //Debugger::print("Freed Vulkan texture image memory\n");
+            vkFreeMemory(device, instance.material.textureImageMemory, nullptr);
+            //Debugger::print("Freed Vulkan texture image memory\n");
 
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            vkDestroyBuffer(device, obj->renderData.uniformBuffers[i], nullptr);
-            // vkDestroyBuffer(device, uniformBuffers2[i], nullptr);
-            //Debugger::print("Destroyed Vulkan uniform buffer");
-            vkFreeMemory(device, obj->renderData.uniformBuffersMemory[i], nullptr);
-            // vkFreeMemory(device, uniformBuffersMemory2[i], nullptr);
-            //Debugger::print("Freed Vulkan uniform buffer memory");
+            for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+                vkDestroyBuffer(device, instance.renderData.uniformBuffers[i], nullptr);
+                // vkDestroyBuffer(device, uniformBuffers2[i], nullptr);
+                //Debugger::print("Destroyed Vulkan uniform buffer");
+                vkFreeMemory(device, instance.renderData.uniformBuffersMemory[i], nullptr);
+                // vkFreeMemory(device, uniformBuffersMemory2[i], nullptr);
+                //Debugger::print("Freed Vulkan uniform buffer memory");
+            }
+
+            vkDestroyBuffer(device, instance.mesh.indexBuffer, nullptr);
+            // vkDestroyBuffer(device, indexBuffer2, nullptr);
+            //Debugger::print("Destroyed Vulkan index buffer");
+            vkFreeMemory(device, instance.mesh.indexBufferMemory, nullptr);
+            // vkFreeMemory(device, indexBufferMemory2, nullptr);
+            //Debugger::print("Freed Vulkan index buffer memory");
+
+            vkDestroyBuffer(device, instance.mesh.vertexBuffer, nullptr);
+            // vkDestroyBuffer(device, vertexBuffer2, nullptr);
+            //Debugger::print("Destroyed Vulkan vertex buffer");
+
+            vkFreeMemory(device, instance.mesh.vertexBufferMemory, nullptr);
+            // vkFreeMemory(device, vertexBufferMemory2, nullptr);
+            //Debugger::print("Freed Vulkan vertex buffer memory\n");
+
+
         }
-
-        vkDestroyBuffer(device, obj->mesh.indexBuffer, nullptr);
-        // vkDestroyBuffer(device, indexBuffer2, nullptr);
-        //Debugger::print("Destroyed Vulkan index buffer");
-        vkFreeMemory(device, obj->mesh.indexBufferMemory, nullptr);
-        // vkFreeMemory(device, indexBufferMemory2, nullptr);
-        //Debugger::print("Freed Vulkan index buffer memory");
-
-        vkDestroyBuffer(device, obj->mesh.vertexBuffer, nullptr);
-        // vkDestroyBuffer(device, vertexBuffer2, nullptr);
-        //Debugger::print("Destroyed Vulkan vertex buffer");
-
-        vkFreeMemory(device, obj->mesh.vertexBufferMemory, nullptr);
-        // vkFreeMemory(device, vertexBufferMemory2, nullptr);
-        //Debugger::print("Freed Vulkan vertex buffer memory\n");
 
     }
 

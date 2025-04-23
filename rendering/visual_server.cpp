@@ -27,7 +27,12 @@ void VisualServer::init(Scene* scene) {
 }
 
 void VisualServer::initGameObjects() {
-    vulkanContext.createDescriptorPool(static_cast<uint32_t>(currentScene->gameObjects.size()));
+    uint32_t totalMeshInstances = 0;
+    for (auto& o : currentScene->gameObjects) {
+        totalMeshInstances += static_cast<uint32_t>(o->meshInstances.size());
+    }
+    //vulkanContext.createDescriptorPool(static_cast<uint32_t>(currentScene->gameObjects.size()));
+    vulkanContext.createDescriptorPool(totalMeshInstances);
     spdlog::info("Initializing scene game object visual data...");
     for (auto& gameObject : currentScene->gameObjects) {
         vulkanContext.createTextureImages(gameObject); 

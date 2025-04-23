@@ -23,7 +23,6 @@ private:
     double lastY;
     double yaw = -90.0f;
     double pitch = 0.0f;
-    bool firstMouse = true;
 };
 
 #endif

@@ -8,6 +8,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/hash.hpp>
 #include <vulkan/vulkan.h>
+#include "../../third_party/stb/stb_image.h"
 
 struct Vertex {
     glm::vec3 pos;
@@ -86,6 +87,10 @@ struct Material {
     VkDeviceMemory textureImageMemory;
     VkImageView textureImageView;
     VkSampler textureSampler;
+    stbi_uc* pixels;
+    int texWidth;
+    int texHeight;
+    int texChannels;
 };
 
 struct RenderData {
@@ -93,6 +98,12 @@ struct RenderData {
     std::vector<VkDeviceMemory> uniformBuffersMemory;
     std::vector<void*> uniformBuffersMapped;
     std::vector<VkDescriptorSet> descriptorSets;
+};
+
+struct MeshInstance {
+    Mesh mesh;
+    Material material;
+    RenderData renderData;
 };
 
 

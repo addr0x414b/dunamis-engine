@@ -14,7 +14,6 @@ void Player::start(std::shared_ptr<InputManager> input) {
 }
 
 void Player::update(std::shared_ptr<InputManager> input) {
-    spdlog::error("Player pos: {}, {}, {}", position.x, position.y, position.z);
     if (input->isKeyDown(SDLK_W)) {
         position += speed * camera->front;
         camera->position += speed * camera->front;
@@ -70,5 +69,4 @@ void Player::update(std::shared_ptr<InputManager> input) {
     direction.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
     camera->front = glm::normalize(direction);
     front = glm::normalize(direction);
-    //input->setMousePosition(960, 540);
 }
