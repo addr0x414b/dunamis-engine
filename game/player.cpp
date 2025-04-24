@@ -14,6 +14,16 @@ void Player::start(std::shared_ptr<InputManager> input) {
 }
 
 void Player::update(std::shared_ptr<InputManager> input) {
+
+    if (input->isKeyDown(SDLK_LSHIFT)) {
+        speed = 5.0f;
+    }else if (input->isKeyDown(SDLK_LCTRL)) {
+        speed = 0.3f;
+    } 
+    else {
+        speed = 1.0f;
+    }
+
     if (input->isKeyDown(SDLK_W)) {
         position += speed * camera->front;
         camera->position += speed * camera->front;

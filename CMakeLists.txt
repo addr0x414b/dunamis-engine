@@ -33,3 +33,12 @@ add_custom_command(
         COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${MODELS_SOURCE_DIR} ${MODELS_BINARY_DIR}
 )
+
+set(TEX_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/rendering/default_textures")
+set(TEX_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/rendering/default_textures")
+
+add_custom_command(
+        TARGET DunamisEngine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${TEX_SOURCE_DIR} ${TEX_BINARY_DIR}
+)

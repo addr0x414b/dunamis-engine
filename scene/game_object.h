@@ -20,12 +20,16 @@ public:
     virtual void update() {}
     virtual ~GameObject() = default;
 
-    Mesh mesh;
-    Material material;
-    RenderData renderData;
+    const char* modelPath = nullptr;
+    // texturePath is only used if the textures are not baked into the model file
+    const char* texturePath = nullptr;
+
+
     std::vector<MeshInstance> meshInstances;
 
-    void loadModel(const char* modelPath);
+    // Call after setting modelPath (and texturePath if needed)
+    // Loads the model and sets up the mesh and materials
+    void loadModel();
 
 private:
     Assimp::Importer importer;

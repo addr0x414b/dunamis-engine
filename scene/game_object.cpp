@@ -1,8 +1,14 @@
 #include "game_object.h"
 #include "../third_party/stb/stb_image.h"
 
-void GameObject::loadModel(const char* modelPath) {
+void GameObject::loadModel() {
+
     spdlog::info("Loading game object model from path {}...", modelPath);
+
+    if (modelPath == nullptr) {
+        spdlog::error("Model path is null. Cannot load model.");
+        return;
+    }
 
     const aiScene* scene =
         importer.ReadFile(modelPath, aiProcess_Triangulate | aiProcess_FlipUVs);
@@ -11,42 +17,6 @@ void GameObject::loadModel(const char* modelPath) {
         !scene->mRootNode) {
             spdlog::error("Failed to load model file: {}", modelPath);
     }
-
-    aiString texturePath;
-    scene->mMaterials[0]->GetTexture(aiTextureType_DIFFUSE, 0, &texturePath);
-    for (int i = 0; i < scene->mNumMaterials; i++) {
-        aiMaterial* m = scene->mMaterials[i];
-        if (m->GetTextureCount(aiTextureType_DIFFUSE) > 0) {
-            m->GetTexture(aiTextureType_BASE_COLOR, 0, &texturePath);
-            //spdlog::error("PATH FOR TEXTURE {}", texturePath.C_Str());
-        }
-    }
-
-    /*std::unordered_map<Vertex, uint32_t> uniqueVertices{};
-
-    for (unsigned int i = 0; i < scene->mNumMeshes; i++) {
-        const aiMesh* m = scene->mMeshes[i];
-
-        for (unsigned int j = 0; j < m->mNumVertices; j++) {
-            Vertex vertex{};
-            vertex.pos = {m->mVertices[j].x, m->mVertices[j].y,
-                          m->mVertices[j].z};
-            vertex.texCoord = {m->mTextureCoords[0][j].x,
-                               m->mTextureCoords[0][j].y};
-            vertex.color = {1.0f, 1.0f, 1.0f};
-
-            if (uniqueVertices.count(vertex) == 0) {
-                uniqueVertices[vertex] = static_cast<uint32_t>(mesh.vertices.size());
-                mesh.vertices.push_back(vertex);
-            }
-
-            //mesh.indices.push_back(uniqueVertices[vertex]);
-        }
-    }*/
-
-    
-
-    //std::unordered_map<Vertex, uint32_t> uniqueVertices{};
 
     for (unsigned int i = 0; i < scene->mNumMeshes; i++) {
         const aiMesh* m = scene->mMeshes[i];
@@ -80,7 +50,6 @@ void GameObject::loadModel(const char* modelPath) {
                 vertex.color = {1.0f, 1.0f, 1.0f};
 
                 if (uniqueVertices.count(vertex) == 0) {
-                    //uniqueVertices[vertex] = static_cast<uint32_t>(mesh.vertices.size());
                     uniqueVertices[vertex] = static_cast<uint32_t>(instance.mesh.vertices.size());
                     instance.mesh.vertices.push_back(vertex);
                 }
@@ -95,6 +64,7 @@ void GameObject::loadModel(const char* modelPath) {
             const char* texRef = texPath.C_Str();
             instance.material.texturePath = texRef;
 
+            // If the material is baked into the gbl file
             if (texRef[0] == '*') {
                 int texIndex = std::stoi(&texRef[1]);
                 const aiTexture* tex = scene->mTextures[texIndex];
@@ -111,8 +81,12 @@ void GameObject::loadModel(const char* modelPath) {
 
                     instance.material.mipLevels = static_cast<uint32_t>(std::floor(
                         std::log2(std::max(instance.material.texWidth, instance.material.texHeight)))) + 1;
+                    spdlog::info("Successfully loaded texture for {}", m->mName.C_Str());
                 }
             } else {
+                // Not sure if this else statement is needed or if setting to
+                // texRef is even the right thing to do. Haven't seen this be
+                // called yet
                 instance.material.pixels = stbi_load(
                     texRef,
                     &instance.material.texWidth,
@@ -120,10 +94,20 @@ void GameObject::loadModel(const char* modelPath) {
                     &instance.material.texChannels,
                     STBI_rgb_alpha
                 );
+                instance.material.mipLevels = static_cast<uint32_t>(std::floor(
+                    std::log2(std::max(instance.material.texWidth, instance.material.texHeight)))) + 1;
+                spdlog::info("Successfully loaded texture for {}", m->mName.C_Str());
             }
        } else {
+            bool useDefaultTexture = false;
+            if (texturePath != nullptr) {
+                instance.material.texturePath = texturePath;
+            } else {
+                instance.material.texturePath = "rendering/default_textures/error.jpg";
+                useDefaultTexture = true;
+            }
             instance.material.pixels = stbi_load(
-                "game/assets/textures/viking_room.png",
+                instance.material.texturePath,
                 &instance.material.texWidth,
                 &instance.material.texHeight,
                 &instance.material.texChannels,
@@ -133,15 +117,16 @@ void GameObject::loadModel(const char* modelPath) {
             instance.material.mipLevels = static_cast<uint32_t>(std::floor(
                                     std::log2(std::max(instance.material.texWidth, instance.material.texHeight)))) +
                                 1;
+            if (!useDefaultTexture) {
+                spdlog::info("Successfully loaded texture for {}", m->mName.C_Str());
+            } else {
+                spdlog::error("No texture found for {}. Using default texture.", m->mName.C_Str());
+            }
        }
 
     meshInstances.push_back(instance);
 
     }
-
-
-
-
 
     spdlog::info("Successfully loaded game object model");
     

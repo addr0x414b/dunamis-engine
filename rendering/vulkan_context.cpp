@@ -1118,115 +1118,91 @@ void VulkanContext::createFramebuffers() {
 
 void VulkanContext::createTextureImages(std::unique_ptr<GameObject>& gameObject) {
 
-    /*int texWidth, texHeight, texChannels;
-
-    //spdlog::info("Reading texture file for {}...", gameObject->name);
-    stbi_uc* pixels = stbi_load(gameObject->material.texturePath, &texWidth, &texHeight,
-                                &texChannels, STBI_rgb_alpha);
-    VkDeviceSize imageSize = texWidth * texHeight * 4;
-
-    if (!pixels) {
-        spdlog::error("Failed to load texture image!");
-    }
-
-    gameObject->material.mipLevels = static_cast<uint32_t>(std::floor(
-                            std::log2(std::max(texWidth, texHeight)))) +
-                        1;*/
-    
     for (auto& instance : gameObject->meshInstances) {
 
-        if (instance.material.texWidth != 0 && instance.material.texWidth != 0) {
-            VkDeviceSize imageSize = instance.material.texWidth *
-                                    instance.material.texHeight * 4;
+        VkDeviceSize imageSize = instance.material.texWidth *
+                                instance.material.texHeight * 4;
 
-            VkBuffer stagingBuffer;
-            VkDeviceMemory stagingBufferMemory;
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
 
-            createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                            stagingBuffer, stagingBufferMemory);
+        createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                        stagingBuffer, stagingBufferMemory);
 
 
-            void* data;
-            vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
-            memcpy(data, instance.material.pixels, static_cast<size_t>(imageSize));
-            vkUnmapMemory(device, stagingBufferMemory);
-            stbi_image_free(instance.material.pixels);
+        void* data;
+        vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
+        memcpy(data, instance.material.pixels, static_cast<size_t>(imageSize));
+        vkUnmapMemory(device, stagingBufferMemory);
+        stbi_image_free(instance.material.pixels);
 
-            createImage(instance.material.texWidth, instance.material.texHeight, instance.material.mipLevels, VK_SAMPLE_COUNT_1_BIT,
-                        VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
-                        VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                            VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                            VK_IMAGE_USAGE_SAMPLED_BIT,
-                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, instance.material.textureImage,
-                        instance.material.textureImageMemory);
+        createImage(instance.material.texWidth, instance.material.texHeight, instance.material.mipLevels, VK_SAMPLE_COUNT_1_BIT,
+                    VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
+                    VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                        VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                        VK_IMAGE_USAGE_SAMPLED_BIT,
+                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, instance.material.textureImage,
+                    instance.material.textureImageMemory);
 
-            transitionImageLayout(instance.material.textureImage, VK_FORMAT_R8G8B8A8_SRGB,
-                                    VK_IMAGE_LAYOUT_UNDEFINED,
-                                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                    instance.material.mipLevels);
-            copyBufferToImage(stagingBuffer, instance.material.textureImage,
-                                static_cast<uint32_t>(instance.material.texWidth),
-                                static_cast<uint32_t>(instance.material.texHeight));
+        transitionImageLayout(instance.material.textureImage, VK_FORMAT_R8G8B8A8_SRGB,
+                                VK_IMAGE_LAYOUT_UNDEFINED,
+                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                instance.material.mipLevels);
+        copyBufferToImage(stagingBuffer, instance.material.textureImage,
+                            static_cast<uint32_t>(instance.material.texWidth),
+                            static_cast<uint32_t>(instance.material.texHeight));
 
-            generateMipmaps(instance.material.textureImage, VK_FORMAT_R8G8B8A8_SRGB, instance.material.texWidth,
-                            instance.material.texHeight, instance.material.mipLevels);
+        generateMipmaps(instance.material.textureImage, VK_FORMAT_R8G8B8A8_SRGB, instance.material.texWidth,
+                        instance.material.texHeight, instance.material.mipLevels);
 
-            vkDestroyBuffer(device, stagingBuffer, nullptr);
-            vkFreeMemory(device, stagingBufferMemory, nullptr);
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
 
-        }
     }
 }
 
 void VulkanContext::createTextureImageViews(std::unique_ptr<GameObject>& gameObject) {
     for (auto& instance : gameObject->meshInstances) {
-        if (instance.material.texWidth != 0 && instance.material.texHeight != 0) {
-            instance.material.textureImageView =
-                createImageView(instance.material.textureImage,
-                                VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT,
-                                instance.material.mipLevels);
-        }
+        instance.material.textureImageView =
+            createImageView(instance.material.textureImage,
+                            VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT,
+                            instance.material.mipLevels);
     }
-    //gameObject->material.textureImageView =
-    //    createImageView(gameObject->material.textureImage, VK_FORMAT_R8G8B8A8_SRGB,
-    //                    VK_IMAGE_ASPECT_COLOR_BIT, gameObject->material.mipLevels);
 }
 
 void VulkanContext::createTextureSamplers(std::unique_ptr<GameObject>& gameObject) {
 
     for (auto& instance : gameObject->meshInstances) {
 
-        if (instance.material.texWidth != 0 && instance.material.texHeight != 0) {
-            VkSamplerCreateInfo samplerInfo{};
-            samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-            samplerInfo.magFilter = VK_FILTER_LINEAR;
-            samplerInfo.minFilter = VK_FILTER_LINEAR;
-            samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-            samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-            samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-            samplerInfo.anisotropyEnable = VK_TRUE;
+        VkSamplerCreateInfo samplerInfo{};
+        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        samplerInfo.magFilter = VK_FILTER_LINEAR;
+        samplerInfo.minFilter = VK_FILTER_LINEAR;
+        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.anisotropyEnable = VK_TRUE;
 
-            VkPhysicalDeviceProperties properties{};
-            vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+        VkPhysicalDeviceProperties properties{};
+        vkGetPhysicalDeviceProperties(physicalDevice, &properties);
 
-            samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
-            samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-            samplerInfo.unnormalizedCoordinates = VK_FALSE;
-            samplerInfo.compareEnable = VK_FALSE;
-            samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-            samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-            samplerInfo.mipLodBias = 0.0f;
-            samplerInfo.minLod = 0.0f;
-            samplerInfo.maxLod = static_cast<float>(instance.material.mipLevels / 2);
+        samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
+        samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+        samplerInfo.unnormalizedCoordinates = VK_FALSE;
+        samplerInfo.compareEnable = VK_FALSE;
+        samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        samplerInfo.mipLodBias = 0.0f;
+        samplerInfo.minLod = 0.0f;
+        samplerInfo.maxLod = static_cast<float>(instance.material.mipLevels / 2);
 
-            if (vkCreateSampler(device, &samplerInfo, nullptr, &instance.material.textureSampler) !=
-                VK_SUCCESS) {
-                spdlog::error("Failed to create texture sampler!", true);
-            }
-
+        if (vkCreateSampler(device, &samplerInfo, nullptr, &instance.material.textureSampler) !=
+            VK_SUCCESS) {
+            spdlog::error("Failed to create texture sampler!", true);
         }
+
     }
 }
 

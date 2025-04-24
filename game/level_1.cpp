@@ -4,15 +4,16 @@ void Level1::init() {
 
     spdlog::info("Initializing scene {}...", name);
 
-    /*auto test = std::make_unique<GameObject>();
+    auto test = std::make_unique<GameObject>();
     test->name = "Viking Room";
     test->scale = glm::vec3(50.0f, 50.0f, 50.0f);
     test->rotation = glm::vec3(-80.0f, 0.0f, -90.0f);
     test->position.y = -25.0f;
-    test->mesh.modelPath = "game/assets/models/viking_room.obj";
-    test->material.texturePath = "game/assets/textures/viking_room.png";
-    test->loadModel(test->mesh.modelPath);
-    gameObjects.push_back(std::move(test));*/
+    //test->mesh.modelPath = "game/assets/models/viking_room.obj";
+    test->modelPath = "game/assets/models/viking_room.obj";
+    test->texturePath = "game/assets/textures/viking_room.png";
+    test->loadModel();
+    gameObjects.push_back(std::move(test));
 
     //auto c = std::make_unique<Camera>();
     //c->position.z = 150.0f;
@@ -28,21 +29,27 @@ void Level1::init() {
     test2->loadModel(test2->mesh.modelPath);
     gameObjects.push_back(std::move(test2));*/
 
-    /*auto test3 = std::make_unique<GameObject>();
+    auto test3 = std::make_unique<GameObject>();
     test3->name = "GLTF test";
     test3->scale = glm::vec3(200.0f, 200.0f, 200.0f);
-    test3->mesh.modelPath = "game/assets/models/Avocado.glb";
-    test3->material.texturePath = "game/assets/textures/san_giuseppe_bridge_4k.png";
-    test3->loadModel(test3->mesh.modelPath);
-    gameObjects.push_back(std::move(test3));*/
+    test3->modelPath = "game/assets/models/Avocado.glb";
+    test3->loadModel();
+    gameObjects.push_back(std::move(test3));
 
     auto test4 = std::make_unique<GameObject>();
     test4->name = "GLTF test";
     test4->scale = glm::vec3(10.0f, 10.0f, 10.0f);
-    test4->mesh.modelPath = "game/assets/models/Bistro_Godot.glb";
-    test4->material.texturePath = "game/assets/textures/san_giuseppe_bridge_4k.png";
-    test4->loadModel(test4->mesh.modelPath);
+    //test4->mesh.modelPath = "game/assets/models/Bistro_Godot.glb";
+    test4->modelPath = "game/assets/models/Bistro_Godot.glb";
+    //test4->material.texturePath = "game/assets/textures/san_giuseppe_bridge_4k.png";
+    test4->loadModel();
     gameObjects.push_back(std::move(test4));
+
+    auto test5 = std::make_unique<GameObject>();
+    test5->name = "GLTF test";
+    test5->modelPath = "game/assets/models/tester.glb";
+    test5->loadModel();
+    gameObjects.push_back(std::move(test5));
 
     player.init();
     camera = player.camera;
