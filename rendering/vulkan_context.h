@@ -52,6 +52,7 @@ public:
     void createDescriptorSets(std::unique_ptr<GameObject>& gameObject);
 
     void drawFrame(Scene* scene);
+    void createLightsUBO();
 
 private:
     VkDescriptorPool descriptorPool;
@@ -131,6 +132,14 @@ private:
 
     void createDescriptorSetLayout();
     VkDescriptorSetLayout descriptorSetLayout;
+
+    void updateLightsDescriptorSet();
+
+    void createLightsDescriptorSetLayout();
+    VkDescriptorSetLayout lightsDescriptorSetLayout;
+    VkDescriptorSet lightsDescriptorSet;
+    VkBuffer lightsBuffer;
+    VkDeviceMemory lightsBufferMemory;
 
     void createGraphicsPipeline();
     std::vector<char> readFile(const std::string& filename);

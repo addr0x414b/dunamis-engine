@@ -59,8 +59,8 @@ void GameObject::loadModel() {
         }
 
 
-       aiString texPath; 
-       if (mat->GetTexture(aiTextureType_BASE_COLOR, 0, &texPath) == AI_SUCCESS) {
+        aiString texPath; 
+        if (mat->GetTexture(aiTextureType_BASE_COLOR, 0, &texPath) == AI_SUCCESS) {
             const char* texRef = texPath.C_Str();
             instance.material.texturePath = texRef;
 
@@ -98,7 +98,7 @@ void GameObject::loadModel() {
                     std::log2(std::max(instance.material.texWidth, instance.material.texHeight)))) + 1;
                 spdlog::info("Successfully loaded texture for {}", m->mName.C_Str());
             }
-       } else {
+        } else {
             bool useDefaultTexture = false;
             if (texturePath != nullptr) {
                 instance.material.texturePath = texturePath;
@@ -122,7 +122,7 @@ void GameObject::loadModel() {
             } else {
                 spdlog::error("No texture found for {}. Using default texture.", m->mName.C_Str());
             }
-       }
+        }
 
     meshInstances.push_back(instance);
 

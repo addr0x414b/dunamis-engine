@@ -56,6 +56,19 @@ struct UniformBufferObject {
     glm::mat4 model;
     glm::mat4 view;
     glm::mat4 proj;
+    glm::vec3 cameraPosition;
+};
+
+struct LightData {
+    glm::vec3 position;
+    float padding;
+    glm::vec3 color;
+    float intensity;
+};
+
+struct LightsUBO {
+    LightData lights[16];
+    int numLights;
 };
 
 namespace std {

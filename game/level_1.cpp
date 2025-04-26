@@ -4,7 +4,7 @@ void Level1::init() {
 
     spdlog::info("Initializing scene {}...", name);
 
-    auto test = std::make_unique<GameObject>();
+    /*auto test = std::make_unique<GameObject>();
     test->name = "Viking Room";
     test->scale = glm::vec3(50.0f, 50.0f, 50.0f);
     test->rotation = glm::vec3(-80.0f, 0.0f, -90.0f);
@@ -13,7 +13,7 @@ void Level1::init() {
     test->modelPath = "game/assets/models/viking_room.obj";
     test->texturePath = "game/assets/textures/viking_room.png";
     test->loadModel();
-    gameObjects.push_back(std::move(test));
+    gameObjects.push_back(std::move(test));*/
 
     //auto c = std::make_unique<Camera>();
     //c->position.z = 150.0f;
@@ -29,12 +29,12 @@ void Level1::init() {
     test2->loadModel(test2->mesh.modelPath);
     gameObjects.push_back(std::move(test2));*/
 
-    auto test3 = std::make_unique<GameObject>();
+    /*auto test3 = std::make_unique<GameObject>();
     test3->name = "GLTF test";
     test3->scale = glm::vec3(200.0f, 200.0f, 200.0f);
     test3->modelPath = "game/assets/models/Avocado.glb";
     test3->loadModel();
-    gameObjects.push_back(std::move(test3));
+    gameObjects.push_back(std::move(test3));*/
 
     auto test4 = std::make_unique<GameObject>();
     test4->name = "GLTF test";
@@ -45,11 +45,31 @@ void Level1::init() {
     test4->loadModel();
     gameObjects.push_back(std::move(test4));
 
-    auto test5 = std::make_unique<GameObject>();
+    /*auto test5 = std::make_unique<GameObject>();
     test5->name = "GLTF test";
     test5->modelPath = "game/assets/models/tester.glb";
     test5->loadModel();
-    gameObjects.push_back(std::move(test5));
+    gameObjects.push_back(std::move(test5));*/
+
+    auto light = std::make_unique<PointLight>();
+    light->name = "Point Light";
+    light->modelPath = "game/assets/models/flatsphere.glb";
+    light->intensity = 3.0f;
+    light->position = glm::vec3(0.0f, 20.0f, 20.0f);
+    light->color = glm::vec3(1.0f, 1.0f, 1.0f);
+    light->loadModel();
+    gameObjects.push_back(std::move(light));
+    pointLights.push_back(static_cast<PointLight*>(gameObjects.back().get()));
+
+    auto light2 = std::make_unique<PointLight>();
+    light2->name = "Point Light";
+    light2->modelPath = "game/assets/models/flatsphere.glb";
+    light2->intensity = 10.0f;
+    light2->position = glm::vec3(0.0f, 20.0f, 50.0f);
+    light2->color = glm::vec3(1.0f, 0.0f, 0.0f);
+    light2->loadModel();
+    gameObjects.push_back(std::move(light2));
+    pointLights.push_back(static_cast<PointLight*>(gameObjects.back().get()));
 
     player.init();
     camera = player.camera;

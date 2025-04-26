@@ -20,6 +20,7 @@ void VulkanContext::init(SDL_Window* w) {
     createImageViews();
     createRenderPass();
     createDescriptorSetLayout();
+    createLightsDescriptorSetLayout();
     createGraphicsPipeline();
     createCommandPool();
     createColorResources();
@@ -697,6 +698,64 @@ void VulkanContext::createDescriptorSetLayout() {
     }
 }
 
+void VulkanContext::createLightsDescriptorSetLayout() {
+
+    VkDescriptorSetLayoutBinding lightsLayoutBinding{};
+    lightsLayoutBinding.binding = 0;
+    lightsLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    lightsLayoutBinding.descriptorCount = 1;
+    lightsLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    lightsLayoutBinding.pImmutableSamplers = nullptr;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &lightsLayoutBinding;
+
+    if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr,
+                                    &lightsDescriptorSetLayout) != VK_SUCCESS) {
+        spdlog::error("Failed to create lights descriptor set layout!");
+    } else {
+        spdlog::info("Successfully created lights descriptor set layout");
+    }
+}
+
+void VulkanContext::createLightsUBO() {
+
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = descriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &lightsDescriptorSetLayout;
+
+    if (vkAllocateDescriptorSets(device, &allocInfo,
+                               &lightsDescriptorSet) != VK_SUCCESS) {
+        spdlog::error("Failed to allocate lights descriptor set!");
+    } else {
+        spdlog::info("Successfully allocated lights descriptor set");
+    }
+
+}
+
+void VulkanContext::updateLightsDescriptorSet() {
+    vkDeviceWaitIdle(device);
+    VkDescriptorBufferInfo bufferInfo{};
+    bufferInfo.buffer = lightsBuffer;
+    bufferInfo.offset = 0;
+    bufferInfo.range = sizeof(LightsUBO);
+
+    VkWriteDescriptorSet descriptorWrite{};
+    descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrite.dstSet = lightsDescriptorSet;
+    descriptorWrite.dstBinding = 0;
+    descriptorWrite.dstArrayElement = 0;
+    descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptorWrite.descriptorCount = 1;
+    descriptorWrite.pBufferInfo = &bufferInfo;
+
+    vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, nullptr);
+}
+
 void VulkanContext::createGraphicsPipeline() {
 
     spdlog::info("Reading vertex shader code {}...", "rendering/shaders/vert.spv");
@@ -791,10 +850,22 @@ void VulkanContext::createGraphicsPipeline() {
         static_cast<uint32_t>(dynamicStates.size());
     dynamicState.pDynamicStates = dynamicStates.data();
 
+    VkDeviceSize bufferSize = sizeof(LightsUBO);
+
+    createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                     VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                 lightsBuffer, lightsBufferMemory);
+
+    VkDescriptorSetLayout setLayouts[] = {descriptorSetLayout,
+        lightsDescriptorSetLayout};
+
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
+    //pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.setLayoutCount = 2;
+    //pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
+    pipelineLayoutInfo.pSetLayouts = setLayouts;
     pipelineLayoutInfo.pushConstantRangeCount = 0;
 
     if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr,
@@ -1301,21 +1372,31 @@ void VulkanContext::createUniformBuffers(std::unique_ptr<GameObject>& gameObject
 
 void VulkanContext::createDescriptorPool(uint32_t numOfObjects) {
 
-    std::array<VkDescriptorPoolSize, 2> poolSizes{};
+    // Game Object uniform buffer, image sampler, and point light uniform buffer
+    std::array<VkDescriptorPoolSize, 3> poolSizes{};
+
+    // Per Game Object
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount =
         static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT);
 
+    // Texture samplers 
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount =
         static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT);
+
+    // Point light UB
+    poolSizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    // Will need to be the number of lights
+    poolSizes[2].descriptorCount = 2;
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
-    poolInfo.maxSets = static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT);
+    // +1 for point light ub
+    poolInfo.maxSets = static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT) + 2;
 
     if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) !=
         VK_SUCCESS) {
@@ -1609,6 +1690,8 @@ void VulkanContext::updateUniformBuffer(uint32_t currentImage, std::unique_ptr<G
             swapchainExtent.width / (float)swapchainExtent.height, 0.1f, 10000.0f);
 
         ubo.proj[1][1] *= -1;
+
+        ubo.cameraPosition = camFront;
         memcpy(instance.renderData.uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 
     }
@@ -1708,16 +1791,44 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
 
     // VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
     std::array<VkClearValue, 2> clearValues{};
-    clearValues[0].color = {{0.0f, 5.0f, 0.0f, 1.0f}};
+    clearValues[0].color = {{0.639f, 0.965f, 1.0f, 1.0f}};
     clearValues[1].depthStencil = {1.0f, 0};
     renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
     renderPassInfo.pClearValues = clearValues.data();
+
+    LightsUBO lightsUbo{};
+    lightsUbo.numLights = scene->pointLights.size();
+    for (size_t i = 0; i < lightsUbo.numLights; i++) {
+        /*PointLight* light = scene->pointLights[i];
+        LightData& dst = lightsUbo.lights[i];
+
+        dst.position = light->position;
+        dst.color = light->color;
+        spdlog::error("Light color: {} {} {}", light->color.x, light->color.y, light->color.z);
+        dst.intensity = light->intensity;*/
+
+        PointLight* light = scene->pointLights[i];
+        lightsUbo.lights[i].position = light->position;
+        lightsUbo.lights[i].color = light->color;
+        lightsUbo.lights[i].intensity = light->intensity;
+    }
+
+    void* data;
+    vkMapMemory(device, lightsBufferMemory, 0, sizeof(LightsUBO), 0, &data);
+    memcpy(data, &lightsUbo, sizeof(LightsUBO));
+    vkUnmapMemory(device, lightsBufferMemory);
+
+    updateLightsDescriptorSet();
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo,
                          VK_SUBPASS_CONTENTS_INLINE);
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                       graphicsPipeline);
+    
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    pipelineLayout, 1, 1,
+                                    &lightsDescriptorSet, 0, nullptr);
 
     VkViewport viewport{};
     viewport.x = 0.0f;

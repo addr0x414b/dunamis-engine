@@ -5,6 +5,7 @@
 #include "../input/input_manager.h"
 #include "camera.h"
 #include <vector>
+#include "point_light.h"
 
 class Scene {
 public:
@@ -14,6 +15,7 @@ public:
     virtual ~Scene() = default;
 
     std::vector<std::unique_ptr<GameObject>> gameObjects;
+    std::vector<PointLight*> pointLights;
     //Camera* camera = nullptr;
     std::shared_ptr<Camera> camera;
 
