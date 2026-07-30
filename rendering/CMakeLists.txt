@@ -9,4 +9,4 @@ target_link_libraries(VulkanContext PRIVATE SDL3::SDL3 Vulkan::Vulkan spdlog Vul
 
 add_library(VisualServer STATIC visual_server.cpp)
 target_include_directories(VisualServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(VisualServer PRIVATE SDL3::SDL3 VulkanContext VulkanUtils Scene assimp)
+target_link_libraries(VisualServer PRIVATE SDL3::SDL3 VulkanContext VulkanUtils Scene assimp spdlog)

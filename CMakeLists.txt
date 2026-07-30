@@ -14,7 +14,7 @@ add_subdirectory(input)
 
 add_executable(DunamisEngine main.cpp)
 
-target_link_libraries(DunamisEngine PRIVATE Dunamis VulkanUtils assimp)
+target_link_libraries(DunamisEngine PRIVATE Dunamis VulkanUtils assimp spdlog)
 
 set(SHADER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/rendering/shaders")
 set(SHADER_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/rendering/shaders")

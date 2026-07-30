@@ -36,6 +36,7 @@ void Level1::init() {
     test3->loadModel();
     gameObjects.push_back(std::move(test3));*/
 
+    /*
     auto test4 = std::make_unique<GameObject>();
     test4->name = "GLTF test";
     test4->scale = glm::vec3(10.0f, 10.0f, 10.0f);
@@ -43,7 +44,7 @@ void Level1::init() {
     test4->modelPath = "game/assets/models/Bistro_Godot.glb";
     //test4->material.texturePath = "game/assets/textures/san_giuseppe_bridge_4k.png";
     test4->loadModel();
-    gameObjects.push_back(std::move(test4));
+    gameObjects.push_back(std::move(test4));*/
 
     /*auto test5 = std::make_unique<GameObject>();
     test5->name = "GLTF test";
@@ -51,7 +52,7 @@ void Level1::init() {
     test5->loadModel();
     gameObjects.push_back(std::move(test5));*/
 
-    auto light = std::make_unique<PointLight>();
+    /*auto light = std::make_unique<PointLight>();
     light->name = "Point Light";
     light->modelPath = "game/assets/models/flatsphere.glb";
     light->intensity = 3.0f;
@@ -69,7 +70,7 @@ void Level1::init() {
     light2->color = glm::vec3(1.0f, 0.0f, 0.0f);
     light2->loadModel();
     gameObjects.push_back(std::move(light2));
-    pointLights.push_back(static_cast<PointLight*>(gameObjects.back().get()));
+    pointLights.push_back(static_cast<PointLight*>(gameObjects.back().get()));*/
 
     player.init();
     camera = player.camera;

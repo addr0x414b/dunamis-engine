@@ -70,8 +70,10 @@ void VulkanContext::createInstance() {
 
     if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS) {
         spdlog::error("Failed to create Vulkan instance!");
+    } else {
+        spdlog::info("Successfully created Vulkan instance");
     }
-    spdlog::info("Successfully created Vulkan instance");
+
 }
 
 bool VulkanContext::checkValidationLayerSupport() {

@@ -3,8 +3,10 @@ include(FetchContent)
 FetchContent_Declare(
     assimp
     GIT_REPOSITORY https://github.com/assimp/assimp.git
-    GIT_TAG v5.4.3
+    GIT_TAG v6.0.5
 )
+set(ASSIMP_BUILD_ZLIB ON CACHE BOOL "Build Assimp's bundled zlib/minizip" FORCE)
+set(ASSIMP_WARNINGS_AS_ERRORS OFF CACHE BOOL "Do not treat Assimp warnings as errors" FORCE)
 
 FetchContent_Declare(
     spdlog
