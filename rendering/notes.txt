@@ -1,0 +1,5 @@
+- Currently, the visual_server depends on the scene being initialized. This is because the visual server is what gives
+  the Vulkan Context all the info about the gameobjects and their textures. Therefore, if there is no scene or the scene
+  is null, visual server does not initialize. I do not believe visual server should depend on the scene because you can
+  have no game and no scene and the visual server continue to run but simply not render anything, rather than just
+  returning an error and not initializing. Remove scene dependency from visual_server (and vulkan context)

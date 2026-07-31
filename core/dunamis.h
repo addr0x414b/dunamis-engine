@@ -1,24 +1,36 @@
 #ifndef DUNAMIS_H
 #define DUNAMIS_H
 
-#include "../input/input_manager.h"
-#include <SDL3/SDL.h>
-#include "spdlog/spdlog.h"
+#include "platform.h"
+#include "result.h"
 
 #include "../game/level_1.h"
+#include "../input/input_manager.h"
 #include "../rendering/visual_server.h"
 
 class Dunamis {
 public:
-    Dunamis();
-    ~Dunamis();
+    Dunamis() = default;
+    ~Dunamis() noexcept;
+
+    Dunamis(const Dunamis&) = delete;
+    Dunamis& operator=(const Dunamis&) = delete;
+    Dunamis(Dunamis&&) = delete;
+    Dunamis& operator=(Dunamis&&) = delete;
+
+    [[nodiscard]] Result initialize();
+    [[nodiscard]] Result run();
+    [[nodiscard]] bool shutdown() noexcept;
 
 private:
-    Level1 level1; // Put before visualServer to avoid dangling pointer
+    // Members are destroyed in reverse declaration order. The scene and
+    // platform must remain alive while the renderer shuts down.
+    Level1 level1;
+    Platform platform;
     VisualServer visualServer;
-    void run();
     std::shared_ptr<InputManager> inputManager;
-
+    bool initializationAttempted = false;
+    bool initialized = false;
 };
 
 #endif

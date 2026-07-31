@@ -1,4 +1,7 @@
-add_library(Dunamis STATIC dunamis.cpp)
+add_library(Dunamis STATIC
+        dunamis.cpp
+        platform.cpp
+)
 
 target_include_directories(Dunamis PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 

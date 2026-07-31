@@ -42,3 +42,8 @@ add_custom_command(
         COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${TEX_SOURCE_DIR} ${TEX_BINARY_DIR}
 )
+
+include(CTest)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()

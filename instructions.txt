@@ -1,7 +1,13 @@
 Requirements:
 1) cmake
+2) ctest
 
 Steps:
 1) cmake --preset=debug
 2) cmake --build build
 3) navigate to build and run "DunamisEngine"
+
+To run tests:
+1) cmake -S . -B build -DBUILD_TESTING=ON
+2) cmake --build build --parallel
+3) ctest --test-dir build

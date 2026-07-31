@@ -1,0 +1,2 @@
+- Currently, dunamis is tied to the scene. This is a similar issue noted under rendering. Need to make some sort of
+  scene manager that the engine owns and somehow handle null scenes but allow for the running of the engine anyway.
