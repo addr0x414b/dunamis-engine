@@ -1,6 +1,10 @@
 #ifndef VULKAN_UTILS_H
 #define VULKAN_UTILS_H
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
+
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_ENABLE_EXPERIMENTAL
@@ -8,6 +12,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/hash.hpp>
 #include <vulkan/vulkan.h>
+#include "../../scene/scene_limits.h"
 #include "../../third_party/stb/stb_image.h"
 
 struct Vertex {
@@ -67,9 +72,16 @@ struct LightData {
 };
 
 struct LightsUBO {
-    LightData lights[16];
-    int numLights;
+    std::array<LightData, scene_limits::maxPointLights> lights{};
+    std::int32_t numLights = 0;
 };
+
+static_assert(sizeof(LightData) == 32,
+              "LightData must match the fragment shader's std140 layout");
+static_assert(
+    offsetof(LightsUBO, numLights) ==
+        sizeof(LightData) * scene_limits::maxPointLights,
+    "LightsUBO must match the fragment shader's std140 layout");
 
 namespace std {
 template <>

@@ -20,21 +20,32 @@ Result VisualServer::initialize(SDL_Window* window, Scene* scene) {
             "Cannot initialize Visual Server with a null scene");
     }
 
+    Result result = scene->activate();
+    if (!result) {
+        return Result::failure(
+            "Failed to activate scene for rendering: " + result.error());
+    }
+
     initializationAttempted = true;
     initialized = false;
     currentScene = scene;
 
-    Result result = vulkanContext.init(window, currentScene);
+    result = vulkanContext.init(window, currentScene);
     if (!result) {
-        currentScene = nullptr;
+        if (vulkanContext.cleanup()) {
+            currentScene->deactivate();
+            currentScene = nullptr;
+        }
         return Result::failure("Failed to initialize Vulkan Context: " +
                                result.error());
     }
 
     result = initGameObjects();
     if (!result) {
-        (void)vulkanContext.cleanup();
-        currentScene = nullptr;
+        if (vulkanContext.cleanup()) {
+            currentScene->deactivate();
+            currentScene = nullptr;
+        }
         return Result::failure(
             "Failed to initialize scene rendering resources: " +
             result.error());
@@ -49,8 +60,9 @@ Result VisualServer::initialize(SDL_Window* window, Scene* scene) {
 
 Result VisualServer::initGameObjects() {
     uint32_t totalMeshInstances = 0;
-    for (auto& o : currentScene->gameObjects) {
-        totalMeshInstances += static_cast<uint32_t>(o->meshInstances.size());
+    for (const auto& o : currentScene->gameObjects()) {
+        totalMeshInstances +=
+            static_cast<uint32_t>(o->meshInstances().size());
     }
 
     Result result = vulkanContext.createDescriptorPool(totalMeshInstances);
@@ -64,7 +76,7 @@ Result VisualServer::initGameObjects() {
     }
 
     spdlog::info("Initializing scene game object visual data...");
-    for (auto& gameObject : currentScene->gameObjects) {
+    for (const auto& gameObject : currentScene->gameObjects()) {
         result = vulkanContext.createTextureImages(gameObject);
         if (!result) {
             return result;
@@ -117,6 +129,7 @@ bool VisualServer::shutdown() noexcept {
             "idle");
         return false;
     }
+    currentScene->deactivate();
     initialized = false;
     currentScene = nullptr;
     spdlog::info("Successfully shut down Visual Server");
@@ -125,4 +138,11 @@ bool VisualServer::shutdown() noexcept {
 
 VisualServer::~VisualServer() noexcept {
     (void)shutdown();
+    if (currentScene) {
+        // No user code can run between this destructor body and the final
+        // VulkanContext cleanup attempt. Release the topology lock so a scene
+        // that outlives a failed renderer shutdown is not sealed forever.
+        currentScene->deactivate();
+        currentScene = nullptr;
+    }
 }

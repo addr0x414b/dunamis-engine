@@ -8,6 +8,15 @@
 #include <memory>
 #include <string>
 
+class VulkanContextTestAccess {
+public:
+    [[nodiscard]] static Result createUniformBuffers(
+        VulkanContext& context,
+        const std::unique_ptr<GameObject>& gameObject) {
+        return context.createUniformBuffers(gameObject);
+    }
+};
+
 namespace {
 
 constexpr int skipped = 77;
@@ -46,17 +55,28 @@ int main(int argc, char** argv) {
     {
         EmptyScene dirtyScene;
         auto object = std::make_unique<GameObject>();
-        object->meshInstances.emplace_back();
-        object->meshInstances.front().material.textureSampler =
-            foreignSamplerHandle();
-        dirtyScene.gameObjects.push_back(std::move(object));
+        MeshInstance dirtyInstance{};
+        dirtyInstance.material.textureSampler = foreignSamplerHandle();
+        const Result addMeshResult =
+            object->addMeshInstance(std::move(dirtyInstance));
+        if (!addMeshResult) {
+            std::cerr << "Failed to build dirty test mesh: "
+                      << addMeshResult.error() << '\n';
+            return 1;
+        }
+        const Result addResult = dirtyScene.addGameObject(std::move(object));
+        if (!addResult) {
+            std::cerr << "Failed to build dirty test scene: "
+                      << addResult.error() << '\n';
+            return 1;
+        }
 
         VulkanContext context;
         const Result dirtySceneResult =
             context.init(platform.window(), &dirtyScene);
         const VkSampler retainedSampler =
-            dirtyScene.gameObjects.front()
-                ->meshInstances.front()
+            dirtyScene.gameObjects().front()
+                ->meshInstances().front()
                 .material.textureSampler;
 
         const bool firstCleanup = context.cleanup();
@@ -73,9 +93,6 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        dirtyScene.gameObjects.front()
-            ->meshInstances.front()
-            .material.textureSampler = VK_NULL_HANDLE;
     }
 
     EmptyScene scene;
@@ -117,8 +134,20 @@ int main(int argc, char** argv) {
 
     EmptyScene resourceScene;
     auto resourceObject = std::make_unique<GameObject>();
-    resourceObject->meshInstances.emplace_back();
-    resourceScene.gameObjects.push_back(std::move(resourceObject));
+    const Result addMeshResult =
+        resourceObject->addMeshInstance(MeshInstance{});
+    if (!addMeshResult) {
+        std::cerr << "Failed to build resource test mesh: "
+                  << addMeshResult.error() << '\n';
+        return 1;
+    }
+    const Result addResourceResult =
+        resourceScene.addGameObject(std::move(resourceObject));
+    if (!addResourceResult) {
+        std::cerr << "Failed to build resource test scene: "
+                  << addResourceResult.error() << '\n';
+        return 1;
+    }
 
     {
         VulkanContext initializedContext;
@@ -131,8 +160,10 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        const Result bufferResult = initializedContext.createUniformBuffers(
-            resourceScene.gameObjects.front());
+        const Result bufferResult =
+            VulkanContextTestAccess::createUniformBuffers(
+                initializedContext,
+                resourceScene.gameObjects().front());
         if (!bufferResult) {
             std::cerr << "Failed to create tracked scene buffers: "
                       << bufferResult.error() << '\n';
@@ -147,7 +178,9 @@ int main(int argc, char** argv) {
     }
 
     const RenderData& renderData =
-        resourceScene.gameObjects.front()->meshInstances.front().renderData;
+        resourceScene.gameObjects().front()
+            ->meshInstances().front()
+            .renderData;
     if (!renderData.uniformBuffers.empty() ||
         !renderData.uniformBuffersMemory.empty() ||
         !renderData.uniformBuffersMapped.empty()) {

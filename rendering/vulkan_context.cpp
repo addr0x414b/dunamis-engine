@@ -4,8 +4,6 @@
 #include <exception>
 #include <limits>
 #include <utility>
-
-#define STB_IMAGE_IMPLEMENTATION
 #include "../third_party/stb/stb_image.h"
 
 namespace {
@@ -120,18 +118,19 @@ VulkanContext::~VulkanContext() noexcept {
 
 Result VulkanContext::validateSceneRenderStateIsEmpty(
     const Scene* scene) const {
-    for (size_t objectIndex = 0; objectIndex < scene->gameObjects.size();
+    for (size_t objectIndex = 0;
+         objectIndex < scene->gameObjects().size();
          ++objectIndex) {
-        const auto& object = scene->gameObjects[objectIndex];
+        const auto& object = scene->gameObjects()[objectIndex];
         if (!object) {
             continue;
         }
 
         for (size_t instanceIndex = 0;
-             instanceIndex < object->meshInstances.size();
+             instanceIndex < object->meshInstances_.size();
              ++instanceIndex) {
             const auto& instanceData =
-                object->meshInstances[instanceIndex];
+                object->meshInstances_[instanceIndex];
             const auto& mesh = instanceData.mesh;
             const auto& material = instanceData.material;
             const auto& renderData = instanceData.renderData;
@@ -166,9 +165,9 @@ Result VulkanContext::validateSceneRenderStateIsEmpty(
 
 Result VulkanContext::prepareSceneResourceTracking(const Scene* scene) {
     size_t meshInstanceCount = 0;
-    for (const auto& object : scene->gameObjects) {
+    for (const auto& object : scene->gameObjects()) {
         if (object) {
-            meshInstanceCount += object->meshInstances.size();
+            meshInstanceCount += object->meshInstances().size();
         }
     }
 
@@ -310,7 +309,7 @@ Result VulkanContext::createInstance() {
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     appInfo.pApplicationName = "Dunamis Engine";
-    appInfo.applicationVersion = VK_MAKE_VERSION(0, 0, 2./);
+    appInfo.applicationVersion = VK_MAKE_VERSION(0, 0, 2);
     appInfo.pEngineName = "Dunamis Engine";
     appInfo.engineVersion = VK_MAKE_VERSION(0, 0, 2);
     appInfo.apiVersion = VK_API_VERSION_1_3;
@@ -1776,7 +1775,7 @@ Result VulkanContext::createFramebuffers() {
 }
 
 Result VulkanContext::createTextureImages(
-    std::unique_ptr<GameObject>& gameObject) {
+    const std::unique_ptr<GameObject>& gameObject) {
     if (!initialized) {
         return Result::failure("Vulkan Context is not initialized");
     }
@@ -1784,7 +1783,7 @@ Result VulkanContext::createTextureImages(
         return Result::failure("Cannot create textures for a null game object");
     }
 
-    for (auto& instance : gameObject->meshInstances) {
+    for (auto& instance : gameObject->meshInstances_) {
 
         VkDeviceSize imageSize = instance.material.texWidth *
                                 instance.material.texHeight * 4;
@@ -1871,7 +1870,7 @@ Result VulkanContext::createTextureImages(
 }
 
 Result VulkanContext::createTextureImageViews(
-    std::unique_ptr<GameObject>& gameObject) {
+    const std::unique_ptr<GameObject>& gameObject) {
     if (!initialized) {
         return Result::failure("Vulkan Context is not initialized");
     }
@@ -1879,7 +1878,7 @@ Result VulkanContext::createTextureImageViews(
         return Result::failure(
             "Cannot create texture image views for a null game object");
     }
-    for (auto& instance : gameObject->meshInstances) {
+    for (auto& instance : gameObject->meshInstances_) {
         if (instance.material.textureImageView != VK_NULL_HANDLE) {
             return Result::failure(
                 "Texture image-view slot already contains a Vulkan resource");
@@ -1901,7 +1900,7 @@ Result VulkanContext::createTextureImageViews(
 }
 
 Result VulkanContext::createTextureSamplers(
-    std::unique_ptr<GameObject>& gameObject) {
+    const std::unique_ptr<GameObject>& gameObject) {
     if (!initialized) {
         return Result::failure("Vulkan Context is not initialized");
     }
@@ -1910,7 +1909,7 @@ Result VulkanContext::createTextureSamplers(
             "Cannot create texture samplers for a null game object");
     }
 
-    for (auto& instance : gameObject->meshInstances) {
+    for (auto& instance : gameObject->meshInstances_) {
         if (instance.material.textureSampler != VK_NULL_HANDLE) {
             return Result::failure(
                 "Texture sampler slot already contains a Vulkan resource");
@@ -1956,7 +1955,7 @@ Result VulkanContext::createTextureSamplers(
 }
 
 Result VulkanContext::createVertexBuffers(
-    std::unique_ptr<GameObject>& gameObject) {
+    const std::unique_ptr<GameObject>& gameObject) {
     if (!initialized) {
         return Result::failure("Vulkan Context is not initialized");
     }
@@ -1965,7 +1964,7 @@ Result VulkanContext::createVertexBuffers(
             "Cannot create vertex buffers for a null game object");
     }
 
-    for (auto& instance : gameObject->meshInstances) {
+    for (auto& instance : gameObject->meshInstances_) {
         VkDeviceSize bufferSize = sizeof(instance.mesh.vertices[0]) * instance.mesh.vertices.size();
         ownedTemporaryBuffers.emplace_back();
         auto& deferredStaging = ownedTemporaryBuffers.back();
@@ -2034,7 +2033,7 @@ Result VulkanContext::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer,
 }
 
 Result VulkanContext::createIndexBuffers(
-    std::unique_ptr<GameObject>& gameObject) {
+    const std::unique_ptr<GameObject>& gameObject) {
     if (!initialized) {
         return Result::failure("Vulkan Context is not initialized");
     }
@@ -2043,7 +2042,7 @@ Result VulkanContext::createIndexBuffers(
             "Cannot create index buffers for a null game object");
     }
 
-    for (auto& instance : gameObject->meshInstances) {
+    for (auto& instance : gameObject->meshInstances_) {
         VkDeviceSize bufferSize = sizeof(instance.mesh.indices[0]) * instance.mesh.indices.size();
 
         ownedTemporaryBuffers.emplace_back();
@@ -2101,7 +2100,7 @@ Result VulkanContext::createIndexBuffers(
 }
 
 Result VulkanContext::createUniformBuffers(
-    std::unique_ptr<GameObject>& gameObject) {
+    const std::unique_ptr<GameObject>& gameObject) {
     if (!initialized) {
         return Result::failure("Vulkan Context is not initialized");
     }
@@ -2110,7 +2109,7 @@ Result VulkanContext::createUniformBuffers(
             "Cannot create uniform buffers for a null game object");
     }
 
-    for (auto& instance : gameObject->meshInstances) {
+    for (auto& instance : gameObject->meshInstances_) {
         VkDeviceSize bufferSize = sizeof(UniformBufferObject);
 
         if (!instance.renderData.uniformBuffers.empty() ||
@@ -2201,7 +2200,7 @@ Result VulkanContext::createDescriptorPool(uint32_t numOfObjects) {
 }
 
 Result VulkanContext::createDescriptorSets(
-    std::unique_ptr<GameObject>& gameObject) {
+    const std::unique_ptr<GameObject>& gameObject) {
     if (!initialized) {
         return Result::failure("Vulkan Context is not initialized");
     }
@@ -2210,7 +2209,7 @@ Result VulkanContext::createDescriptorSets(
             "Cannot create descriptor sets for a null game object");
     }
 
-    for (auto& instance : gameObject->meshInstances) {
+    for (auto& instance : gameObject->meshInstances_) {
 
         std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT,
                                                 descriptorSetLayout);
@@ -2579,8 +2578,11 @@ void VulkanContext::cleanupSwapchain() noexcept {
     swapchainExtent = {};
 }
 
-void VulkanContext::updateUniformBuffer(uint32_t currentImage, std::unique_ptr<GameObject>& gameObject, glm::vec3 camPos, glm::vec3 camFront, glm::vec3 camUp) {
-    for (auto& instance : gameObject->meshInstances) {
+void VulkanContext::updateUniformBuffer(
+    uint32_t currentImage,
+    const std::unique_ptr<GameObject>& gameObject, glm::vec3 camPos,
+    glm::vec3 camFront, glm::vec3 camUp) {
+    for (auto& instance : gameObject->meshInstances_) {
         UniformBufferObject ubo{};
 
         ubo.model = glm::mat4(1.0f);
@@ -2618,6 +2620,23 @@ Result VulkanContext::drawFrame(Scene* scene) {
     if (!scene) {
         return Result::failure("Cannot draw a null scene");
     }
+    if (scene != currentScene) {
+        return Result::failure(
+            "Cannot draw a scene that was not used to initialize this "
+            "Vulkan Context");
+    }
+    if (!scene->isActive()) {
+        return Result::failure("Cannot draw an inactive scene");
+    }
+    const Camera* camera = scene->activeCamera();
+    if (!camera) {
+        return Result::failure(
+            "Cannot draw a scene without an active camera");
+    }
+    if (scene->pointLightCount() > scene_limits::maxPointLights) {
+        return Result::failure(
+            "Cannot draw a scene that exceeds the point-light limit");
+    }
 
     VkResult result = vkWaitForFences(
         device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
@@ -2654,8 +2673,9 @@ Result VulkanContext::drawFrame(Scene* scene) {
     }
 
 
-    for (auto& obj : scene->gameObjects) {
-        updateUniformBuffer(currentFrame, obj, scene->camera->position, scene->camera->front, scene->camera->up);
+    for (const auto& obj : scene->gameObjects()) {
+        updateUniformBuffer(currentFrame, obj, camera->position,
+                            camera->front, camera->up);
     }
 
 
@@ -2740,20 +2760,13 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
     renderPassInfo.pClearValues = clearValues.data();
 
     LightsUBO lightsUbo{};
-    lightsUbo.numLights = scene->pointLights.size();
-    for (size_t i = 0; i < lightsUbo.numLights; i++) {
-        /*PointLight* light = scene->pointLights[i];
-        LightData& dst = lightsUbo.lights[i];
-
-        dst.position = light->position;
-        dst.color = light->color;
-        spdlog::error("Light color: {} {} {}", light->color.x, light->color.y, light->color.z);
-        dst.intensity = light->intensity;*/
-
-        PointLight* light = scene->pointLights[i];
-        lightsUbo.lights[i].position = light->position;
-        lightsUbo.lights[i].color = light->color;
-        lightsUbo.lights[i].intensity = light->intensity;
+    lightsUbo.numLights =
+        static_cast<std::int32_t>(scene->pointLightCount());
+    for (std::size_t i = 0; i < scene->pointLightCount(); ++i) {
+        const PointLight& light = scene->pointLightAt(i);
+        lightsUbo.lights[i].position = light.position;
+        lightsUbo.lights[i].color = light.color;
+        lightsUbo.lights[i].intensity = light.intensity;
     }
 
     void* data = nullptr;
@@ -2794,8 +2807,8 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
     scissor.extent = swapchainExtent;
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-    for (auto& obj : scene->gameObjects) {
-        for (auto& instance : obj->meshInstances) {
+    for (const auto& obj : scene->gameObjects()) {
+        for (auto& instance : obj->meshInstances_) {
             VkBuffer vertexBuffers[] = {instance.mesh.vertexBuffer};
             VkDeviceSize offsets[] = {0};
             vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);

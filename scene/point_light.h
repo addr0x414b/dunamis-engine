@@ -5,7 +5,7 @@
 
 class PointLight : public GameObject {
 public:
-    glm::vec3 color;
+    glm::vec3 color = glm::vec3(1.0f);
     float intensity = 1.0f;
 
 private:

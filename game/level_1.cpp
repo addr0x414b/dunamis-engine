@@ -1,5 +1,7 @@
 #include "level_1.h"
 
+#include <stdexcept>
+
 void Level1::init() {
 
     spdlog::info("Initializing scene {}...", name);
@@ -13,7 +15,7 @@ void Level1::init() {
     test->modelPath = "game/assets/models/viking_room.obj";
     test->texturePath = "game/assets/textures/viking_room.png";
     test->loadModel();
-    gameObjects.push_back(std::move(test));*/
+    (void)addGameObject(std::move(test));*/
 
     //auto c = std::make_unique<Camera>();
     //c->position.z = 150.0f;
@@ -27,14 +29,14 @@ void Level1::init() {
     test2->mesh.modelPath = "game/assets/models/BistroExterior.fbx";
     test2->material.texturePath = "game/assets/textures/viking_room.png";
     test2->loadModel(test2->mesh.modelPath);
-    gameObjects.push_back(std::move(test2));*/
+    (void)addGameObject(std::move(test2));*/
 
     /*auto test3 = std::make_unique<GameObject>();
     test3->name = "GLTF test";
     test3->scale = glm::vec3(200.0f, 200.0f, 200.0f);
     test3->modelPath = "game/assets/models/Avocado.glb";
     test3->loadModel();
-    gameObjects.push_back(std::move(test3));*/
+    (void)addGameObject(std::move(test3));*/
 
     /*
     auto test4 = std::make_unique<GameObject>();
@@ -44,13 +46,13 @@ void Level1::init() {
     test4->modelPath = "game/assets/models/Bistro_Godot.glb";
     //test4->material.texturePath = "game/assets/textures/san_giuseppe_bridge_4k.png";
     test4->loadModel();
-    gameObjects.push_back(std::move(test4));*/
+    (void)addGameObject(std::move(test4));*/
 
     /*auto test5 = std::make_unique<GameObject>();
     test5->name = "GLTF test";
     test5->modelPath = "game/assets/models/tester.glb";
     test5->loadModel();
-    gameObjects.push_back(std::move(test5));*/
+    (void)addGameObject(std::move(test5));*/
 
     /*auto light = std::make_unique<PointLight>();
     light->name = "Point Light";
@@ -59,8 +61,7 @@ void Level1::init() {
     light->position = glm::vec3(0.0f, 20.0f, 20.0f);
     light->color = glm::vec3(1.0f, 1.0f, 1.0f);
     light->loadModel();
-    gameObjects.push_back(std::move(light));
-    pointLights.push_back(static_cast<PointLight*>(gameObjects.back().get()));
+    (void)addGameObject(std::move(light));
 
     auto light2 = std::make_unique<PointLight>();
     light2->name = "Point Light";
@@ -69,25 +70,28 @@ void Level1::init() {
     light2->position = glm::vec3(0.0f, 20.0f, 50.0f);
     light2->color = glm::vec3(1.0f, 0.0f, 0.0f);
     light2->loadModel();
-    gameObjects.push_back(std::move(light2));
-    pointLights.push_back(static_cast<PointLight*>(gameObjects.back().get()));*/
+    (void)addGameObject(std::move(light2));*/
 
     player.init();
-    camera = player.camera;
+    const Result cameraResult = setActiveCamera(player.camera);
+    if (!cameraResult) {
+        throw std::runtime_error(
+            "Failed to set the Level 1 camera: " + cameraResult.error());
+    }
 
     spdlog::info("Scene successfully initialized");
 
 } 
 
 void Level1::start() {
-    for (auto& obj : gameObjects) {
+    for (const auto& obj : gameObjects()) {
         obj->start();
     }
     player.start(inputManager);
 }
 
 void Level1::update() {
-    for (auto& obj : gameObjects) {
+    for (const auto& obj : gameObjects()) {
         obj->update();
     }
     player.update(inputManager);

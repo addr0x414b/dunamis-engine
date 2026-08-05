@@ -43,6 +43,9 @@ struct SwapchainSupportDetails {
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
+class VisualServer;
+class VulkanContextTestAccess;
+
 class VulkanContext {
 public:
     VulkanContext() = default;
@@ -54,26 +57,29 @@ public:
     [[nodiscard]] Result init(SDL_Window* window, Scene* scene);
     bool cleanup() noexcept;
 
+private:
+    friend class VisualServer;
+    friend class VulkanContextTestAccess;
+
     [[nodiscard]] Result createTextureImages(
-        std::unique_ptr<GameObject>& gameObject);
+        const std::unique_ptr<GameObject>& gameObject);
     [[nodiscard]] Result createTextureImageViews(
-        std::unique_ptr<GameObject>& gameObject);
+        const std::unique_ptr<GameObject>& gameObject);
     [[nodiscard]] Result createTextureSamplers(
-        std::unique_ptr<GameObject>& gameObject);
+        const std::unique_ptr<GameObject>& gameObject);
     [[nodiscard]] Result createVertexBuffers(
-        std::unique_ptr<GameObject>& gameObject);
+        const std::unique_ptr<GameObject>& gameObject);
     [[nodiscard]] Result createIndexBuffers(
-        std::unique_ptr<GameObject>& gameObject);
+        const std::unique_ptr<GameObject>& gameObject);
     [[nodiscard]] Result createUniformBuffers(
-        std::unique_ptr<GameObject>& gameObject);
+        const std::unique_ptr<GameObject>& gameObject);
     [[nodiscard]] Result createDescriptorPool(uint32_t numOfObjects);
     [[nodiscard]] Result createDescriptorSets(
-        std::unique_ptr<GameObject>& gameObject);
+        const std::unique_ptr<GameObject>& gameObject);
     [[nodiscard]] Result createLightsUBO();
 
     [[nodiscard]] Result drawFrame(Scene* scene);
 
-private:
     struct OwnedBufferAllocation {
         VkBuffer* bufferSlot = nullptr;
         VkDeviceMemory* memorySlot = nullptr;
@@ -111,7 +117,7 @@ private:
     void cleanupTrackedSceneResources() noexcept;
 
     void updateUniformBuffer(uint32_t currentImage,
-                             std::unique_ptr<GameObject>& gameObject,
+                             const std::unique_ptr<GameObject>& gameObject,
                              glm::vec3 camPos, glm::vec3 camFront,
                              glm::vec3 camUp);
     [[nodiscard]] Result recreateSwapchain();

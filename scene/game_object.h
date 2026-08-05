@@ -5,9 +5,14 @@
 #include <assimp/scene.h>
 #include <assimp/Importer.hpp>
 #include <glm/glm.hpp>
+#include <string>
+#include <vector>
 #include "spdlog/spdlog.h"
+#include "../core/result.h"
 #include "../rendering/utils/vulkan_utils.h"
 
+class Scene;
+class VulkanContext;
 
 class GameObject {
 public:
@@ -24,16 +29,21 @@ public:
     // texturePath is only used if the textures are not baked into the model file
     const char* texturePath = nullptr;
 
-
-    std::vector<MeshInstance> meshInstances;
+    [[nodiscard]] Result addMeshInstance(MeshInstance meshInstance);
+    [[nodiscard]] const std::vector<MeshInstance>&
+    meshInstances() const noexcept;
 
     // Call after setting modelPath (and texturePath if needed)
     // Loads the model and sets up the mesh and materials
     void loadModel();
 
 private:
-    Assimp::Importer importer;
+    friend class Scene;
+    friend class VulkanContext;
 
+
+    Assimp::Importer importer;
+    std::vector<MeshInstance> meshInstances_;
 };
 
 #endif

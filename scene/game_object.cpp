@@ -1,5 +1,8 @@
 #include "game_object.h"
+#define STB_IMAGE_IMPLEMENTATION
 #include "../third_party/stb/stb_image.h"
+
+#include <utility>
 
 void GameObject::loadModel() {
 
@@ -124,10 +127,34 @@ void GameObject::loadModel() {
             }
         }
 
-    meshInstances.push_back(instance);
+        const Result addResult = addMeshInstance(std::move(instance));
+        if (!addResult) {
+            spdlog::error("Failed to add mesh from model {}: {}", modelPath,
+                          addResult.error());
+            return;
+        }
 
     }
 
     spdlog::info("Successfully loaded game object model");
     
+}
+
+Result GameObject::addMeshInstance(MeshInstance meshInstance) {
+    try {
+        meshInstances_.push_back(std::move(meshInstance));
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "Failed to add mesh instance: " +
+            std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "Failed to add mesh instance with an unknown error");
+    }
+
+    return Result::success();
+}
+
+const std::vector<MeshInstance>& GameObject::meshInstances() const noexcept {
+    return meshInstances_;
 }

@@ -64,3 +64,24 @@ set_tests_properties(vulkan_partial_cleanup PROPERTIES
                 "has not been destroyed;leaked object"
         TIMEOUT 30
 )
+
+add_executable(SceneInvariantTests scene_invariant_tests.cpp)
+
+target_include_directories(SceneInvariantTests PRIVATE
+        ${CMAKE_SOURCE_DIR}
+)
+
+target_link_libraries(SceneInvariantTests PRIVATE
+        Scene
+        GameObject
+        SDL3::SDL3
+        Vulkan::Vulkan
+        VulkanUtils
+        assimp
+        glm
+        spdlog
+)
+
+add_test(NAME scene_invariants
+        COMMAND SceneInvariantTests
+)
