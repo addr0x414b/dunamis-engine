@@ -1,5 +1,6 @@
 #include "scene/scene.h"
 
+#include <cstddef>
 #include <cmath>
 #include <iostream>
 #include <memory>
@@ -47,6 +48,16 @@ static_assert(std::is_same_v<
               const std::vector<MeshInstance>&>);
 static_assert(std::is_same_v<
               decltype(std::declval<GameObject&>().loadModel()), Result>);
+static_assert(offsetof(MaterialPushConstants, baseColorFactor) == 0);
+static_assert(offsetof(MaterialPushConstants, metallicFactor) == 16);
+static_assert(offsetof(MaterialPushConstants, roughnessFactor) == 20);
+static_assert(offsetof(MaterialPushConstants, alphaMode) == 24);
+static_assert(offsetof(MaterialPushConstants, alphaCutoff) == 28);
+static_assert(offsetof(MaterialPushConstants, normalMapEnabled) == 32);
+static_assert(offsetof(MaterialPushConstants,
+                       metallicRoughnessMapEnabled) == 36);
+static_assert(sizeof(MaterialPushConstants) == 40);
+static_assert(alignof(MaterialPushConstants) % 4 == 0);
 
 int main() {
     bool passed = true;
@@ -83,7 +94,11 @@ int main() {
                      "Vertex normal/tangent Vulkan layout is incorrect");
 
     const Material defaultMaterial;
-    passed &= expect(!defaultMaterial.normalMapEnabled &&
+    passed &= expect(defaultMaterial.baseColorFactor == glm::vec4(1.0f) &&
+                         defaultMaterial.metallicFactor == 1.0f &&
+                         defaultMaterial.roughnessFactor == 1.0f &&
+                         !defaultMaterial.hasMetallicRoughnessMap &&
+                         !defaultMaterial.normalMapEnabled &&
                          defaultMaterial.normalMapPath.empty() &&
                          defaultMaterial.normalMapPixels == nullptr &&
                          defaultMaterial.normalMapWidth == 0 &&
@@ -93,8 +108,22 @@ int main() {
                          defaultMaterial.normalMapImage == VK_NULL_HANDLE &&
                          defaultMaterial.normalMapImageMemory == VK_NULL_HANDLE &&
                          defaultMaterial.normalMapImageView == VK_NULL_HANDLE &&
-                         defaultMaterial.normalMapSampler == VK_NULL_HANDLE,
-                     "Default material normal-map state is not cleanup-safe");
+                         defaultMaterial.normalMapSampler == VK_NULL_HANDLE &&
+                         defaultMaterial.metallicRoughnessMapPath.empty() &&
+                         defaultMaterial.metallicRoughnessMapPixels == nullptr &&
+                         defaultMaterial.metallicRoughnessMapWidth == 0 &&
+                         defaultMaterial.metallicRoughnessMapHeight == 0 &&
+                         defaultMaterial.metallicRoughnessMapChannels == 0 &&
+                         defaultMaterial.metallicRoughnessMapMipLevels == 0 &&
+                         defaultMaterial.metallicRoughnessMapImage ==
+                             VK_NULL_HANDLE &&
+                         defaultMaterial.metallicRoughnessMapImageMemory ==
+                             VK_NULL_HANDLE &&
+                         defaultMaterial.metallicRoughnessMapImageView ==
+                             VK_NULL_HANDLE &&
+                         defaultMaterial.metallicRoughnessMapSampler ==
+                             VK_NULL_HANDLE,
+                     "Default material state is not cleanup-safe");
 
     passed &= expect(scene_limits::maxPointLights == 16,
                      "The point-light limit is not 16");

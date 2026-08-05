@@ -66,7 +66,35 @@ int main() {
                    std::string::npos,
                "Normal-map preflight error did not identify missing pixels");
     stbi_image_free(normalMapObject->meshInstances().front().material.pixels);
+
+    auto metallicRoughnessObject = std::make_unique<GameObject>();
+    MeshInstance metallicRoughnessInstance{};
+    metallicRoughnessInstance.material.pixels =
+        static_cast<stbi_uc*>(std::malloc(4));
+    metallicRoughnessInstance.material.texWidth = 1;
+    metallicRoughnessInstance.material.texHeight = 1;
+    metallicRoughnessInstance.material.mipLevels = 1;
+    metallicRoughnessInstance.material.hasMetallicRoughnessMap = true;
+    const Result metallicRoughnessAddResult =
+        metallicRoughnessObject->addMeshInstance(
+            std::move(metallicRoughnessInstance));
+    if (!metallicRoughnessAddResult) {
+        std::cerr << metallicRoughnessAddResult.error() << '\n';
+        return 1;
+    }
+    const Result metallicRoughnessResult =
+        VulkanContextTestAccess::validateTextureData(
+            context, metallicRoughnessObject);
+    const bool metallicRoughnessPassed =
+        expect(!metallicRoughnessResult,
+               "Null metallic-roughness pixels were accepted") &&
+        expect(metallicRoughnessResult.error().find(
+                   "missing metallic-roughness pixels") != std::string::npos,
+               "Metallic-roughness preflight error did not identify missing "
+               "pixels");
+    stbi_image_free(
+        metallicRoughnessObject->meshInstances().front().material.pixels);
     context.cleanup();
     context.cleanup();
-    return passed && normalPassed ? 0 : 1;
+    return passed && normalPassed && metallicRoughnessPassed ? 0 : 1;
 }

@@ -41,7 +41,7 @@ void Level1::init() {
     auto test4 = std::make_unique<PointLight>();
     test4->name = "GLTF test";
     test4->scale = glm::vec3(200.0f, 200.0f, 200.0f);
-    test4->position = glm::vec3(0.0f, 20.0f, 0.0f);
+    test4->position = glm::vec3(50.0f, 20.0f, 100.0f);
     test4->modelPath = "game/assets/models/Avocado.glb";
     test4->intensity = 100.0f;
     (void)test4->loadModel();

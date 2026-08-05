@@ -87,6 +87,45 @@ Result loadNormalMapFileTexture(const std::filesystem::path& path,
     return Result::success();
 }
 
+Result loadMetallicRoughnessFileTexture(const std::filesystem::path& path,
+                                        Material& material) {
+    material.metallicRoughnessMapPixels = stbi_load(
+        path.string().c_str(), &material.metallicRoughnessMapWidth,
+        &material.metallicRoughnessMapHeight,
+        &material.metallicRoughnessMapChannels, STBI_rgb_alpha);
+    if (!material.metallicRoughnessMapPixels) {
+        return Result::failure("stbi_load failed for " + path.string() +
+                               ": " + stbFailureReason());
+    }
+
+    Result mipResult = calculateMipLevels(
+        material.metallicRoughnessMapWidth,
+        material.metallicRoughnessMapHeight,
+        material.metallicRoughnessMapMipLevels);
+    if (!mipResult) {
+        stbi_image_free(material.metallicRoughnessMapPixels);
+        material.metallicRoughnessMapPixels = nullptr;
+        return Result::failure("Invalid metallic-roughness dimensions for " +
+                               path.string() + ": " + mipResult.error());
+    }
+    return Result::success();
+}
+
+float sanitizeMaterialFactor(float value, float fallback) {
+    if (!std::isfinite(value)) {
+        return fallback;
+    }
+    return std::clamp(value, 0.0f, 1.0f);
+}
+
+glm::vec4 sanitizeBaseColorFactor(const aiColor4D& color) {
+    return glm::vec4(
+        sanitizeMaterialFactor(static_cast<float>(color.r), 1.0f),
+        sanitizeMaterialFactor(static_cast<float>(color.g), 1.0f),
+        sanitizeMaterialFactor(static_cast<float>(color.b), 1.0f),
+        sanitizeMaterialFactor(static_cast<float>(color.a), 1.0f));
+}
+
 bool isFiniteVector(const glm::vec3& vector) {
     return std::isfinite(vector.x) && std::isfinite(vector.y) &&
            std::isfinite(vector.z);
@@ -208,6 +247,26 @@ Result GameObject::loadModel() {
         if (material->Get(AI_MATKEY_TWOSIDED, doubleSided) == AI_SUCCESS) {
             instance.material.doubleSided = doubleSided;
         }
+
+        aiColor4D importedBaseColorFactor{};
+        if (material->Get(AI_MATKEY_BASE_COLOR, importedBaseColorFactor) ==
+            AI_SUCCESS) {
+            instance.material.baseColorFactor =
+                sanitizeBaseColorFactor(importedBaseColorFactor);
+        }
+        float importedMetallicFactor = instance.material.metallicFactor;
+        if (material->Get(AI_MATKEY_METALLIC_FACTOR, importedMetallicFactor) ==
+            AI_SUCCESS) {
+            instance.material.metallicFactor =
+                sanitizeMaterialFactor(importedMetallicFactor, 1.0f);
+        }
+        float importedRoughnessFactor = instance.material.roughnessFactor;
+        if (material->Get(AI_MATKEY_ROUGHNESS_FACTOR,
+                          importedRoughnessFactor) == AI_SUCCESS) {
+            instance.material.roughnessFactor =
+                sanitizeMaterialFactor(importedRoughnessFactor, 1.0f);
+        }
+
         std::unordered_map<Vertex, uint32_t> uniqueVertices{};
         bool meshHasUsableTangents = mesh->HasTangentsAndBitangents();
 
@@ -433,6 +492,89 @@ Result GameObject::loadModel() {
                 spdlog::warn("Failed to load normal map {} for mesh {}: {}; "
                              "using geometric normals",
                              normalRef, mesh->mName.C_Str(), normalResult.error());
+            }
+        }
+
+        aiString metallicRoughnessMapReference;
+        if (material->GetTexture(
+                AI_MATKEY_GLTF_PBRMETALLICROUGHNESS_METALLICROUGHNESS_TEXTURE,
+                &metallicRoughnessMapReference) == AI_SUCCESS) {
+            const char* metallicRoughnessRef =
+                metallicRoughnessMapReference.C_Str();
+            instance.material.metallicRoughnessMapPath =
+                metallicRoughnessRef;
+            Result metallicRoughnessResult =
+                Result::failure("uninitialized metallic-roughness map");
+
+            if (metallicRoughnessRef[0] == '*') {
+                bool embeddedValid = false;
+                unsigned long textureIndex = 0;
+                try {
+                    std::size_t parsed = 0;
+                    textureIndex = std::stoul(metallicRoughnessRef + 1,
+                                              &parsed);
+                    embeddedValid = metallicRoughnessRef[1 + parsed] == '\0';
+                } catch (...) {
+                    embeddedValid = false;
+                }
+
+                const aiTexture* texture =
+                    embeddedValid && textureIndex < scene->mNumTextures
+                        ? scene->mTextures[textureIndex]
+                        : nullptr;
+                if (texture && texture->mHeight == 0 && texture->pcData &&
+                    texture->mWidth > 0 &&
+                    texture->mWidth <= static_cast<unsigned int>(
+                                           std::numeric_limits<int>::max())) {
+                    instance.material.metallicRoughnessMapPixels =
+                        stbi_load_from_memory(
+                            reinterpret_cast<const unsigned char*>(
+                                texture->pcData),
+                            texture->mWidth,
+                            &instance.material.metallicRoughnessMapWidth,
+                            &instance.material.metallicRoughnessMapHeight,
+                            &instance.material.metallicRoughnessMapChannels,
+                            STBI_rgb_alpha);
+                    if (instance.material.metallicRoughnessMapPixels) {
+                        metallicRoughnessResult = calculateMipLevels(
+                            instance.material.metallicRoughnessMapWidth,
+                            instance.material.metallicRoughnessMapHeight,
+                            instance.material.metallicRoughnessMapMipLevels);
+                        if (!metallicRoughnessResult) {
+                            stbi_image_free(
+                                instance.material.metallicRoughnessMapPixels);
+                            instance.material.metallicRoughnessMapPixels =
+                                nullptr;
+                        }
+                    } else {
+                        metallicRoughnessResult = Result::failure(
+                            "stbi_load_from_memory failed: " +
+                            stbFailureReason());
+                    }
+                } else {
+                    metallicRoughnessResult = Result::failure(
+                        "invalid embedded metallic-roughness map reference");
+                }
+            } else {
+                const std::filesystem::path resolvedPath =
+                    std::filesystem::path(modelPath).parent_path() /
+                    metallicRoughnessRef;
+                instance.material.metallicRoughnessMapPath =
+                    resolvedPath.string();
+                metallicRoughnessResult = loadMetallicRoughnessFileTexture(
+                    resolvedPath, instance.material);
+            }
+
+            if (metallicRoughnessResult) {
+                instance.material.hasMetallicRoughnessMap = true;
+                allocatedPixels.push_back(
+                    instance.material.metallicRoughnessMapPixels);
+            } else {
+                spdlog::warn(
+                    "Failed to load optional metallic-roughness texture {} "
+                    "for mesh {}: {}; using scalar factors",
+                    instance.material.metallicRoughnessMapPath,
+                    mesh->mName.C_Str(), metallicRoughnessResult.error());
             }
         }
         pendingMeshes.push_back(std::move(instance));

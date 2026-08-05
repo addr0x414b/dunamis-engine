@@ -137,6 +137,9 @@ enum class MaterialAlphaMode : std::uint32_t {
 
 struct Material {
     const char* texturePath = nullptr;
+    glm::vec4 baseColorFactor{1.0f};
+    float metallicFactor = 1.0f;
+    float roughnessFactor = 1.0f;
     uint32_t mipLevels = 0;
     VkImage textureImage = VK_NULL_HANDLE;
     VkDeviceMemory textureImageMemory = VK_NULL_HANDLE;
@@ -157,27 +160,62 @@ struct Material {
     int normalMapHeight = 0;
     int normalMapChannels = 0;
     bool normalMapEnabled = false;
+    std::string metallicRoughnessMapPath{};
+    uint32_t metallicRoughnessMapMipLevels = 0;
+    VkImage metallicRoughnessMapImage = VK_NULL_HANDLE;
+    VkDeviceMemory metallicRoughnessMapImageMemory = VK_NULL_HANDLE;
+    VkImageView metallicRoughnessMapImageView = VK_NULL_HANDLE;
+    VkSampler metallicRoughnessMapSampler = VK_NULL_HANDLE;
+    stbi_uc* metallicRoughnessMapPixels = nullptr;
+    int metallicRoughnessMapWidth = 0;
+    int metallicRoughnessMapHeight = 0;
+    int metallicRoughnessMapChannels = 0;
+    bool hasMetallicRoughnessMap = false;
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
     float alphaCutoff = 0.5f;
     bool doubleSided = false;
 };
 
 struct MaterialPushConstants {
+    glm::vec4 baseColorFactor{1.0f};
+    float metallicFactor = 1.0f;
+    float roughnessFactor = 1.0f;
     std::int32_t alphaMode =
         static_cast<std::int32_t>(MaterialAlphaMode::Opaque);
     float alphaCutoff = 0.5f;
     std::int32_t normalMapEnabled = 0;
-    std::int32_t padding = 0;
+    std::int32_t metallicRoughnessMapEnabled = 0;
 };
 
-static_assert(sizeof(MaterialPushConstants) == 16,
+static_assert(sizeof(float) == 4 && sizeof(std::int32_t) == 4,
+              "MaterialPushConstants requires four-byte scalar types");
+static_assert(sizeof(MaterialPushConstants) == 40,
               "MaterialPushConstants must match the fragment shader layout");
-static_assert(offsetof(MaterialPushConstants, alphaCutoff) == 4,
+static_assert(offsetof(MaterialPushConstants, baseColorFactor) == 0,
               "MaterialPushConstants must match the fragment shader layout");
-static_assert(offsetof(MaterialPushConstants, normalMapEnabled) == 8,
+static_assert(offsetof(MaterialPushConstants, metallicFactor) == 16,
               "MaterialPushConstants must match the fragment shader layout");
-static_assert(offsetof(MaterialPushConstants, padding) == 12,
+static_assert(offsetof(MaterialPushConstants, roughnessFactor) == 20,
               "MaterialPushConstants must match the fragment shader layout");
+static_assert(offsetof(MaterialPushConstants, alphaMode) == 24,
+              "MaterialPushConstants must match the fragment shader layout");
+static_assert(offsetof(MaterialPushConstants, alphaCutoff) == 28,
+              "MaterialPushConstants must match the fragment shader layout");
+static_assert(offsetof(MaterialPushConstants, normalMapEnabled) == 32,
+              "MaterialPushConstants must match the fragment shader layout");
+static_assert(offsetof(MaterialPushConstants, metallicRoughnessMapEnabled) == 36,
+              "MaterialPushConstants must match the fragment shader layout");
+static_assert(alignof(MaterialPushConstants) % 4 == 0,
+              "MaterialPushConstants must be four-byte aligned");
+static_assert(offsetof(MaterialPushConstants, baseColorFactor) % 4 == 0 &&
+                  offsetof(MaterialPushConstants, metallicFactor) % 4 == 0 &&
+                  offsetof(MaterialPushConstants, roughnessFactor) % 4 == 0 &&
+                  offsetof(MaterialPushConstants, alphaMode) % 4 == 0 &&
+                  offsetof(MaterialPushConstants, alphaCutoff) % 4 == 0 &&
+                  offsetof(MaterialPushConstants, normalMapEnabled) % 4 == 0 &&
+                  offsetof(MaterialPushConstants,
+                           metallicRoughnessMapEnabled) % 4 == 0,
+              "MaterialPushConstants fields must be four-byte aligned");
 
 struct RenderData {
     std::vector<VkBuffer> uniformBuffers;

@@ -1,6 +1,7 @@
 #include "scene/game_object.h"
 
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -16,6 +17,10 @@ bool expect(bool condition, const char* message) {
     return true;
 }
 
+bool nearlyEqual(float actual, float expected) {
+    return std::fabs(actual - expected) < 0.0001f;
+}
+
 class CurrentPathGuard final {
 public:
     explicit CurrentPathGuard(const std::filesystem::path& path)
@@ -28,7 +33,10 @@ private:
     std::filesystem::path original_;
 };
 
-std::filesystem::path createMissingTextureModel() {
+std::filesystem::path createMissingTextureModel(
+    const char* baseColorFactor = "0.8,0.7,0.6,0.5",
+    const char* metallicFactor = "0.35",
+    const char* roughnessFactor = "0.65") {
     const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto directory =
         std::filesystem::temp_directory_path() /
@@ -42,14 +50,28 @@ std::filesystem::path createMissingTextureModel() {
     binary.write(reinterpret_cast<const char*>(positions), sizeof(positions));
     binary.write(reinterpret_cast<const char*>(indices), sizeof(indices));
 
+    std::ofstream metallicRoughness(directory / "metallic-roughness.ppm",
+                                    std::ios::binary);
+    metallicRoughness << "P6\n1 1\n255\n";
+    const unsigned char metallicRoughnessPixel[] = {0, 255, 128};
+    metallicRoughness.write(
+        reinterpret_cast<const char*>(metallicRoughnessPixel),
+        sizeof(metallicRoughnessPixel));
+
     std::ofstream model(directory / "model.gltf");
     model << R"json({
 "asset":{"version":"2.0"},
 "buffers":[{"uri":"mesh.bin","byteLength":42}],
 "bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":6}],
 "accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]},{"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}],
-"images":[{"uri":"missing.png"},{"uri":"missing-normal.png"}],"textures":[{"source":0},{"source":1}],
-"materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}},"normalTexture":{"index":1}}],
+"images":[{"uri":"missing.png"},{"uri":"missing-normal.png"},{"uri":"metallic-roughness.ppm"}],"textures":[{"source":0},{"source":1},{"source":2}],
+"materials":[{"pbrMetallicRoughness":{"baseColorFactor":[)json"
+           << baseColorFactor
+           << R"json(],"metallicFactor":)json"
+           << metallicFactor
+           << R"json(,"roughnessFactor":)json"
+           << roughnessFactor
+           << R"json(,"baseColorTexture":{"index":0},"metallicRoughnessTexture":{"index":2}},"normalTexture":{"index":1}}],
 "meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":0}]}],
 "nodes":[{"mesh":0}],"scenes":[{"nodes":[0]}],"scene":0
 })json";
@@ -86,7 +108,86 @@ bool testFallbackSuccess(const std::filesystem::path& buildDirectory) {
                                  instance.material.normalMapPath.find(
                                      "missing-normal.png") != std::string::npos,
                              "Missing optional normal map was not disabled safely");
+            passed &= expect(
+                nearlyEqual(instance.material.baseColorFactor.r, 0.8f) &&
+                    nearlyEqual(instance.material.baseColorFactor.g, 0.7f) &&
+                    nearlyEqual(instance.material.baseColorFactor.b, 0.6f) &&
+                    nearlyEqual(instance.material.baseColorFactor.a, 0.5f) &&
+                    nearlyEqual(instance.material.metallicFactor, 0.35f) &&
+                    nearlyEqual(instance.material.roughnessFactor, 0.65f),
+                "glTF material factors were not imported");
+            passed &= expect(
+                instance.material.hasMetallicRoughnessMap &&
+                    instance.material.metallicRoughnessMapPixels != nullptr &&
+                    instance.material.metallicRoughnessMapWidth == 1 &&
+                    instance.material.metallicRoughnessMapHeight == 1 &&
+                    instance.material.metallicRoughnessMapPath ==
+                        (modelPath.parent_path() /
+                         "metallic-roughness.ppm")
+                            .string() &&
+                    instance.material.metallicRoughnessMapPixels[1] == 255 &&
+                    instance.material.metallicRoughnessMapPixels[2] == 128,
+                "Combined metallic-roughness texture was not resolved");
             stbi_image_free(instance.material.pixels);
+            stbi_image_free(instance.material.metallicRoughnessMapPixels);
+        }
+    }
+    std::filesystem::remove_all(modelPath.parent_path());
+    return passed;
+}
+
+bool testFactorValidation(const std::filesystem::path& buildDirectory) {
+    const auto modelPath = createMissingTextureModel(
+        "-0.2,2.0,0.5,3.0", "2.0", "-1.0");
+    bool passed = true;
+    {
+        CurrentPathGuard guard(buildDirectory);
+        GameObject object;
+        object.modelPath = modelPath.c_str();
+        const Result result = object.loadModel();
+        passed &= expect(static_cast<bool>(result),
+                         "Invalid-factor glTF fixture did not load");
+        if (result && !object.meshInstances().empty()) {
+            const Material& material = object.meshInstances().front().material;
+            passed &= expect(
+                nearlyEqual(material.baseColorFactor.r, 0.0f) &&
+                    nearlyEqual(material.baseColorFactor.g, 1.0f) &&
+                    nearlyEqual(material.baseColorFactor.b, 0.5f) &&
+                    nearlyEqual(material.baseColorFactor.a, 1.0f) &&
+                    nearlyEqual(material.metallicFactor, 1.0f) &&
+                    nearlyEqual(material.roughnessFactor, 0.0f),
+                "Invalid glTF factors were not bounded safely");
+            stbi_image_free(material.pixels);
+            stbi_image_free(material.metallicRoughnessMapPixels);
+        }
+    }
+    std::filesystem::remove_all(modelPath.parent_path());
+    return passed;
+}
+
+bool testOptionalMetallicRoughnessFailure(
+    const std::filesystem::path& buildDirectory) {
+    const auto modelPath = createMissingTextureModel();
+    std::filesystem::remove(modelPath.parent_path() /
+                             "metallic-roughness.ppm");
+    bool passed = true;
+    {
+        CurrentPathGuard guard(buildDirectory);
+        GameObject object;
+        object.modelPath = modelPath.c_str();
+        const Result result = object.loadModel();
+        passed &= expect(static_cast<bool>(result),
+                         "A failed optional metallic-roughness map rejected "
+                         "the model");
+        if (result && !object.meshInstances().empty()) {
+            const Material& material = object.meshInstances().front().material;
+            passed &= expect(
+                !material.hasMetallicRoughnessMap &&
+                    material.metallicRoughnessMapPixels == nullptr &&
+                    nearlyEqual(material.metallicFactor, 0.35f) &&
+                    nearlyEqual(material.roughnessFactor, 0.65f),
+                "Optional metallic-roughness failure did not preserve factors");
+            stbi_image_free(material.pixels);
         }
     }
     std::filesystem::remove_all(modelPath.parent_path());
@@ -117,9 +218,10 @@ int main(int argc, char** argv) {
     const auto modelPath = createMissingTextureModel();
     const auto noFallbackDirectory = modelPath.parent_path() / "no-fallback";
     std::filesystem::create_directories(noFallbackDirectory);
-    const bool passed =
-        testFallbackSuccess(argv[1]) &&
-        testFallbackFailure(modelPath, noFallbackDirectory);
+    bool passed = testFallbackSuccess(argv[1]);
+    passed &= testFallbackFailure(modelPath, noFallbackDirectory);
+    passed &= testFactorValidation(argv[1]);
+    passed &= testOptionalMetallicRoughnessFailure(argv[1]);
     std::filesystem::remove_all(modelPath.parent_path());
     return passed ? 0 : 1;
 }

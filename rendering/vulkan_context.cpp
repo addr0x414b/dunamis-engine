@@ -149,7 +149,11 @@ Result VulkanContext::validateSceneRenderStateIsEmpty(
                 material.normalMapImage != VK_NULL_HANDLE ||
                 material.normalMapImageMemory != VK_NULL_HANDLE ||
                 material.normalMapImageView != VK_NULL_HANDLE ||
-                material.normalMapSampler != VK_NULL_HANDLE;
+                material.normalMapSampler != VK_NULL_HANDLE ||
+                material.metallicRoughnessMapImage != VK_NULL_HANDLE ||
+                material.metallicRoughnessMapImageMemory != VK_NULL_HANDLE ||
+                material.metallicRoughnessMapImageView != VK_NULL_HANDLE ||
+                material.metallicRoughnessMapSampler != VK_NULL_HANDLE;
             const bool hasRenderData =
                 !renderData.uniformBuffers.empty() ||
                 !renderData.uniformBuffersMemory.empty() ||
@@ -179,12 +183,12 @@ Result VulkanContext::prepareSceneResourceTracking(const Scene* scene) {
     try {
         ownedSceneBuffers.reserve(
             meshInstanceCount * (MAX_FRAMES_IN_FLIGHT + 2));
-        ownedSceneImages.reserve(meshInstanceCount * 2);
-        ownedSceneImageViews.reserve(meshInstanceCount * 2);
-        ownedSceneSamplers.reserve(meshInstanceCount * 2);
+        ownedSceneImages.reserve(meshInstanceCount * 3);
+        ownedSceneImageViews.reserve(meshInstanceCount * 3);
+        ownedSceneSamplers.reserve(meshInstanceCount * 3);
         ownedSceneDescriptorSets.reserve(meshInstanceCount);
         ownedRenderData.reserve(meshInstanceCount);
-        ownedTemporaryBuffers.reserve(meshInstanceCount * 3);
+        ownedTemporaryBuffers.reserve(meshInstanceCount * 5);
     } catch (const std::exception& exception) {
         return Result::failure(
             "Failed to reserve Vulkan scene-resource ownership records: " +
@@ -214,6 +218,12 @@ Result VulkanContext::validateTextureData(
                                    std::to_string(index) +
                                    " has missing normal-map pixels");
         }
+        if (material.hasMetallicRoughnessMap &&
+            !material.metallicRoughnessMapPixels) {
+            return Result::failure("Game object mesh instance " +
+                                   std::to_string(index) +
+                                   " has missing metallic-roughness pixels");
+        }
         if (material.texWidth <= 0 || material.texHeight <= 0) {
             return Result::failure("Game object mesh instance " +
                                    std::to_string(index) +
@@ -236,6 +246,34 @@ Result VulkanContext::validateTextureData(
             return Result::failure("Game object mesh instance " +
                                    std::to_string(index) +
                                    " has invalid normal-map image size");
+        }
+        if (material.hasMetallicRoughnessMap &&
+            (material.metallicRoughnessMapWidth <= 0 ||
+             material.metallicRoughnessMapHeight <= 0 ||
+             material.metallicRoughnessMapMipLevels == 0)) {
+            return Result::failure(
+                "Game object mesh instance " + std::to_string(index) +
+                " has invalid metallic-roughness image size");
+        }
+        if (material.hasMetallicRoughnessMap) {
+            const auto metallicRoughnessWidth = static_cast<std::size_t>(
+                material.metallicRoughnessMapWidth);
+            const auto metallicRoughnessHeight = static_cast<std::size_t>(
+                material.metallicRoughnessMapHeight);
+            if (metallicRoughnessWidth >
+                    std::numeric_limits<std::size_t>::max() /
+                        metallicRoughnessHeight ||
+                metallicRoughnessWidth * metallicRoughnessHeight >
+                    std::numeric_limits<std::size_t>::max() / 4 ||
+                metallicRoughnessWidth >
+                    std::numeric_limits<VkDeviceSize>::max() /
+                        metallicRoughnessHeight ||
+                metallicRoughnessWidth * metallicRoughnessHeight >
+                    std::numeric_limits<VkDeviceSize>::max() / 4) {
+                return Result::failure(
+                    "Game object mesh instance " + std::to_string(index) +
+                    " has invalid metallic-roughness image size");
+            }
         }
     }
     return Result::success();
@@ -1160,8 +1198,18 @@ Result VulkanContext::createDescriptorSetLayout() {
     normalSamplerLayoutBinding.pImmutableSamplers = nullptr;
     normalSamplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    std::array<VkDescriptorSetLayoutBinding, 3> bindings = {
-        uboLayoutBinding, samplerLayoutBinding, normalSamplerLayoutBinding};
+    VkDescriptorSetLayoutBinding metallicRoughnessSamplerLayoutBinding{};
+    metallicRoughnessSamplerLayoutBinding.binding = 3;
+    metallicRoughnessSamplerLayoutBinding.descriptorCount = 1;
+    metallicRoughnessSamplerLayoutBinding.descriptorType =
+        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    metallicRoughnessSamplerLayoutBinding.pImmutableSamplers = nullptr;
+    metallicRoughnessSamplerLayoutBinding.stageFlags =
+        VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    std::array<VkDescriptorSetLayoutBinding, 4> bindings = {
+        uboLayoutBinding, samplerLayoutBinding, normalSamplerLayoutBinding,
+        metallicRoughnessSamplerLayoutBinding};
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1360,6 +1408,14 @@ Result VulkanContext::createGraphicsPipeline() {
     dynamicState.dynamicStateCount =
         static_cast<uint32_t>(dynamicStates.size());
     dynamicState.pDynamicStates = dynamicStates.data();
+
+    VkPhysicalDeviceProperties deviceProperties{};
+    vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
+    if (sizeof(MaterialPushConstants) >
+        deviceProperties.limits.maxPushConstantsSize) {
+        return Result::failure(
+            "Material push constants exceed the device push-constant limit");
+    }
 
     VkDeviceSize bufferSize = sizeof(LightsUBO);
 
@@ -1882,6 +1938,22 @@ Result VulkanContext::createTextureImages(
             material.normalMapChannels = 4;
             material.normalMapMipLevels = 1;
         }
+        if (!material.metallicRoughnessMapPixels) {
+            material.metallicRoughnessMapPixels =
+                static_cast<stbi_uc*>(std::malloc(4));
+            if (!material.metallicRoughnessMapPixels) {
+                return Result::failure(
+                    "Failed to allocate neutral metallic-roughness map");
+            }
+            material.metallicRoughnessMapPixels[0] = 255;
+            material.metallicRoughnessMapPixels[1] = 255;
+            material.metallicRoughnessMapPixels[2] = 255;
+            material.metallicRoughnessMapPixels[3] = 255;
+            material.metallicRoughnessMapWidth = 1;
+            material.metallicRoughnessMapHeight = 1;
+            material.metallicRoughnessMapChannels = 4;
+            material.metallicRoughnessMapMipLevels = 1;
+        }
 
         auto uploadTexture = [&](stbi_uc*& pixels, int width, int height,
                                  uint32_t mipLevels, VkFormat format,
@@ -1958,6 +2030,15 @@ Result VulkanContext::createTextureImages(
                                material.normalMapImage,
                                material.normalMapImageMemory, "normal-map image");
         if (!result) return result;
+        result = uploadTexture(
+            material.metallicRoughnessMapPixels,
+            material.metallicRoughnessMapWidth,
+            material.metallicRoughnessMapHeight,
+            material.metallicRoughnessMapMipLevels, VK_FORMAT_R8G8B8A8_UNORM,
+            material.metallicRoughnessMapImage,
+            material.metallicRoughnessMapImageMemory,
+            "metallic-roughness image");
+        if (!result) return result;
     }
     return Result::success();
 }
@@ -1973,7 +2054,9 @@ Result VulkanContext::createTextureImageViews(
     }
     for (auto& instance : gameObject->meshInstances_) {
         if (instance.material.textureImageView != VK_NULL_HANDLE ||
-            instance.material.normalMapImageView != VK_NULL_HANDLE) {
+            instance.material.normalMapImageView != VK_NULL_HANDLE ||
+            instance.material.metallicRoughnessMapImageView !=
+                VK_NULL_HANDLE) {
             return Result::failure(
                 "Texture image-view slot already contains a Vulkan resource");
         }
@@ -1999,6 +2082,20 @@ Result VulkanContext::createTextureImageViews(
         if (!result) {
             return addContext("Failed to create normal-map image view", result);
         }
+        const size_t metallicRoughnessOwnershipIndex =
+            ownedSceneImageViews.size();
+        ownedSceneImageViews.push_back(
+            {&instance.material.metallicRoughnessMapImageView});
+        result = createImageView(
+            instance.material.metallicRoughnessMapImage,
+            VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT,
+            instance.material.metallicRoughnessMapMipLevels,
+            instance.material.metallicRoughnessMapImageView,
+            &ownedSceneImageViews[metallicRoughnessOwnershipIndex]);
+        if (!result) {
+            return addContext(
+                "Failed to create metallic-roughness image view", result);
+        }
     }
     return Result::success();
 }
@@ -2015,7 +2112,8 @@ Result VulkanContext::createTextureSamplers(
 
     for (auto& instance : gameObject->meshInstances_) {
         if (instance.material.textureSampler != VK_NULL_HANDLE ||
-            instance.material.normalMapSampler != VK_NULL_HANDLE) {
+            instance.material.normalMapSampler != VK_NULL_HANDLE ||
+            instance.material.metallicRoughnessMapSampler != VK_NULL_HANDLE) {
             return Result::failure(
                 "Texture sampler slot already contains a Vulkan resource");
         }
@@ -2062,6 +2160,11 @@ Result VulkanContext::createTextureSamplers(
         result = createSampler(instance.material.normalMapSampler,
                                instance.material.normalMapMipLevels,
                                "normal map");
+        if (!result) return result;
+        result = createSampler(
+            instance.material.metallicRoughnessMapSampler,
+            instance.material.metallicRoughnessMapMipLevels,
+            "metallic-roughness map");
         if (!result) return result;
     }
     return Result::success();
@@ -2287,7 +2390,7 @@ Result VulkanContext::createDescriptorPool(uint32_t numOfObjects) {
     // Texture samplers 
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount =
-        static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT * 2);
+        static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT * 3);
 
     // Point light UB
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -2372,7 +2475,15 @@ Result VulkanContext::createDescriptorSets(
             normalImageInfo.imageView = instance.material.normalMapImageView;
             normalImageInfo.sampler = instance.material.normalMapSampler;
 
-            std::array<VkWriteDescriptorSet, 3> descriptorWrites{};
+            VkDescriptorImageInfo metallicRoughnessImageInfo{};
+            metallicRoughnessImageInfo.imageLayout =
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            metallicRoughnessImageInfo.imageView =
+                instance.material.metallicRoughnessMapImageView;
+            metallicRoughnessImageInfo.sampler =
+                instance.material.metallicRoughnessMapSampler;
+
+            std::array<VkWriteDescriptorSet, 4> descriptorWrites{};
 
             descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             descriptorWrites[0].dstSet = instance.renderData.descriptorSets[i];
@@ -2399,6 +2510,15 @@ Result VulkanContext::createDescriptorSets(
                 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             descriptorWrites[2].descriptorCount = 1;
             descriptorWrites[2].pImageInfo = &normalImageInfo;
+
+            descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[3].dstSet = instance.renderData.descriptorSets[i];
+            descriptorWrites[3].dstBinding = 3;
+            descriptorWrites[3].dstArrayElement = 0;
+            descriptorWrites[3].descriptorType =
+                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            descriptorWrites[3].descriptorCount = 1;
+            descriptorWrites[3].pImageInfo = &metallicRoughnessImageInfo;
 
             vkUpdateDescriptorSets(device,
                                 static_cast<uint32_t>(descriptorWrites.size()),
@@ -2964,10 +3084,13 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
                                     0, nullptr);
 
             const MaterialPushConstants materialPushConstants{
+                instance.material.baseColorFactor,
+                instance.material.metallicFactor,
+                instance.material.roughnessFactor,
                 static_cast<std::int32_t>(instance.material.alphaMode),
                 instance.material.alphaCutoff,
                 instance.material.normalMapEnabled ? 1 : 0,
-                0};
+                instance.material.hasMetallicRoughnessMap ? 1 : 0};
             vkCmdPushConstants(commandBuffer, pipelineLayout,
                                VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                sizeof(MaterialPushConstants),
