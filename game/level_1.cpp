@@ -14,7 +14,7 @@ void Level1::init() {
     //test->mesh.modelPath = "game/assets/models/viking_room.obj";
     test->modelPath = "game/assets/models/viking_room.obj";
     test->texturePath = "game/assets/textures/viking_room.png";
-    test->loadModel();
+    (void)test->loadModel();
     (void)addGameObject(std::move(test));*/
 
     //auto c = std::make_unique<Camera>();
@@ -28,15 +28,24 @@ void Level1::init() {
     //test2->position.y = -25.0f;
     test2->mesh.modelPath = "game/assets/models/BistroExterior.fbx";
     test2->material.texturePath = "game/assets/textures/viking_room.png";
-    test2->loadModel(test2->mesh.modelPath);
+    //(void)test2->loadModel();
     (void)addGameObject(std::move(test2));*/
 
-    /*auto test3 = std::make_unique<GameObject>();
+    auto test3 = std::make_unique<GameObject>();
     test3->name = "GLTF test";
-    test3->scale = glm::vec3(200.0f, 200.0f, 200.0f);
-    test3->modelPath = "game/assets/models/Avocado.glb";
-    test3->loadModel();
-    (void)addGameObject(std::move(test3));*/
+    test3->scale = glm::vec3(1.0f, 1.0f, 1.0f);
+    test3->modelPath = "game/assets/models/glTF-Sample-Assets/Models/Sponza/glTF/Sponza.gltf";
+    (void)test3->loadModel();
+    (void)addGameObject(std::move(test3));
+
+    auto test4 = std::make_unique<PointLight>();
+    test4->name = "GLTF test";
+    test4->scale = glm::vec3(200.0f, 200.0f, 200.0f);
+    test4->position = glm::vec3(0.0f, 20.0f, 0.0f);
+    test4->modelPath = "game/assets/models/Avocado.glb";
+    test4->intensity = 100.0f;
+    (void)test4->loadModel();
+    (void)addGameObject(std::move(test4));
 
     /*
     auto test4 = std::make_unique<GameObject>();
@@ -45,13 +54,13 @@ void Level1::init() {
     //test4->mesh.modelPath = "game/assets/models/Bistro_Godot.glb";
     test4->modelPath = "game/assets/models/Bistro_Godot.glb";
     //test4->material.texturePath = "game/assets/textures/san_giuseppe_bridge_4k.png";
-    test4->loadModel();
+    (void)test4->loadModel();
     (void)addGameObject(std::move(test4));*/
 
     /*auto test5 = std::make_unique<GameObject>();
     test5->name = "GLTF test";
     test5->modelPath = "game/assets/models/tester.glb";
-    test5->loadModel();
+    (void)test5->loadModel();
     (void)addGameObject(std::move(test5));*/
 
     /*auto light = std::make_unique<PointLight>();
@@ -60,7 +69,7 @@ void Level1::init() {
     light->intensity = 3.0f;
     light->position = glm::vec3(0.0f, 20.0f, 20.0f);
     light->color = glm::vec3(1.0f, 1.0f, 1.0f);
-    light->loadModel();
+    (void)light->loadModel();
     (void)addGameObject(std::move(light));
 
     auto light2 = std::make_unique<PointLight>();
@@ -69,7 +78,7 @@ void Level1::init() {
     light2->intensity = 10.0f;
     light2->position = glm::vec3(0.0f, 20.0f, 50.0f);
     light2->color = glm::vec3(1.0f, 0.0f, 0.0f);
-    light2->loadModel();
+    (void)light2->loadModel();
     (void)addGameObject(std::move(light2));*/
 
     player.init();

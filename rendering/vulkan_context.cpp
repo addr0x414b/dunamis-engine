@@ -189,6 +189,41 @@ Result VulkanContext::prepareSceneResourceTracking(const Scene* scene) {
     return Result::success();
 }
 
+Result VulkanContext::validateTextureData(
+    const std::unique_ptr<GameObject>& gameObject) const {
+    if (!gameObject) {
+        return Result::failure("Cannot validate textures for a null game object");
+    }
+
+    for (std::size_t index = 0; index < gameObject->meshInstances_.size();
+         ++index) {
+        const Material& material =
+            gameObject->meshInstances_[index].material;
+        if (!material.pixels) {
+            return Result::failure("Game object mesh instance " +
+                                   std::to_string(index) +
+                                   " has missing texture pixels");
+        }
+        if (material.texWidth <= 0 || material.texHeight <= 0) {
+            return Result::failure("Game object mesh instance " +
+                                   std::to_string(index) +
+                                   " has invalid texture dimensions");
+        }
+        const auto width = static_cast<std::size_t>(material.texWidth);
+        const auto height = static_cast<std::size_t>(material.texHeight);
+        if (width > std::numeric_limits<std::size_t>::max() / height ||
+            width * height > std::numeric_limits<std::size_t>::max() / 4 ||
+            width > std::numeric_limits<VkDeviceSize>::max() / height ||
+            width * height > std::numeric_limits<VkDeviceSize>::max() / 4 ||
+            width * height * 4 == 0 || material.mipLevels == 0) {
+            return Result::failure("Game object mesh instance " +
+                                   std::to_string(index) +
+                                   " has invalid texture image size");
+        }
+    }
+    return Result::success();
+}
+
 Result VulkanContext::init(SDL_Window* w, Scene* scene) {
     spdlog::info("Initializing Vulkan Context...");
     if (!w) {
@@ -1782,11 +1817,16 @@ Result VulkanContext::createTextureImages(
     if (!gameObject) {
         return Result::failure("Cannot create textures for a null game object");
     }
+    Result validationResult = validateTextureData(gameObject);
+    if (!validationResult) {
+        return validationResult;
+    }
 
     for (auto& instance : gameObject->meshInstances_) {
 
-        VkDeviceSize imageSize = instance.material.texWidth *
-                                instance.material.texHeight * 4;
+        VkDeviceSize imageSize =
+            static_cast<VkDeviceSize>(instance.material.texWidth) *
+            static_cast<VkDeviceSize>(instance.material.texHeight) * 4;
 
         ownedTemporaryBuffers.emplace_back();
         auto& deferredStaging = ownedTemporaryBuffers.back();

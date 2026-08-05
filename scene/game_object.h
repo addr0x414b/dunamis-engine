@@ -4,6 +4,7 @@
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
 #include <assimp/Importer.hpp>
+#include <deque>
 #include <glm/glm.hpp>
 #include <string>
 #include <vector>
@@ -35,7 +36,7 @@ public:
 
     // Call after setting modelPath (and texturePath if needed)
     // Loads the model and sets up the mesh and materials
-    void loadModel();
+    [[nodiscard]] Result loadModel();
 
 private:
     friend class Scene;
@@ -44,6 +45,7 @@ private:
 
     Assimp::Importer importer;
     std::vector<MeshInstance> meshInstances_;
+    std::deque<std::string> texturePathStorage_;
 };
 
 #endif

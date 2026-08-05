@@ -85,3 +85,33 @@ target_link_libraries(SceneInvariantTests PRIVATE
 add_test(NAME scene_invariants
         COMMAND SceneInvariantTests
 )
+
+add_executable(TextureLoadingTests texture_loading_tests.cpp)
+target_include_directories(TextureLoadingTests PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(TextureLoadingTests PRIVATE
+        GameObject
+        VulkanUtils
+        assimp
+        glm
+        spdlog
+)
+add_dependencies(TextureLoadingTests DunamisEngine)
+add_test(NAME texture_loading_fallbacks
+        COMMAND TextureLoadingTests "${CMAKE_BINARY_DIR}")
+set_tests_properties(texture_loading_fallbacks PROPERTIES TIMEOUT 10)
+
+add_executable(VulkanTexturePreflightTests vulkan_texture_preflight_tests.cpp)
+target_include_directories(VulkanTexturePreflightTests PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(VulkanTexturePreflightTests PRIVATE
+        VulkanContext
+        GameObject
+        Scene
+        SDL3::SDL3
+        Vulkan::Vulkan
+        VulkanUtils
+        assimp
+        glm
+        spdlog
+)
+add_test(NAME vulkan_texture_preflight
+        COMMAND VulkanTexturePreflightTests)

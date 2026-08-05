@@ -38,6 +38,8 @@ static_assert(std::is_same_v<
 static_assert(std::is_same_v<
               decltype(std::declval<GameObject&>().meshInstances()),
               const std::vector<MeshInstance>&>);
+static_assert(std::is_same_v<
+              decltype(std::declval<GameObject&>().loadModel()), Result>);
 
 int main() {
     bool passed = true;

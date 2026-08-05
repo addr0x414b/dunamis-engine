@@ -113,6 +113,8 @@ private:
 
     [[nodiscard]] Result validateSceneRenderStateIsEmpty(
         const Scene* scene) const;
+    [[nodiscard]] Result validateTextureData(
+        const std::unique_ptr<GameObject>& gameObject) const;
     [[nodiscard]] Result prepareSceneResourceTracking(const Scene* scene);
     void cleanupTrackedSceneResources() noexcept;
 
