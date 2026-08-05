@@ -1,8 +1,18 @@
 #include "scene.h"
 
+#include <cmath>
 #include <exception>
 #include <stdexcept>
 #include <utility>
+
+namespace {
+
+bool isValidColorComponent(float component) {
+    return std::isfinite(component) && component >= 0.0f &&
+           component <= 1.0f;
+}
+
+}  // namespace
 
 Result Scene::addGameObject(std::unique_ptr<GameObject> gameObject) {
     if (!gameObject) {
@@ -115,6 +125,48 @@ const Camera* Scene::activeCamera() const noexcept {
 
 bool Scene::isActive() const noexcept {
     return active_;
+}
+
+Result Scene::setBackgroundColor(const glm::vec4& color) {
+    if (!isValidColorComponent(color.r) ||
+        !isValidColorComponent(color.g) ||
+        !isValidColorComponent(color.b) ||
+        !isValidColorComponent(color.a)) {
+        return Result::failure(
+            "Background color must be finite and in [0, 1]");
+    }
+
+    backgroundColor_ = color;
+    return Result::success();
+}
+
+Result Scene::setAmbientLight(const glm::vec3& color, float intensity) {
+    if (!isValidColorComponent(color.r) ||
+        !isValidColorComponent(color.g) ||
+        !isValidColorComponent(color.b)) {
+        return Result::failure(
+            "Ambient color must be finite and in [0, 1]");
+    }
+    if (!std::isfinite(intensity) || intensity < 0.0f) {
+        return Result::failure(
+            "Ambient intensity must be finite and nonnegative");
+    }
+
+    ambientColor_ = color;
+    ambientIntensity_ = intensity;
+    return Result::success();
+}
+
+const glm::vec4& Scene::backgroundColor() const noexcept {
+    return backgroundColor_;
+}
+
+const glm::vec3& Scene::ambientColor() const noexcept {
+    return ambientColor_;
+}
+
+float Scene::ambientIntensity() const noexcept {
+    return ambientIntensity_;
 }
 
 Result Scene::activate() {

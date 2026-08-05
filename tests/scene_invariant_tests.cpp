@@ -1,7 +1,9 @@
 #include "scene/scene.h"
 
+#include <cmath>
 #include <iostream>
 #include <memory>
+#include <limits>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -22,6 +24,10 @@ bool expect(bool condition, const char* message) {
         return false;
     }
     return true;
+}
+
+bool nearlyEqual(float actual, float expected) {
+    return std::fabs(actual - expected) < 0.0001f;
 }
 
 }  // namespace
@@ -60,6 +66,62 @@ int main() {
                      "Point lights do not default to the origin");
 
     TestScene scene;
+    passed &= expect(nearlyEqual(scene.backgroundColor().r, 0.639f) &&
+                         nearlyEqual(scene.backgroundColor().g, 0.965f) &&
+                         nearlyEqual(scene.backgroundColor().b, 1.0f) &&
+                         nearlyEqual(scene.backgroundColor().a, 1.0f),
+                     "A new scene has the wrong background color");
+    passed &= expect(scene.ambientColor() == glm::vec3(1.0f) &&
+                         nearlyEqual(scene.ambientIntensity(), 0.1f),
+                     "A new scene has the wrong ambient light");
+
+    const glm::vec4 background{0.2f, 0.3f, 0.4f, 0.5f};
+    passed &= expect(static_cast<bool>(scene.setBackgroundColor(background)) &&
+                         scene.backgroundColor() == background,
+                     "A valid background color was rejected");
+    passed &= expect(!scene.setBackgroundColor(glm::vec4(-0.1f, 0.3f, 0.4f, 0.5f)) &&
+                         scene.backgroundColor() == background,
+                     "A negative background component was accepted");
+    passed &= expect(!scene.setBackgroundColor(glm::vec4(0.2f, 1.1f, 0.4f, 0.5f)) &&
+                         scene.backgroundColor() == background,
+                     "An oversized background component was accepted");
+    passed &= expect(!scene.setBackgroundColor(glm::vec4(
+                             std::numeric_limits<float>::quiet_NaN(),
+                             0.3f, 0.4f, 0.5f)) &&
+                         scene.backgroundColor() == background,
+                     "A non-finite background component was accepted");
+
+    const glm::vec3 ambient{0.3f, 0.4f, 0.5f};
+    passed &= expect(static_cast<bool>(scene.setAmbientLight(ambient, 2.0f)) &&
+                         scene.ambientColor() == ambient &&
+                         nearlyEqual(scene.ambientIntensity(), 2.0f),
+                     "A valid ambient light was rejected");
+    passed &= expect(!scene.setAmbientLight(glm::vec3(-0.1f, 0.4f, 0.5f), 2.0f) &&
+                         scene.ambientColor() == ambient &&
+                         nearlyEqual(scene.ambientIntensity(), 2.0f),
+                     "A negative ambient component was accepted");
+    passed &= expect(!scene.setAmbientLight(glm::vec3(0.3f, 1.1f, 0.5f), 2.0f) &&
+                         scene.ambientColor() == ambient &&
+                         nearlyEqual(scene.ambientIntensity(), 2.0f),
+                     "An oversized ambient component was accepted");
+    passed &= expect(!scene.setAmbientLight(ambient, -1.0f) &&
+                         scene.ambientColor() == ambient &&
+                         nearlyEqual(scene.ambientIntensity(), 2.0f),
+                     "A negative ambient intensity was accepted");
+    passed &= expect(!scene.setAmbientLight(
+                             glm::vec3(std::numeric_limits<float>::infinity(),
+                                       0.4f, 0.5f),
+                             2.0f) &&
+                         scene.ambientColor() == ambient &&
+                         nearlyEqual(scene.ambientIntensity(), 2.0f),
+                     "A non-finite ambient component was accepted");
+    passed &= expect(!scene.setAmbientLight(
+                             ambient,
+                             std::numeric_limits<float>::infinity()) &&
+                         scene.ambientColor() == ambient &&
+                         nearlyEqual(scene.ambientIntensity(), 2.0f),
+                     "A non-finite ambient intensity was accepted");
+
     passed &= expect(scene.pointLightCount() == 0,
                      "A new scene did not start with zero point lights");
     bool zeroLightLookupRejected = false;

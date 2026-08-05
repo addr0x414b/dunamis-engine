@@ -73,15 +73,23 @@ struct LightData {
 
 struct LightsUBO {
     std::array<LightData, scene_limits::maxPointLights> lights{};
+    glm::vec4 ambientColorIntensity{};
     std::int32_t numLights = 0;
+    std::array<std::uint32_t, 3> padding{};
 };
 
 static_assert(sizeof(LightData) == 32,
               "LightData must match the fragment shader's std140 layout");
 static_assert(
     offsetof(LightsUBO, numLights) ==
-        sizeof(LightData) * scene_limits::maxPointLights,
+        sizeof(LightData) * scene_limits::maxPointLights + sizeof(glm::vec4),
     "LightsUBO must match the fragment shader's std140 layout");
+static_assert(offsetof(LightsUBO, ambientColorIntensity) == 512,
+              "LightsUBO ambient field must match std140 offset");
+static_assert(offsetof(LightsUBO, numLights) == 528,
+              "LightsUBO light count must match std140 offset");
+static_assert(sizeof(LightsUBO) == 544,
+              "LightsUBO must include explicit std140 trailing padding");
 
 namespace std {
 template <>

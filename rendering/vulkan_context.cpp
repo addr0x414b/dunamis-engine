@@ -2796,6 +2796,11 @@ Result VulkanContext::drawFrame(Scene* scene) {
 Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
                                           uint32_t imageIndex,
                                           Scene* scene) {
+    if (!scene) {
+        return Result::failure(
+            "Cannot record a command buffer for a null scene");
+    }
+
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 
@@ -2813,12 +2818,18 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
 
     // VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
     std::array<VkClearValue, 2> clearValues{};
-    clearValues[0].color = {{0.639f, 0.965f, 1.0f, 1.0f}};
+    const glm::vec4& backgroundColor = scene->backgroundColor();
+    clearValues[0].color = {{backgroundColor.r, backgroundColor.g,
+                             backgroundColor.b, backgroundColor.a}};
+
     clearValues[1].depthStencil = {1.0f, 0};
     renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
     renderPassInfo.pClearValues = clearValues.data();
 
     LightsUBO lightsUbo{};
+    const glm::vec3& ambientColor = scene->ambientColor();
+    lightsUbo.ambientColorIntensity =
+        glm::vec4(ambientColor, scene->ambientIntensity());
     lightsUbo.numLights =
         static_cast<std::int32_t>(scene->pointLightCount());
     for (std::size_t i = 0; i < scene->pointLightCount(); ++i) {

@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include <glm/glm.hpp>
+
 #include "../core/result.h"
 #include "camera.h"
 #include "game_object.h"
@@ -34,6 +36,12 @@ public:
     [[nodiscard]] const PointLight& pointLightAt(std::size_t index) const;
     [[nodiscard]] const Camera* activeCamera() const noexcept;
     [[nodiscard]] bool isActive() const noexcept;
+    [[nodiscard]] Result setBackgroundColor(const glm::vec4& color);
+    [[nodiscard]] Result setAmbientLight(const glm::vec3& color,
+                                         float intensity);
+    [[nodiscard]] const glm::vec4& backgroundColor() const noexcept;
+    [[nodiscard]] const glm::vec3& ambientColor() const noexcept;
+    [[nodiscard]] float ambientIntensity() const noexcept;
 
     std::string name;
     std::shared_ptr<InputManager> inputManager;
@@ -49,6 +57,10 @@ private:
         pointLightIndices_{};
     std::size_t pointLightCount_ = 0;
     std::shared_ptr<Camera> activeCamera_;
+    glm::vec4 backgroundColor_{
+        0.639f, 0.965f, 1.0f, 1.0f};
+    glm::vec3 ambientColor_{1.0f, 1.0f, 1.0f};
+    float ambientIntensity_ = 0.1f;
     bool active_ = false;
 };
 

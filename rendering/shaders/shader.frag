@@ -17,6 +17,7 @@ struct LightData {
 
 layout(set = 1, binding = 0) uniform LightsUBO {
     LightData lights[16];
+    vec4 ambientColorIntensity;
     int numLights;
 };
 
@@ -48,8 +49,9 @@ void main() {
     }
     vec3 albedo = sampledTexture.rgb;
 
-    // Initialize the final color to black
-    vec3 finalColor = vec3(0.0);
+    vec3 ambient = albedo * ambientColorIntensity.rgb *
+                   ambientColorIntensity.a;
+    vec3 finalColor = ambient;
 
     // Loop over all lights
     for (int i = 0; i < numLights; ++i) {
