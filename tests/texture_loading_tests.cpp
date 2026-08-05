@@ -48,8 +48,8 @@ std::filesystem::path createMissingTextureModel() {
 "buffers":[{"uri":"mesh.bin","byteLength":42}],
 "bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":6}],
 "accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]},{"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}],
-"images":[{"uri":"missing.png"}],"textures":[{"source":0}],
-"materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}],
+"images":[{"uri":"missing.png"},{"uri":"missing-normal.png"}],"textures":[{"source":0},{"source":1}],
+"materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}},"normalTexture":{"index":1}}],
 "meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":0}]}],
 "nodes":[{"mesh":0}],"scenes":[{"nodes":[0]}],"scene":0
 })json";
@@ -81,6 +81,11 @@ bool testFallbackSuccess(const std::filesystem::path& buildDirectory) {
                                      "rendering/default_textures/error.jpg") !=
                                      std::string::npos,
                              "Fallback path was not recorded");
+            passed &= expect(!instance.material.normalMapEnabled &&
+                                 instance.material.normalMapPixels == nullptr &&
+                                 instance.material.normalMapPath.find(
+                                     "missing-normal.png") != std::string::npos,
+                             "Missing optional normal map was not disabled safely");
             stbi_image_free(instance.material.pixels);
         }
     }

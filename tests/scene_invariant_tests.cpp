@@ -6,6 +6,7 @@
 #include <limits>
 #include <stdexcept>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 
 
@@ -49,6 +50,51 @@ static_assert(std::is_same_v<
 
 int main() {
     bool passed = true;
+
+    Vertex vertex{};
+    vertex.normal = {0.0f, 0.0f, 1.0f};
+    vertex.tangent = {1.0f, 0.0f, 0.0f, 1.0f};
+    Vertex differentNormal = vertex;
+    differentNormal.normal.x = 1.0f;
+    Vertex differentTangent = vertex;
+    differentTangent.tangent.y = 1.0f;
+    Vertex differentHandedness = vertex;
+    differentHandedness.tangent.w = -1.0f;
+    std::unordered_map<Vertex, uint32_t> uniqueVertices;
+    uniqueVertices.emplace(vertex, 0);
+    uniqueVertices.emplace(differentNormal, 1);
+    uniqueVertices.emplace(differentTangent, 2);
+    uniqueVertices.emplace(differentHandedness, 3);
+    passed &= expect(!(vertex == differentNormal) &&
+                         !(vertex == differentTangent) &&
+                         !(vertex == differentHandedness) &&
+                         uniqueVertices.size() == 4,
+                     "Vertex identity collapsed a normal or tangent seam");
+
+    const auto attributes = Vertex::getAttributeDescriptions();
+    passed &= expect(attributes.size() == 5 &&
+                         Vertex::getBindingDescription().stride == sizeof(Vertex) &&
+                         attributes[3].location == 3 &&
+                         attributes[3].format == VK_FORMAT_R32G32B32_SFLOAT &&
+                         attributes[3].offset == offsetof(Vertex, normal) &&
+                         attributes[4].location == 4 &&
+                         attributes[4].format == VK_FORMAT_R32G32B32A32_SFLOAT &&
+                         attributes[4].offset == offsetof(Vertex, tangent),
+                     "Vertex normal/tangent Vulkan layout is incorrect");
+
+    const Material defaultMaterial;
+    passed &= expect(!defaultMaterial.normalMapEnabled &&
+                         defaultMaterial.normalMapPath.empty() &&
+                         defaultMaterial.normalMapPixels == nullptr &&
+                         defaultMaterial.normalMapWidth == 0 &&
+                         defaultMaterial.normalMapHeight == 0 &&
+                         defaultMaterial.normalMapChannels == 0 &&
+                         defaultMaterial.normalMapMipLevels == 0 &&
+                         defaultMaterial.normalMapImage == VK_NULL_HANDLE &&
+                         defaultMaterial.normalMapImageMemory == VK_NULL_HANDLE &&
+                         defaultMaterial.normalMapImageView == VK_NULL_HANDLE &&
+                         defaultMaterial.normalMapSampler == VK_NULL_HANDLE,
+                     "Default material normal-map state is not cleanup-safe");
 
     passed &= expect(scene_limits::maxPointLights == 16,
                      "The point-light limit is not 16");

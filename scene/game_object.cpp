@@ -65,6 +65,43 @@ Result loadFileTexture(const std::filesystem::path& path,
     return Result::success();
 }
 
+Result loadNormalMapFileTexture(const std::filesystem::path& path,
+                                Material& material) {
+    material.normalMapPixels = stbi_load(
+        path.string().c_str(), &material.normalMapWidth,
+        &material.normalMapHeight, &material.normalMapChannels, STBI_rgb_alpha);
+    if (!material.normalMapPixels) {
+        return Result::failure("stbi_load failed for " + path.string() +
+                               ": " + stbFailureReason());
+    }
+
+    Result mipResult = calculateMipLevels(material.normalMapWidth,
+                                           material.normalMapHeight,
+                                           material.normalMapMipLevels);
+    if (!mipResult) {
+        stbi_image_free(material.normalMapPixels);
+        material.normalMapPixels = nullptr;
+        return Result::failure("Invalid normal-map dimensions for " +
+                               path.string() + ": " + mipResult.error());
+    }
+    return Result::success();
+}
+
+bool isFiniteVector(const glm::vec3& vector) {
+    return std::isfinite(vector.x) && std::isfinite(vector.y) &&
+           std::isfinite(vector.z);
+}
+
+bool normalizeVector(const glm::vec3& input, glm::vec3& output) {
+    const float lengthSquared = glm::dot(input, input);
+    if (!isFiniteVector(input) || !std::isfinite(lengthSquared) ||
+        lengthSquared <= std::numeric_limits<float>::epsilon()) {
+        return false;
+    }
+    output = input / std::sqrt(lengthSquared);
+    return isFiniteVector(output);
+}
+
 }  // namespace
 
 Result GameObject::loadModel() {
@@ -76,7 +113,9 @@ Result GameObject::loadModel() {
     }
 
     const aiScene* scene =
-        importer.ReadFile(modelPath, aiProcess_Triangulate | aiProcess_FlipUVs);
+        importer.ReadFile(modelPath, aiProcess_Triangulate | aiProcess_FlipUVs |
+                                    aiProcess_GenSmoothNormals |
+                                    aiProcess_CalcTangentSpace);
     if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE ||
         !scene->mRootNode) {
         return Result::failure(
@@ -134,6 +173,12 @@ Result GameObject::loadModel() {
         aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
         MeshInstance instance{};
 
+        if (!mesh->HasNormals()) {
+            releaseAllocatedPixels();
+            return Result::failure("Mesh " + std::string(mesh->mName.C_Str()) +
+                                   " has no usable normals after import");
+        }
+
         aiString alphaMode;
         if (material->Get(AI_MATKEY_GLTF_ALPHAMODE, alphaMode) == AI_SUCCESS) {
             const std::string importedAlphaMode = alphaMode.C_Str();
@@ -164,6 +209,7 @@ Result GameObject::loadModel() {
             instance.material.doubleSided = doubleSided;
         }
         std::unordered_map<Vertex, uint32_t> uniqueVertices{};
+        bool meshHasUsableTangents = mesh->HasTangentsAndBitangents();
 
         for (unsigned int f = 0; f < mesh->mNumFaces; ++f) {
             const aiFace& face = mesh->mFaces[f];
@@ -178,6 +224,41 @@ Result GameObject::loadModel() {
                                 mesh->mTextureCoords[0][index].y}
                     : glm::vec2{0.0f, 0.0f};
                 vertex.color = {1.0f, 1.0f, 1.0f};
+                if (!normalizeVector({mesh->mNormals[index].x,
+                                      mesh->mNormals[index].y,
+                                      mesh->mNormals[index].z},
+                                     vertex.normal)) {
+                    releaseAllocatedPixels();
+                    return Result::failure(
+                        "Mesh " + std::string(mesh->mName.C_Str()) +
+                        " contains an unusable vertex normal");
+                }
+
+                if (mesh->HasTangentsAndBitangents()) {
+                    glm::vec3 tangent;
+                    const glm::vec3 importedTangent{
+                        mesh->mTangents[index].x, mesh->mTangents[index].y,
+                        mesh->mTangents[index].z};
+                    const glm::vec3 importedBitangent{
+                        mesh->mBitangents[index].x, mesh->mBitangents[index].y,
+                        mesh->mBitangents[index].z};
+                    const glm::vec3 orthogonalTangent =
+                        importedTangent -
+                        glm::dot(importedTangent, vertex.normal) * vertex.normal;
+                    if (normalizeVector(orthogonalTangent, tangent) &&
+                        isFiniteVector(importedBitangent)) {
+                        const float handedness =
+                            glm::dot(glm::cross(vertex.normal, tangent),
+                                     importedBitangent) < 0.0f
+                                ? -1.0f
+                                : 1.0f;
+                        vertex.tangent = glm::vec4(tangent, handedness);
+                    } else {
+                        meshHasUsableTangents = false;
+                    }
+                } else {
+                    meshHasUsableTangents = false;
+                }
 
                 if (uniqueVertices.count(vertex) == 0) {
                     uniqueVertices[vertex] =
@@ -279,6 +360,81 @@ Result GameObject::loadModel() {
             allocatedPixels.push_back(instance.material.pixels);
         }
         pendingTexturePaths.push_back(std::move(effectiveTexturePath));
+
+        aiString normalMapReference;
+        if (material->GetTexture(aiTextureType_NORMALS, 0,
+                                 &normalMapReference) == AI_SUCCESS) {
+            const char* normalRef = normalMapReference.C_Str();
+            instance.material.normalMapPath = normalRef;
+            Result normalResult = Result::failure("uninitialized normal map");
+            if (normalRef[0] == '*') {
+                bool embeddedValid = false;
+                unsigned long textureIndex = 0;
+                try {
+                    std::size_t parsed = 0;
+                    textureIndex = std::stoul(normalRef + 1, &parsed);
+                    embeddedValid = normalRef[1 + parsed] == '\0';
+                } catch (...) {
+                    embeddedValid = false;
+                }
+                const aiTexture* texture =
+                    embeddedValid && textureIndex < scene->mNumTextures
+                        ? scene->mTextures[textureIndex]
+                        : nullptr;
+                if (texture && texture->mHeight == 0 && texture->pcData &&
+                    texture->mWidth > 0 &&
+                    texture->mWidth <= static_cast<unsigned int>(
+                                           std::numeric_limits<int>::max())) {
+                    instance.material.normalMapPixels = stbi_load_from_memory(
+                        reinterpret_cast<const unsigned char*>(texture->pcData),
+                        texture->mWidth, &instance.material.normalMapWidth,
+                        &instance.material.normalMapHeight,
+                        &instance.material.normalMapChannels, STBI_rgb_alpha);
+                    if (instance.material.normalMapPixels) {
+                        normalResult = calculateMipLevels(
+                            instance.material.normalMapWidth,
+                            instance.material.normalMapHeight,
+                            instance.material.normalMapMipLevels);
+                        if (!normalResult) {
+                            stbi_image_free(instance.material.normalMapPixels);
+                            instance.material.normalMapPixels = nullptr;
+                        }
+                    } else {
+                        normalResult = Result::failure(stbFailureReason());
+                    }
+                } else {
+                    normalResult = Result::failure(
+                        "invalid embedded normal-map reference");
+                }
+            } else {
+                const std::filesystem::path resolvedPath =
+                    std::filesystem::path(modelPath).parent_path() / normalRef;
+                instance.material.normalMapPath = resolvedPath.string();
+                normalResult = loadNormalMapFileTexture(resolvedPath,
+                                                        instance.material);
+            }
+
+            if (normalResult) {
+                if (meshHasUsableTangents) {
+                    instance.material.normalMapEnabled = true;
+                    allocatedPixels.push_back(instance.material.normalMapPixels);
+                } else {
+                    spdlog::warn("Mesh {} has a normal map but no usable tangent "
+                                 "basis; normal mapping is disabled",
+                                 mesh->mName.C_Str());
+                    stbi_image_free(instance.material.normalMapPixels);
+                    instance.material.normalMapPixels = nullptr;
+                    instance.material.normalMapWidth = 0;
+                    instance.material.normalMapHeight = 0;
+                    instance.material.normalMapChannels = 0;
+                    instance.material.normalMapMipLevels = 0;
+                }
+            } else {
+                spdlog::warn("Failed to load normal map {} for mesh {}: {}; "
+                             "using geometric normals",
+                             normalRef, mesh->mName.C_Str(), normalResult.error());
+            }
+        }
         pendingMeshes.push_back(std::move(instance));
     }
 

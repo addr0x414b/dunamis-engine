@@ -5,8 +5,11 @@ layout(location = 1) in vec2 fragTexCoord;
 layout(location = 0) out vec4 outColor;
 layout(location = 3) in vec3 cameraPos;
 layout(location = 4) in vec3 fragPos;
+layout(location = 5) in vec3 fragNormal;
+layout(location = 6) in vec4 fragTangent;
 
 layout(set = 0, binding = 1) uniform sampler2D texSampler;
+layout(set = 0, binding = 2) uniform sampler2D normalSampler;
 
 struct LightData {
     vec3 position;
@@ -24,6 +27,8 @@ layout(set = 1, binding = 0) uniform LightsUBO {
 layout(push_constant) uniform MaterialPushConstants {
     int materialAlphaMode;
     float materialAlphaCutoff;
+    int materialNormalMapEnabled;
+    int materialPadding;
 };
 
 const int MASK_MODE = 1;
@@ -52,6 +57,15 @@ void main() {
     vec3 ambient = albedo * ambientColorIntensity.rgb *
                    ambientColorIntensity.a;
     vec3 finalColor = ambient;
+    vec3 normal = normalize(fragNormal);
+    if (materialNormalMapEnabled != 0) {
+        vec3 tangentNormal = texture(normalSampler, fragTexCoord).xyz * 2.0 - 1.0;
+        vec3 tangent = normalize(fragTangent.xyz);
+        tangent = normalize(tangent - dot(tangent, normal) * normal);
+        vec3 bitangent = normalize(cross(normal, tangent)) * fragTangent.w;
+        mat3 TBN = mat3(tangent, bitangent, normal);
+        normal = normalize(TBN * normalize(tangentNormal));
+    }
 
     // Loop over all lights
     for (int i = 0; i < numLights; ++i) {
@@ -62,8 +76,6 @@ void main() {
 
         // Calculate the direction from the fragment to the light
         vec3 lightDir = normalize(lightPos - fragPos);  // Direction to the light
-        vec3 normal = normalize(vec3(0.0, 0.0, 1.0));  // Fake normal (for simplicity)
-
         // Diffuse lighting (dot product of normal and light direction)
         float NdotL = max(dot(normal, lightDir), 0.0);
 
@@ -71,7 +83,7 @@ void main() {
         float attenuation = calculateAttenuation(fragPos, lightPos);
 
         // Apply lighting: diffuse * color * intensity * attenuation
-        vec3 diffuse = albedo * lightColor * lightIntensity * attenuation;
+        vec3 diffuse = albedo * lightColor * lightIntensity * attenuation * NdotL;
 
         // Add the light's contribution to the final color
         finalColor += diffuse;

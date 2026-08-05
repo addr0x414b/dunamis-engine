@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -19,10 +20,13 @@ struct Vertex {
     glm::vec3 pos;
     glm::vec3 color;
     glm::vec2 texCoord;
+    glm::vec3 normal;
+    glm::vec4 tangent;
 
     bool operator==(const Vertex& other) const {
         return pos == other.pos && color == other.color &&
-               texCoord == other.texCoord;
+               texCoord == other.texCoord && normal == other.normal &&
+               tangent == other.tangent;
     }
 
     static VkVertexInputBindingDescription getBindingDescription() {
@@ -33,9 +37,9 @@ struct Vertex {
         return bindingDescription;
     }
 
-    static std::array<VkVertexInputAttributeDescription, 3>
+    static std::array<VkVertexInputAttributeDescription, 5>
     getAttributeDescriptions() {
-        std::array<VkVertexInputAttributeDescription, 3>
+        std::array<VkVertexInputAttributeDescription, 5>
             attributeDescriptions{};
 
         attributeDescriptions[0].binding = 0;
@@ -52,6 +56,16 @@ struct Vertex {
         attributeDescriptions[2].location = 2;
         attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
         attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
+
+        attributeDescriptions[3].binding = 0;
+        attributeDescriptions[3].location = 3;
+        attributeDescriptions[3].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescriptions[3].offset = offsetof(Vertex, normal);
+
+        attributeDescriptions[4].binding = 0;
+        attributeDescriptions[4].location = 4;
+        attributeDescriptions[4].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+        attributeDescriptions[4].offset = offsetof(Vertex, tangent);
 
         return attributeDescriptions;
     }
@@ -98,7 +112,9 @@ struct hash<Vertex> {
         return ((hash<glm::vec3>()(vertex.pos) ^
                  (hash<glm::vec3>()(vertex.color) << 1)) >>
                 1) ^
-               (hash<glm::vec2>()(vertex.texCoord) << 1);
+               (hash<glm::vec2>()(vertex.texCoord) << 1) ^
+               (hash<glm::vec3>()(vertex.normal) << 1) ^
+               (hash<glm::vec4>()(vertex.tangent) << 1);
     }
 };
 }  // namespace std
@@ -130,6 +146,17 @@ struct Material {
     int texWidth = 0;
     int texHeight = 0;
     int texChannels = 0;
+    std::string normalMapPath{};
+    uint32_t normalMapMipLevels = 0;
+    VkImage normalMapImage = VK_NULL_HANDLE;
+    VkDeviceMemory normalMapImageMemory = VK_NULL_HANDLE;
+    VkImageView normalMapImageView = VK_NULL_HANDLE;
+    VkSampler normalMapSampler = VK_NULL_HANDLE;
+    stbi_uc* normalMapPixels = nullptr;
+    int normalMapWidth = 0;
+    int normalMapHeight = 0;
+    int normalMapChannels = 0;
+    bool normalMapEnabled = false;
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
     float alphaCutoff = 0.5f;
     bool doubleSided = false;
@@ -139,11 +166,17 @@ struct MaterialPushConstants {
     std::int32_t alphaMode =
         static_cast<std::int32_t>(MaterialAlphaMode::Opaque);
     float alphaCutoff = 0.5f;
+    std::int32_t normalMapEnabled = 0;
+    std::int32_t padding = 0;
 };
 
-static_assert(sizeof(MaterialPushConstants) == 8,
+static_assert(sizeof(MaterialPushConstants) == 16,
               "MaterialPushConstants must match the fragment shader layout");
 static_assert(offsetof(MaterialPushConstants, alphaCutoff) == 4,
+              "MaterialPushConstants must match the fragment shader layout");
+static_assert(offsetof(MaterialPushConstants, normalMapEnabled) == 8,
+              "MaterialPushConstants must match the fragment shader layout");
+static_assert(offsetof(MaterialPushConstants, padding) == 12,
               "MaterialPushConstants must match the fragment shader layout");
 
 struct RenderData {

@@ -1,5 +1,6 @@
 #include "rendering/vulkan_context.h"
 
+#include <cstdlib>
 #include <iostream>
 #include <memory>
 
@@ -42,7 +43,30 @@ int main() {
         expect(result.error().find("missing texture pixels") !=
                    std::string::npos,
                "Texture preflight error did not identify missing pixels");
+
+    auto normalMapObject = std::make_unique<GameObject>();
+    MeshInstance normalMapInstance{};
+    normalMapInstance.material.pixels =
+        static_cast<stbi_uc*>(std::malloc(4));
+    normalMapInstance.material.texWidth = 1;
+    normalMapInstance.material.texHeight = 1;
+    normalMapInstance.material.mipLevels = 1;
+    normalMapInstance.material.normalMapEnabled = true;
+    const Result normalAddResult = normalMapObject->addMeshInstance(
+        std::move(normalMapInstance));
+    if (!normalAddResult) {
+        std::cerr << normalAddResult.error() << '\n';
+        return 1;
+    }
+    const Result normalResult = VulkanContextTestAccess::validateTextureData(
+        context, normalMapObject);
+    const bool normalPassed =
+        expect(!normalResult, "Null normal-map pixels were accepted") &&
+        expect(normalResult.error().find("missing normal-map pixels") !=
+                   std::string::npos,
+               "Normal-map preflight error did not identify missing pixels");
+    stbi_image_free(normalMapObject->meshInstances().front().material.pixels);
     context.cleanup();
     context.cleanup();
-    return passed ? 0 : 1;
+    return passed && normalPassed ? 0 : 1;
 }

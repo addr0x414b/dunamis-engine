@@ -1,6 +1,7 @@
 #include "vulkan_context.h"
 
 #include <cstring>
+#include <cstdlib>
 #include <exception>
 #include <limits>
 #include <utility>
@@ -144,7 +145,11 @@ Result VulkanContext::validateSceneRenderStateIsEmpty(
                 material.textureImage != VK_NULL_HANDLE ||
                 material.textureImageMemory != VK_NULL_HANDLE ||
                 material.textureImageView != VK_NULL_HANDLE ||
-                material.textureSampler != VK_NULL_HANDLE;
+                material.textureSampler != VK_NULL_HANDLE ||
+                material.normalMapImage != VK_NULL_HANDLE ||
+                material.normalMapImageMemory != VK_NULL_HANDLE ||
+                material.normalMapImageView != VK_NULL_HANDLE ||
+                material.normalMapSampler != VK_NULL_HANDLE;
             const bool hasRenderData =
                 !renderData.uniformBuffers.empty() ||
                 !renderData.uniformBuffersMemory.empty() ||
@@ -174,9 +179,9 @@ Result VulkanContext::prepareSceneResourceTracking(const Scene* scene) {
     try {
         ownedSceneBuffers.reserve(
             meshInstanceCount * (MAX_FRAMES_IN_FLIGHT + 2));
-        ownedSceneImages.reserve(meshInstanceCount);
-        ownedSceneImageViews.reserve(meshInstanceCount);
-        ownedSceneSamplers.reserve(meshInstanceCount);
+        ownedSceneImages.reserve(meshInstanceCount * 2);
+        ownedSceneImageViews.reserve(meshInstanceCount * 2);
+        ownedSceneSamplers.reserve(meshInstanceCount * 2);
         ownedSceneDescriptorSets.reserve(meshInstanceCount);
         ownedRenderData.reserve(meshInstanceCount);
         ownedTemporaryBuffers.reserve(meshInstanceCount * 3);
@@ -204,6 +209,11 @@ Result VulkanContext::validateTextureData(
                                    std::to_string(index) +
                                    " has missing texture pixels");
         }
+        if (material.normalMapEnabled && !material.normalMapPixels) {
+            return Result::failure("Game object mesh instance " +
+                                   std::to_string(index) +
+                                   " has missing normal-map pixels");
+        }
         if (material.texWidth <= 0 || material.texHeight <= 0) {
             return Result::failure("Game object mesh instance " +
                                    std::to_string(index) +
@@ -219,6 +229,13 @@ Result VulkanContext::validateTextureData(
             return Result::failure("Game object mesh instance " +
                                    std::to_string(index) +
                                    " has invalid texture image size");
+        }
+        if (material.normalMapEnabled &&
+            (material.normalMapWidth <= 0 || material.normalMapHeight <= 0 ||
+             material.normalMapMipLevels == 0)) {
+            return Result::failure("Game object mesh instance " +
+                                   std::to_string(index) +
+                                   " has invalid normal-map image size");
         }
     }
     return Result::success();
@@ -1135,8 +1152,16 @@ Result VulkanContext::createDescriptorSetLayout() {
     samplerLayoutBinding.pImmutableSamplers = nullptr;
     samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    std::array<VkDescriptorSetLayoutBinding, 2> bindings = {
-        uboLayoutBinding, samplerLayoutBinding};
+    VkDescriptorSetLayoutBinding normalSamplerLayoutBinding{};
+    normalSamplerLayoutBinding.binding = 2;
+    normalSamplerLayoutBinding.descriptorCount = 1;
+    normalSamplerLayoutBinding.descriptorType =
+        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    normalSamplerLayoutBinding.pImmutableSamplers = nullptr;
+    normalSamplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    std::array<VkDescriptorSetLayoutBinding, 3> bindings = {
+        uboLayoutBinding, samplerLayoutBinding, normalSamplerLayoutBinding};
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1842,88 +1867,97 @@ Result VulkanContext::createTextureImages(
     }
 
     for (auto& instance : gameObject->meshInstances_) {
-
-        VkDeviceSize imageSize =
-            static_cast<VkDeviceSize>(instance.material.texWidth) *
-            static_cast<VkDeviceSize>(instance.material.texHeight) * 4;
-
-        ownedTemporaryBuffers.emplace_back();
-        auto& deferredStaging = ownedTemporaryBuffers.back();
-        ScopedBufferAllocation staging(
-            device, &deferredStaging.buffer, &deferredStaging.memory,
-            &singleTimeSubmissionMayBePending);
-
-        Result result = createBuffer(
-            imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            staging.buffer, staging.memory);
-        if (!result) {
-            return addContext("Failed to create texture staging buffer",
-                              result);
+        Material& material = instance.material;
+        if (!material.normalMapPixels) {
+            material.normalMapPixels = static_cast<stbi_uc*>(std::malloc(4));
+            if (!material.normalMapPixels) {
+                return Result::failure("Failed to allocate neutral normal map");
+            }
+            material.normalMapPixels[0] = 128;
+            material.normalMapPixels[1] = 128;
+            material.normalMapPixels[2] = 255;
+            material.normalMapPixels[3] = 255;
+            material.normalMapWidth = 1;
+            material.normalMapHeight = 1;
+            material.normalMapChannels = 4;
+            material.normalMapMipLevels = 1;
         }
 
+        auto uploadTexture = [&](stbi_uc*& pixels, int width, int height,
+                                 uint32_t mipLevels, VkFormat format,
+                                 VkImage& image, VkDeviceMemory& memory,
+                                 const char* label) -> Result {
+            const VkDeviceSize imageSize =
+                static_cast<VkDeviceSize>(width) *
+                static_cast<VkDeviceSize>(height) * 4;
+            auto releasePixels = [&pixels]() {
+                stbi_image_free(pixels);
+                pixels = nullptr;
+            };
+            ownedTemporaryBuffers.emplace_back();
+            auto& deferredStaging = ownedTemporaryBuffers.back();
+            ScopedBufferAllocation staging(
+                device, &deferredStaging.buffer, &deferredStaging.memory,
+                &singleTimeSubmissionMayBePending);
+            Result result = createBuffer(
+                imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                staging.buffer, staging.memory);
+            if (!result) {
+                releasePixels();
+                return addContext(std::string("Failed to create ") + label +
+                                      " staging buffer", result);
+            }
+            void* data = nullptr;
+            const VkResult mapResult = vkMapMemory(
+                device, staging.memory, 0, imageSize, 0, &data);
+            if (mapResult != VK_SUCCESS) {
+                releasePixels();
+                return vkFailure(std::string("vkMapMemory(") + label + ")",
+                                 mapResult);
+            }
+            memcpy(data, pixels, static_cast<size_t>(imageSize));
+            vkUnmapMemory(device, staging.memory);
+            releasePixels();
 
-        void* data = nullptr;
-        VkResult mapResult = vkMapMemory(
-            device, staging.memory, 0, imageSize, 0, &data);
-        if (mapResult != VK_SUCCESS) {
-            return vkFailure("vkMapMemory(texture staging)", mapResult);
-        }
-        memcpy(data, instance.material.pixels, static_cast<size_t>(imageSize));
-        vkUnmapMemory(device, staging.memory);
-        stbi_image_free(instance.material.pixels);
-        instance.material.pixels = nullptr;
+            if (image != VK_NULL_HANDLE || memory != VK_NULL_HANDLE) {
+                return Result::failure(std::string(label) +
+                                       " image slots already contain Vulkan resources");
+            }
+            const size_t ownershipIndex = ownedSceneImages.size();
+            ownedSceneImages.push_back({&image, &memory});
+            result = createImage(
+                width, height, mipLevels, VK_SAMPLE_COUNT_1_BIT, format,
+                VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                    VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, image, memory,
+                &ownedSceneImages[ownershipIndex]);
+            if (!result) return addContext(std::string("Failed to create ") + label, result);
+            result = transitionImageLayout(image, format, VK_IMAGE_LAYOUT_UNDEFINED,
+                                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                           mipLevels);
+            if (!result) return result;
+            result = copyBufferToImage(staging.buffer, image,
+                                       static_cast<uint32_t>(width),
+                                       static_cast<uint32_t>(height));
+            if (!result) return result;
+            return generateMipmaps(image, format, width, height, mipLevels);
+        };
 
-        if (instance.material.textureImage != VK_NULL_HANDLE ||
-            instance.material.textureImageMemory != VK_NULL_HANDLE) {
-            return Result::failure(
-                "Texture image slots already contain Vulkan resources");
-        }
-        const size_t ownershipIndex = ownedSceneImages.size();
-        ownedSceneImages.push_back(
-            {&instance.material.textureImage,
-             &instance.material.textureImageMemory});
-
-        result = createImage(
-            instance.material.texWidth, instance.material.texHeight,
-            instance.material.mipLevels, VK_SAMPLE_COUNT_1_BIT,
-            VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
-            VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                VK_IMAGE_USAGE_SAMPLED_BIT,
-            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-            instance.material.textureImage,
-            instance.material.textureImageMemory,
-            &ownedSceneImages[ownershipIndex]);
-        if (!result) {
-            return addContext("Failed to create texture image", result);
-        }
-
-        result = transitionImageLayout(
-            instance.material.textureImage, VK_FORMAT_R8G8B8A8_SRGB,
-            VK_IMAGE_LAYOUT_UNDEFINED,
-            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            instance.material.mipLevels);
-        if (!result) {
-            return result;
-        }
-        result = copyBufferToImage(
-            staging.buffer, instance.material.textureImage,
-            static_cast<uint32_t>(instance.material.texWidth),
-            static_cast<uint32_t>(instance.material.texHeight));
-        if (!result) {
-            return result;
-        }
-
-        result = generateMipmaps(
-            instance.material.textureImage, VK_FORMAT_R8G8B8A8_SRGB,
-            instance.material.texWidth, instance.material.texHeight,
-            instance.material.mipLevels);
-        if (!result) {
-            return result;
-        }
-
+        Result result = uploadTexture(material.pixels, material.texWidth,
+                                      material.texHeight, material.mipLevels,
+                                      VK_FORMAT_R8G8B8A8_SRGB,
+                                      material.textureImage,
+                                      material.textureImageMemory, "texture image");
+        if (!result) return result;
+        result = uploadTexture(material.normalMapPixels, material.normalMapWidth,
+                               material.normalMapHeight,
+                               material.normalMapMipLevels,
+                               VK_FORMAT_R8G8B8A8_UNORM,
+                               material.normalMapImage,
+                               material.normalMapImageMemory, "normal-map image");
+        if (!result) return result;
     }
     return Result::success();
 }
@@ -1938,7 +1972,8 @@ Result VulkanContext::createTextureImageViews(
             "Cannot create texture image views for a null game object");
     }
     for (auto& instance : gameObject->meshInstances_) {
-        if (instance.material.textureImageView != VK_NULL_HANDLE) {
+        if (instance.material.textureImageView != VK_NULL_HANDLE ||
+            instance.material.normalMapImageView != VK_NULL_HANDLE) {
             return Result::failure(
                 "Texture image-view slot already contains a Vulkan resource");
         }
@@ -1953,6 +1988,16 @@ Result VulkanContext::createTextureImageViews(
             &ownedSceneImageViews[ownershipIndex]);
         if (!result) {
             return addContext("Failed to create texture image view", result);
+        }
+        const size_t normalOwnershipIndex = ownedSceneImageViews.size();
+        ownedSceneImageViews.push_back({&instance.material.normalMapImageView});
+        result = createImageView(
+            instance.material.normalMapImage, VK_FORMAT_R8G8B8A8_UNORM,
+            VK_IMAGE_ASPECT_COLOR_BIT, instance.material.normalMapMipLevels,
+            instance.material.normalMapImageView,
+            &ownedSceneImageViews[normalOwnershipIndex]);
+        if (!result) {
+            return addContext("Failed to create normal-map image view", result);
         }
     }
     return Result::success();
@@ -1969,15 +2014,16 @@ Result VulkanContext::createTextureSamplers(
     }
 
     for (auto& instance : gameObject->meshInstances_) {
-        if (instance.material.textureSampler != VK_NULL_HANDLE) {
+        if (instance.material.textureSampler != VK_NULL_HANDLE ||
+            instance.material.normalMapSampler != VK_NULL_HANDLE) {
             return Result::failure(
                 "Texture sampler slot already contains a Vulkan resource");
         }
-        const size_t ownershipIndex = ownedSceneSamplers.size();
-        ownedSceneSamplers.push_back(
-            {&instance.material.textureSampler});
-
-        VkSamplerCreateInfo samplerInfo{};
+        auto createSampler = [&](VkSampler& sampler, uint32_t mipLevels,
+                                 const char* label) -> Result {
+            const size_t ownershipIndex = ownedSceneSamplers.size();
+            ownedSceneSamplers.push_back({&sampler});
+            VkSamplerCreateInfo samplerInfo{};
         samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
         samplerInfo.magFilter = VK_FILTER_LINEAR;
         samplerInfo.minFilter = VK_FILTER_LINEAR;
@@ -1997,18 +2043,26 @@ Result VulkanContext::createTextureSamplers(
         samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
         samplerInfo.mipLodBias = 0.0f;
         samplerInfo.minLod = 0.0f;
-        samplerInfo.maxLod = static_cast<float>(instance.material.mipLevels / 2);
+        samplerInfo.maxLod = static_cast<float>(mipLevels / 2);
 
         const VkResult result = vkCreateSampler(
-            device, &samplerInfo, nullptr,
-            &instance.material.textureSampler);
+            device, &samplerInfo, nullptr, &sampler);
         if (result != VK_SUCCESS) {
-            instance.material.textureSampler = VK_NULL_HANDLE;
-            return vkFailure("vkCreateSampler", result);
+            sampler = VK_NULL_HANDLE;
+            return vkFailure(std::string("vkCreateSampler(") + label + ")",
+                             result);
         }
-        ownedSceneSamplers[ownershipIndex].sampler =
-            instance.material.textureSampler;
+        ownedSceneSamplers[ownershipIndex].sampler = sampler;
+        return Result::success();
+        };
 
+        Result result = createSampler(instance.material.textureSampler,
+                                      instance.material.mipLevels, "texture");
+        if (!result) return result;
+        result = createSampler(instance.material.normalMapSampler,
+                               instance.material.normalMapMipLevels,
+                               "normal map");
+        if (!result) return result;
     }
     return Result::success();
 }
@@ -2233,7 +2287,7 @@ Result VulkanContext::createDescriptorPool(uint32_t numOfObjects) {
     // Texture samplers 
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount =
-        static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT);
+        static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT * 2);
 
     // Point light UB
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -2313,7 +2367,12 @@ Result VulkanContext::createDescriptorSets(
             imageInfo.imageView = instance.material.textureImageView;
             imageInfo.sampler = instance.material.textureSampler;
 
-            std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+            VkDescriptorImageInfo normalImageInfo{};
+            normalImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            normalImageInfo.imageView = instance.material.normalMapImageView;
+            normalImageInfo.sampler = instance.material.normalMapSampler;
+
+            std::array<VkWriteDescriptorSet, 3> descriptorWrites{};
 
             descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             descriptorWrites[0].dstSet = instance.renderData.descriptorSets[i];
@@ -2331,6 +2390,15 @@ Result VulkanContext::createDescriptorSets(
                 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             descriptorWrites[1].descriptorCount = 1;
             descriptorWrites[1].pImageInfo = &imageInfo;
+
+            descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[2].dstSet = instance.renderData.descriptorSets[i];
+            descriptorWrites[2].dstBinding = 2;
+            descriptorWrites[2].dstArrayElement = 0;
+            descriptorWrites[2].descriptorType =
+                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            descriptorWrites[2].descriptorCount = 1;
+            descriptorWrites[2].pImageInfo = &normalImageInfo;
 
             vkUpdateDescriptorSets(device,
                                 static_cast<uint32_t>(descriptorWrites.size()),
@@ -2897,7 +2965,9 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
 
             const MaterialPushConstants materialPushConstants{
                 static_cast<std::int32_t>(instance.material.alphaMode),
-                instance.material.alphaCutoff};
+                instance.material.alphaCutoff,
+                instance.material.normalMapEnabled ? 1 : 0,
+                0};
             vkCmdPushConstants(commandBuffer, pipelineLayout,
                                VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                sizeof(MaterialPushConstants),
