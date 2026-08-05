@@ -20,6 +20,13 @@ layout(set = 1, binding = 0) uniform LightsUBO {
     int numLights;
 };
 
+layout(push_constant) uniform MaterialPushConstants {
+    int materialAlphaMode;
+    float materialAlphaCutoff;
+};
+
+const int MASK_MODE = 1;
+
 float BurleyDiffuse(float NdotL, float NdotV, float roughness) {
     float fd90 = 0.5 + 2.0 * pow(NdotL, 2.0) * roughness;
     float lightScatter = 1.0 + (fd90 - 1.0) * pow(1.0 - NdotL, 5.0);
@@ -34,8 +41,12 @@ float calculateAttenuation(vec3 fragPos, vec3 lightPos) {
 }
 
 void main() {
-        // Sample the texture (albedo)
-    vec3 albedo = texture(texSampler, fragTexCoord).rgb;
+    vec4 sampledTexture = texture(texSampler, fragTexCoord);
+    if (materialAlphaMode == MASK_MODE &&
+        sampledTexture.a < materialAlphaCutoff) {
+        discard;
+    }
+    vec3 albedo = sampledTexture.rgb;
 
     // Initialize the final color to black
     vec3 finalColor = vec3(0.0);

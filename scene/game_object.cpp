@@ -2,6 +2,8 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "../third_party/stb/stb_image.h"
 
+#include <assimp/GltfMaterial.h>
+
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
@@ -86,6 +88,7 @@ Result GameObject::loadModel() {
     std::vector<MeshInstance> pendingMeshes;
     std::vector<std::string> pendingTexturePaths;
     std::vector<stbi_uc*> allocatedPixels;
+    std::vector<bool> warnedBlendMaterials(scene->mNumMaterials, false);
     PixelCleanup pixelCleanup{allocatedPixels};
     auto releaseAllocatedPixels = [&allocatedPixels]() {
         for (stbi_uc* pixels : allocatedPixels) {
@@ -130,6 +133,36 @@ Result GameObject::loadModel() {
         }
         aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
         MeshInstance instance{};
+
+        aiString alphaMode;
+        if (material->Get(AI_MATKEY_GLTF_ALPHAMODE, alphaMode) == AI_SUCCESS) {
+            const std::string importedAlphaMode = alphaMode.C_Str();
+            if (importedAlphaMode == "MASK") {
+                instance.material.alphaMode = MaterialAlphaMode::Mask;
+                float alphaCutoff = instance.material.alphaCutoff;
+                if (material->Get(AI_MATKEY_GLTF_ALPHACUTOFF, alphaCutoff) ==
+                        AI_SUCCESS &&
+                    std::isfinite(alphaCutoff) && alphaCutoff >= 0.0f &&
+                    alphaCutoff <= 1.0f) {
+                    instance.material.alphaCutoff = alphaCutoff;
+                }
+            } else if (importedAlphaMode == "BLEND") {
+                instance.material.alphaMode = MaterialAlphaMode::Blend;
+                if (!warnedBlendMaterials[mesh->mMaterialIndex]) {
+                    spdlog::warn(
+                        "Material {} uses BLEND alpha mode; blended "
+                        "transparency is not implemented and will render as "
+                        "opaque",
+                        mesh->mName.C_Str());
+                    warnedBlendMaterials[mesh->mMaterialIndex] = true;
+                }
+            }
+        }
+
+        bool doubleSided = false;
+        if (material->Get(AI_MATKEY_TWOSIDED, doubleSided) == AI_SUCCESS) {
+            instance.material.doubleSided = doubleSided;
+        }
         std::unordered_map<Vertex, uint32_t> uniqueVertices{};
 
         for (unsigned int f = 0; f < mesh->mNumFaces; ++f) {

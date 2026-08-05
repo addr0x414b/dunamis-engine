@@ -1348,6 +1348,10 @@ Result VulkanContext::createGraphicsPipeline() {
 
     VkDescriptorSetLayout setLayouts[] = {descriptorSetLayout,
         lightsDescriptorSetLayout};
+    VkPushConstantRange materialPushConstantRange{};
+    materialPushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    materialPushConstantRange.offset = 0;
+    materialPushConstantRange.size = sizeof(MaterialPushConstants);
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -1355,7 +1359,8 @@ Result VulkanContext::createGraphicsPipeline() {
     pipelineLayoutInfo.setLayoutCount = 2;
     //pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
     pipelineLayoutInfo.pSetLayouts = setLayouts;
-    pipelineLayoutInfo.pushConstantRangeCount = 0;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &materialPushConstantRange;
 
     VkResult createResult = vkCreatePipelineLayout(
         device, &pipelineLayoutInfo, nullptr, &pipelineLayout);
@@ -1407,7 +1412,21 @@ Result VulkanContext::createGraphicsPipeline() {
         return vkFailure("vkCreateGraphicsPipelines", createResult);
     }
 
-    spdlog::info("Successfully created graphics pipeline");
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
+    createResult = vkCreateGraphicsPipelines(
+        device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr,
+        &doubleSidedGraphicsPipeline);
+    if (createResult != VK_SUCCESS) {
+        if (doubleSidedGraphicsPipeline != VK_NULL_HANDLE) {
+            vkDestroyPipeline(device, doubleSidedGraphicsPipeline, nullptr);
+        }
+        doubleSidedGraphicsPipeline = VK_NULL_HANDLE;
+        vkDestroyPipeline(device, graphicsPipeline, nullptr);
+        graphicsPipeline = VK_NULL_HANDLE;
+        return vkFailure("vkCreateGraphicsPipelines (double-sided)", createResult);
+    }
+
+    spdlog::info("Successfully created graphics pipelines");
     return Result::success();
 }
 
@@ -2826,9 +2845,6 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo,
                          VK_SUBPASS_CONTENTS_INLINE);
 
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                      graphicsPipeline);
-    
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     pipelineLayout, 1, 1,
                                     &lightsDescriptorSet, 0, nullptr);
@@ -2847,8 +2863,18 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
     scissor.extent = swapchainExtent;
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
+    VkPipeline boundPipeline = VK_NULL_HANDLE;
     for (const auto& obj : scene->gameObjects()) {
         for (auto& instance : obj->meshInstances_) {
+            const VkPipeline pipeline = instance.material.doubleSided
+                ? doubleSidedGraphicsPipeline
+                : graphicsPipeline;
+            if (pipeline != boundPipeline) {
+                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                  pipeline);
+                boundPipeline = pipeline;
+            }
+
             VkBuffer vertexBuffers[] = {instance.mesh.vertexBuffer};
             VkDeviceSize offsets[] = {0};
             vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
@@ -2857,6 +2883,14 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     pipelineLayout, 0, 1, &instance.renderData.descriptorSets[currentFrame],
                                     0, nullptr);
+
+            const MaterialPushConstants materialPushConstants{
+                static_cast<std::int32_t>(instance.material.alphaMode),
+                instance.material.alphaCutoff};
+            vkCmdPushConstants(commandBuffer, pipelineLayout,
+                               VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                               sizeof(MaterialPushConstants),
+                               &materialPushConstants);
 
             vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(instance.mesh.indices.size()), 1, 0,
                             0, 0);
@@ -3126,6 +3160,10 @@ bool VulkanContext::cleanup() noexcept {
             vkDestroyPipeline(device, graphicsPipeline, nullptr);
             graphicsPipeline = VK_NULL_HANDLE;
         }
+        if (doubleSidedGraphicsPipeline != VK_NULL_HANDLE) {
+            vkDestroyPipeline(device, doubleSidedGraphicsPipeline, nullptr);
+            doubleSidedGraphicsPipeline = VK_NULL_HANDLE;
+        }
         if (pipelineLayout != VK_NULL_HANDLE) {
             vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
             pipelineLayout = VK_NULL_HANDLE;
@@ -3209,6 +3247,7 @@ bool VulkanContext::cleanup() noexcept {
     descriptorSetLayout = VK_NULL_HANDLE;
     lightsDescriptorSetLayout = VK_NULL_HANDLE;
     graphicsPipeline = VK_NULL_HANDLE;
+    doubleSidedGraphicsPipeline = VK_NULL_HANDLE;
     pipelineLayout = VK_NULL_HANDLE;
     renderPass = VK_NULL_HANDLE;
     commandPool = VK_NULL_HANDLE;

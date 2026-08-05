@@ -105,18 +105,38 @@ struct Mesh {
     VkDeviceMemory indexBufferMemory = VK_NULL_HANDLE;
 };
 
+enum class MaterialAlphaMode : std::uint32_t {
+    Opaque = 0,
+    Mask = 1,
+    Blend = 2,
+};
+
 struct Material {
-    const char* texturePath;
-    uint32_t mipLevels;
+    const char* texturePath = nullptr;
+    uint32_t mipLevels = 0;
     VkImage textureImage = VK_NULL_HANDLE;
     VkDeviceMemory textureImageMemory = VK_NULL_HANDLE;
     VkImageView textureImageView = VK_NULL_HANDLE;
     VkSampler textureSampler = VK_NULL_HANDLE;
-    stbi_uc* pixels;
-    int texWidth;
-    int texHeight;
-    int texChannels;
+    stbi_uc* pixels = nullptr;
+    int texWidth = 0;
+    int texHeight = 0;
+    int texChannels = 0;
+    MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
+    float alphaCutoff = 0.5f;
+    bool doubleSided = false;
 };
+
+struct MaterialPushConstants {
+    std::int32_t alphaMode =
+        static_cast<std::int32_t>(MaterialAlphaMode::Opaque);
+    float alphaCutoff = 0.5f;
+};
+
+static_assert(sizeof(MaterialPushConstants) == 8,
+              "MaterialPushConstants must match the fragment shader layout");
+static_assert(offsetof(MaterialPushConstants, alphaCutoff) == 4,
+              "MaterialPushConstants must match the fragment shader layout");
 
 struct RenderData {
     std::vector<VkBuffer> uniformBuffers;

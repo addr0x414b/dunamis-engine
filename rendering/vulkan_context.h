@@ -262,6 +262,7 @@ private:
 
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkPipeline graphicsPipeline = VK_NULL_HANDLE;
+    VkPipeline doubleSidedGraphicsPipeline = VK_NULL_HANDLE;
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
     VkCommandPool commandPool = VK_NULL_HANDLE;
 
