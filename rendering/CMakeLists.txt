@@ -3,8 +3,22 @@ target_sources(VulkanUtils INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/utils/vulkan_ut
 target_include_directories(VulkanUtils INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/utils)
 target_link_libraries(VulkanUtils INTERFACE glm)
 
-add_library(VulkanContext STATIC vulkan_context.cpp)
+set(IMGUI_DIR ${PROJECT_SOURCE_DIR}/third_party/imgui)
+
+add_library(VulkanContext STATIC
+        vulkan_context.cpp
+        imgui_layer.cpp
+        ${IMGUI_DIR}/imgui.cpp
+        ${IMGUI_DIR}/imgui_draw.cpp
+        ${IMGUI_DIR}/imgui_tables.cpp
+        ${IMGUI_DIR}/imgui_widgets.cpp
+        ${IMGUI_DIR}/imgui_demo.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_sdl3.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp)
 target_include_directories(VulkanContext PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(VulkanContext SYSTEM PRIVATE
+        ${IMGUI_DIR}
+        ${IMGUI_DIR}/backends)
 target_link_libraries(VulkanContext PRIVATE SDL3::SDL3 Vulkan::Vulkan spdlog VulkanUtils GameObject Scene glm)
 
 add_library(VisualServer STATIC visual_server.cpp)

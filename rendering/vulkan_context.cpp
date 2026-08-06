@@ -159,7 +159,12 @@ struct ScopedShaderModule {
 }  // namespace
 
 VulkanContext::~VulkanContext() noexcept {
-    (void)cleanup();
+    if (!cleanup()) {
+        // Catastrophic cleanup intentionally retains live Vulkan resources.
+        // Prevent ImGuiLayer's defensive destructor from destroying objects
+        // which submitted work may still reference.
+        imguiLayer.abandon();
+    }
 }
 
 Result VulkanContext::validateSceneRenderStateIsEmpty(
@@ -408,6 +413,9 @@ Result VulkanContext::init(SDL_Window* w, Scene* scene) {
         if (!result) return result;
         result = initializeStep(createSyncObjects(),
                                 "Synchronization-object creation");
+        if (!result) return result;
+        result = initializeStep(initializeImGui(),
+                                "Dear ImGui initialization");
         if (!result) return result;
 
         initialized = true;
@@ -900,6 +908,7 @@ Result VulkanContext::createLogicalDevice() {
 
     vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
     vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
+    graphicsQueueFamily = indices.graphicsFamily;
     spdlog::info("Successfully created logical device");
     return Result::success();
 }
@@ -978,6 +987,7 @@ Result VulkanContext::createSwapchain() {
         swapchain = VK_NULL_HANDLE;
         return vkFailure("vkCreateSwapchainKHR", createResult);
     }
+    swapchainMinimumImageCount = createInfo.minImageCount;
 
     VkResult imageResult =
         vkGetSwapchainImagesKHR(device, swapchain, &imageCount, nullptr);
@@ -2923,6 +2933,31 @@ void VulkanContext::updateUniformBuffer(
     }
 }
 
+Result VulkanContext::initializeImGui() {
+    if (!graphicsQueueFamily.has_value()) {
+        return Result::failure(
+            "Graphics queue-family index is unavailable for Dear ImGui");
+    }
+
+    return imguiLayer.initialize(
+        window, instance, physicalDevice, device,
+        graphicsQueueFamily.value(), graphicsQueue, renderPass, msaaSamples,
+        swapchainMinimumImageCount,
+        static_cast<uint32_t>(swapchainImages.size()));
+}
+
+void VulkanContext::processEvent(const SDL_Event& event) noexcept {
+    imguiLayer.processEvent(event);
+    if (event.type == SDL_EVENT_WINDOW_RESIZED ||
+        event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
+        framebufferResized = true;
+    }
+}
+
+void VulkanContext::setImGuiInputEnabled(bool enabled) noexcept {
+    imguiLayer.setInputEnabled(enabled);
+}
+
 Result VulkanContext::drawFrame(Scene* scene) {
     if (!initialized) {
         return Result::failure("Vulkan Context is not initialized");
@@ -2976,6 +3011,15 @@ Result VulkanContext::drawFrame(Scene* scene) {
     if (result != VK_SUCCESS) {
         return vkFailure("vkResetCommandBuffer", result);
     }
+
+    Result imguiResult = imguiLayer.beginFrame();
+    if (!imguiResult) {
+        return Result::failure("Failed to begin Dear ImGui frame: " +
+                               imguiResult.error());
+    }
+    imguiLayer.drawTestWindow();
+    imguiLayer.finishFrame();
+
     Result recordResult = recordCommandBuffer(
         commandBuffers[currentFrame], imageIndex, scene);
     if (!recordResult) {
@@ -3182,8 +3226,7 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
 
     }
 
-    // Draw imgui stuff
-    //drawImguiFrame(commandBuffer);
+    imguiLayer.recordDrawData(commandBuffer);
 
     vkCmdEndRenderPass(commandBuffer);
 
@@ -3249,6 +3292,13 @@ Result VulkanContext::recreateSwapchain() {
     if (!result) {
         cleanupSwapchain();
         return addContext("Failed to recreate framebuffers", result);
+    }
+    result = imguiLayer.onSwapchainRecreated(
+        renderPass, msaaSamples, swapchainMinimumImageCount,
+        static_cast<uint32_t>(swapchainImages.size()));
+    if (!result) {
+        return addContext(
+            "Failed to update Dear ImGui after swapchain recreation", result);
     }
     return Result::success();
 }
@@ -3421,6 +3471,8 @@ bool VulkanContext::cleanup() noexcept {
                 static_cast<int>(idleResult));
         }
 
+        imguiLayer.shutdown();
+
         cleanupSwapchain();
 
         if (descriptorPool != VK_NULL_HANDLE) {
@@ -3506,6 +3558,7 @@ bool VulkanContext::cleanup() noexcept {
     }
 
     graphicsQueue = VK_NULL_HANDLE;
+    graphicsQueueFamily.reset();
     presentQueue = VK_NULL_HANDLE;
     physicalDevice = VK_NULL_HANDLE;
 
@@ -3542,6 +3595,7 @@ bool VulkanContext::cleanup() noexcept {
     depthImageView = VK_NULL_HANDLE;
     depthImageMemory = VK_NULL_HANDLE;
     swapchain = VK_NULL_HANDLE;
+    swapchainMinimumImageCount = 0;
     swapchainImageFormat = VK_FORMAT_UNDEFINED;
     swapchainExtent = {};
     msaaSamples = VK_SAMPLE_COUNT_1_BIT;

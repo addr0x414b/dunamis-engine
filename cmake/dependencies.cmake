@@ -1,5 +1,11 @@
 include(FetchContent)
 
+# Dear ImGui is directly vendored under third_party/imgui.
+# Repository: https://github.com/ocornut/imgui
+# Branch: docking
+# Pinned commit: 94c05ba40b2f8a52cefb81f022d6c409ba979163
+# Version: 1.93.0 WIP
+
 FetchContent_Declare(
     assimp
     GIT_REPOSITORY https://github.com/assimp/assimp.git

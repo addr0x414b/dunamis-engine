@@ -18,6 +18,7 @@
 #include "../core/result.h"
 #include "../scene/game_object.h"
 #include "../scene/scene.h"
+#include "imgui_layer.h"
 #include "utils/vulkan_utils.h"
 
 #ifdef NDEBUG
@@ -79,6 +80,8 @@ private:
     [[nodiscard]] Result createLightsUBO();
 
     [[nodiscard]] Result drawFrame(Scene* scene);
+    void processEvent(const SDL_Event& event) noexcept;
+    void setImGuiInputEnabled(bool enabled) noexcept;
 
     struct OwnedBufferAllocation {
         VkBuffer* bufferSlot = nullptr;
@@ -228,6 +231,7 @@ private:
 
     [[nodiscard]] Result createCommandBuffers();
     [[nodiscard]] Result createSyncObjects();
+    [[nodiscard]] Result initializeImGui();
 
     SDL_Window* window = nullptr;
     Scene* currentScene = nullptr;
@@ -243,11 +247,13 @@ private:
     VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
 
     VkDevice device = VK_NULL_HANDLE;
+    std::optional<uint32_t> graphicsQueueFamily;
     VkQueue graphicsQueue = VK_NULL_HANDLE;
     VkQueue presentQueue = VK_NULL_HANDLE;
 
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
     std::vector<VkImage> swapchainImages;
+    uint32_t swapchainMinimumImageCount = 0;
     VkFormat swapchainImageFormat = VK_FORMAT_UNDEFINED;
     VkExtent2D swapchainExtent{};
     std::vector<VkImageView> swapchainImageViews;
@@ -287,6 +293,8 @@ private:
     std::vector<OwnedSampler> ownedSceneSamplers;
     std::vector<OwnedDescriptorSets> ownedSceneDescriptorSets;
     std::vector<RenderData*> ownedRenderData;
+
+    ImGuiLayer imguiLayer;
 
     const std::vector<const char*> validationLayers = {
         "VK_LAYER_KHRONOS_validation"};

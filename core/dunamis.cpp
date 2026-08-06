@@ -31,6 +31,14 @@ Result Dunamis::initialize() {
 
         inputManager = std::make_shared<InputManager>();
         inputManager->window = platform.window();
+
+        result = inputManager->setInputMode(InputMode::GameplayCaptured);
+        if (!result) {
+            (void)shutdown();
+            return Result::failure("Failed to initialize gameplay input: " +
+                                   result.error());
+        }
+
         level1.inputManager = inputManager;
 
         result = visualServer.initialize(platform.window(), &level1);
@@ -39,6 +47,7 @@ Result Dunamis::initialize() {
             return Result::failure("Visual Server initialization failed: " +
                                    result.error());
         }
+        visualServer.setInputMode(inputManager->inputMode());
 
         initialized = true;
         return Result::success();
@@ -67,13 +76,26 @@ Result Dunamis::run() {
         while (running) {
             SDL_Event e;
             while (SDL_PollEvent(&e)) {
-                if (e.type == SDL_EVENT_QUIT) {
+                const bool togglesInputMode =
+                    e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat &&
+                    e.key.key == SDLK_LALT;
+                if (togglesInputMode) {
+                    inputManager->toggleInputMode();
+                    visualServer.setInputMode(inputManager->inputMode());
+                    continue;
+                }
+
+                visualServer.processEvent(e);
+
+                if (e.type == SDL_EVENT_QUIT ||
+                    e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
                     running = false;
                 } else if (e.type == SDL_EVENT_KEY_DOWN) {
                     if (e.key.key == SDLK_ESCAPE) {
                         running = false;
                     }
                 }
+
                 inputManager->handleEvent(e);
             }
             level1.update();
@@ -83,7 +105,7 @@ Result Dunamis::run() {
                 return Result::failure("Rendering failed: " + result.error());
             }
 
-            inputManager->clearKeys();
+            inputManager->clearTransientInput();
         }
     } catch (const std::exception& exception) {
         return Result::failure("Engine run failed: " +

@@ -9,12 +9,16 @@
 
 #include "vulkan_context.h"
 
+enum class InputMode;
+
 class VisualServer {
 public:
     ~VisualServer() noexcept;
 
     [[nodiscard]] Result initialize(SDL_Window* window, Scene* scene);
     [[nodiscard]] Result run();
+    void processEvent(const SDL_Event& event) noexcept;
+    void setInputMode(InputMode mode) noexcept;
     bool shutdown() noexcept;
 
 private:

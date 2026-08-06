@@ -1,5 +1,7 @@
 #include "visual_server.h"
 
+#include "../input/input_manager.h"
+
 Result VisualServer::initialize(SDL_Window* window, Scene* scene) {
     spdlog::info("Initializing Visual Server...");
 
@@ -115,6 +117,15 @@ Result VisualServer::run() {
         return Result::failure("Visual Server is not initialized");
     }
     return vulkanContext.drawFrame(currentScene);
+}
+
+void VisualServer::processEvent(const SDL_Event& event) noexcept {
+    vulkanContext.processEvent(event);
+}
+
+void VisualServer::setInputMode(InputMode mode) noexcept {
+    vulkanContext.setImGuiInputEnabled(
+        mode == InputMode::EditorInteractive);
 }
 
 bool VisualServer::shutdown() noexcept {

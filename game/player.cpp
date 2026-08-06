@@ -10,16 +10,19 @@ void Player::init() {
 }
 
 void Player::start(std::shared_ptr<InputManager> input) {
-    input->setRelativeMouseMode(true);
+    (void)input;
 }
 
 void Player::update(std::shared_ptr<InputManager> input) {
+    if (!input->gameplayInputEnabled()) {
+        return;
+    }
 
     if (input->isKeyDown(SDLK_LSHIFT)) {
         speed = 5.0f;
     }else if (input->isKeyDown(SDLK_LCTRL)) {
         speed = 0.3f;
-    } 
+    }
     else {
         speed = 1.0f;
     }
