@@ -7,9 +7,45 @@
 
 namespace {
 
+constexpr float minDirectionalDirectionLengthSquared = 1.0e-8f;
+
 bool isValidColorComponent(float component) {
     return std::isfinite(component) && component >= 0.0f &&
            component <= 1.0f;
+}
+
+bool isFiniteVector(const glm::vec3& vector) {
+    return std::isfinite(vector.x) && std::isfinite(vector.y) &&
+           std::isfinite(vector.z);
+}
+
+Result validateDirectionalLightState(const DirectionalLight& light) {
+    if (!isFiniteVector(light.direction)) {
+        return Result::failure("Directional light direction must be finite");
+    }
+
+    const float directionLengthSquared = glm::dot(
+        light.direction, light.direction);
+    if (!std::isfinite(directionLengthSquared)) {
+        return Result::failure(
+            "Directional light direction must have finite length");
+    }
+    if (directionLengthSquared <= minDirectionalDirectionLengthSquared) {
+        return Result::failure(
+            "Directional light direction must have nonzero length");
+    }
+
+    if (!isFiniteVector(light.color) || light.color.r < 0.0f ||
+        light.color.g < 0.0f || light.color.b < 0.0f) {
+        return Result::failure(
+            "Directional light color must be finite and nonnegative");
+    }
+    if (!std::isfinite(light.intensity) || light.intensity < 0.0f) {
+        return Result::failure(
+            "Directional light intensity must be finite and nonnegative");
+    }
+
+    return Result::success();
 }
 
 }  // namespace
@@ -25,6 +61,12 @@ Result Scene::addGameObject(std::unique_ptr<GameObject> gameObject) {
 
     const bool isPointLight =
         dynamic_cast<PointLight*>(gameObject.get()) != nullptr;
+    const bool isDirectionalLight =
+        dynamic_cast<DirectionalLight*>(gameObject.get()) != nullptr;
+    if (isDirectionalLight && directionalLightIndex_.has_value()) {
+        return Result::failure(
+            "A scene can contain only one directional light");
+    }
     if (isPointLight &&
         pointLightCount_ >= scene_limits::maxPointLights) {
         return Result::failure(
@@ -47,6 +89,9 @@ Result Scene::addGameObject(std::unique_ptr<GameObject> gameObject) {
     if (isPointLight) {
         pointLightIndices_[pointLightCount_] = objectIndex;
         ++pointLightCount_;
+    }
+    if (isDirectionalLight) {
+        directionalLightIndex_ = objectIndex;
     }
 
     return Result::success();
@@ -78,6 +123,43 @@ Result Scene::validateForActivation() const {
             return Result::failure(
                 "Scene contains a null game object at index " +
                 std::to_string(index));
+        }
+    }
+
+    std::size_t directionalLightCount = 0;
+    for (const auto& gameObject : gameObjects_) {
+        if (dynamic_cast<const DirectionalLight*>(gameObject.get()) !=
+            nullptr) {
+            ++directionalLightCount;
+        }
+    }
+
+    if (!directionalLightIndex_.has_value()) {
+        if (directionalLightCount != 0) {
+            return Result::failure(
+                "Scene contains an unregistered directional light");
+        }
+    } else {
+        const std::size_t objectIndex = *directionalLightIndex_;
+        if (objectIndex >= gameObjects_.size()) {
+            return Result::failure(
+                "Scene contains an invalid directional-light registration");
+        }
+
+        const auto* directionalLight = dynamic_cast<const DirectionalLight*>(
+            gameObjects_[objectIndex].get());
+        if (directionalLight == nullptr) {
+            return Result::failure(
+                "Scene contains an invalid directional-light registration");
+        }
+        if (directionalLightCount != 1) {
+            return Result::failure(
+                "Scene contains a duplicate directional-light registration");
+        }
+
+        Result lightResult = validateDirectionalLightState(*directionalLight);
+        if (!lightResult) {
+            return lightResult;
         }
     }
 
@@ -117,6 +199,17 @@ const PointLight& Scene::pointLightAt(std::size_t index) const {
     }
     return static_cast<const PointLight&>(
         *gameObjects_.at(pointLightIndices_[index]));
+}
+
+const DirectionalLight* Scene::directionalLight() const noexcept {
+    if (!directionalLightIndex_.has_value() ||
+        *directionalLightIndex_ >= gameObjects_.size() ||
+        !gameObjects_[*directionalLightIndex_]) {
+        return nullptr;
+    }
+
+    return dynamic_cast<const DirectionalLight*>(
+        gameObjects_[*directionalLightIndex_].get());
 }
 
 const Camera* Scene::activeCamera() const noexcept {

@@ -1,5 +1,6 @@
 #include "vulkan_context.h"
 
+#include <cmath>
 #include <cstring>
 #include <cstdlib>
 #include <exception>
@@ -8,6 +9,50 @@
 #include "../third_party/stb/stb_image.h"
 
 namespace {
+
+constexpr float minDirectionalDirectionLengthSquared = 1.0e-8f;
+
+bool isFiniteVector(const glm::vec3& vector) {
+    return std::isfinite(vector.x) && std::isfinite(vector.y) &&
+           std::isfinite(vector.z);
+}
+
+Result normalizeDirectionalLightDirection(const DirectionalLight& light,
+                                          glm::vec3& normalizedDirection) {
+    if (!isFiniteVector(light.direction)) {
+        return Result::failure("Directional light direction must be finite");
+    }
+
+    const float directionLengthSquared = glm::dot(
+        light.direction, light.direction);
+    if (!std::isfinite(directionLengthSquared)) {
+        return Result::failure(
+            "Directional light direction must have finite length");
+    }
+    if (directionLengthSquared <= minDirectionalDirectionLengthSquared) {
+        return Result::failure(
+            "Directional light direction must have nonzero length");
+    }
+
+    if (!isFiniteVector(light.color) || light.color.r < 0.0f ||
+        light.color.g < 0.0f || light.color.b < 0.0f) {
+        return Result::failure(
+            "Directional light color must be finite and nonnegative");
+    }
+    if (!std::isfinite(light.intensity) || light.intensity < 0.0f) {
+        return Result::failure(
+            "Directional light intensity must be finite and nonnegative");
+    }
+
+    normalizedDirection = light.direction /
+                          std::sqrt(directionLengthSquared);
+    if (!isFiniteVector(normalizedDirection)) {
+        return Result::failure(
+            "Directional light direction could not be normalized");
+    }
+
+    return Result::success();
+}
 
 Result vkFailure(const std::string& operation, VkResult result) {
     return Result::failure(operation + " failed (VkResult " +
@@ -3025,6 +3070,23 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
         lightsUbo.lights[i].position = light.position;
         lightsUbo.lights[i].color = light.color;
         lightsUbo.lights[i].intensity = light.intensity;
+    }
+    lightsUbo.directionalLight.directionEnabled = glm::vec4(0.0f);
+    lightsUbo.directionalLight.colorIntensity = glm::vec4(0.0f);
+
+    const DirectionalLight* directionalLight = scene->directionalLight();
+    if (directionalLight != nullptr) {
+        glm::vec3 normalizedDirection;
+        Result directionalResult = normalizeDirectionalLightDirection(
+            *directionalLight, normalizedDirection);
+        if (!directionalResult) {
+            return directionalResult;
+        }
+
+        lightsUbo.directionalLight.directionEnabled = glm::vec4(
+            normalizedDirection, 1.0f);
+        lightsUbo.directionalLight.colorIntensity = glm::vec4(
+            directionalLight->color, directionalLight->intensity);
     }
 
     void* data = nullptr;

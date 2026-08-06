@@ -10,6 +10,6 @@ add_library(PointLight STATIC scene.cpp)
 target_include_directories(PointLight PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(PointLight PRIVATE spdlog glm GameObject)
 
-add_library(Scene STATIC scene.cpp)
+add_library(Scene STATIC scene.cpp directional_light.cpp)
 target_include_directories(Scene PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(Scene PRIVATE spdlog glm GameObject Camera PointLight)

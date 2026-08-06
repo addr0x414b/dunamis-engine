@@ -19,10 +19,19 @@ struct LightData {
     float intensity;
 };
 
-layout(set = 1, binding = 0) uniform LightsUBO {
+struct DirectionalLightData {
+    vec4 directionEnabled;
+    vec4 colorIntensity;
+};
+
+layout(std140, set = 1, binding = 0) uniform LightsUBO {
     LightData lights[16];
     vec4 ambientColorIntensity;
+    DirectionalLightData directionalLight;
     int numLights;
+    uint padding0;
+    uint padding1;
+    uint padding2;
 };
 
 layout(push_constant) uniform MaterialPushConstants {
@@ -83,6 +92,37 @@ float calculateAttenuation(vec3 fragPosition, vec3 lightPosition) {
     return 1.0 / max(distanceSquared, EPSILON);
 }
 
+vec3 calculateCookTorranceDirectLighting(
+    vec3 normal,
+    vec3 viewDirection,
+    vec3 lightDirection,
+    vec3 radiance,
+    vec3 albedo,
+    float metallic,
+    float roughness,
+    vec3 F0) {
+    vec3 halfwayDirection = safeNormalize(viewDirection + lightDirection);
+    float NdotL = max(dot(normal, lightDirection), 0.0);
+    float NdotV = max(dot(normal, viewDirection), 0.0);
+    if (NdotL <= 0.0 || NdotV <= 0.0 ||
+        !(dot(halfwayDirection, halfwayDirection) > EPSILON)) {
+        return vec3(0.0);
+    }
+
+    vec3 F = fresnelSchlick(dot(halfwayDirection, viewDirection), F0);
+    float D = distributionGGX(normal, halfwayDirection, roughness);
+    float G = geometrySmith(normal, viewDirection, lightDirection,
+                            roughness);
+
+    vec3 numerator = D * G * F;
+    float denominator = max(4.0 * NdotV * NdotL, EPSILON);
+    vec3 specular = numerator / denominator;
+
+    vec3 kS = F;
+    vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
+    return (kD * albedo / PI + specular) * radiance * NdotL;
+}
+
 void main() {
     vec4 baseColor = texture(baseColorSampler, fragTexCoord) *
                      materialBaseColorFactor;
@@ -141,29 +181,23 @@ void main() {
         }
 
         vec3 lightDirection = lightVector * inversesqrt(distanceSquared);
-        vec3 halfwayDirection = safeNormalize(viewDirection + lightDirection);
-        float NdotL = max(dot(normal, lightDirection), 0.0);
-        float NdotV = max(dot(normal, viewDirection), 0.0);
-        if (NdotL <= 0.0 || NdotV <= 0.0 ||
-            !(dot(halfwayDirection, halfwayDirection) > EPSILON)) {
-            continue;
-        }
-
         float attenuation = calculateAttenuation(fragPos, lightPos);
         vec3 radiance = lightColor * lightIntensity * attenuation;
-        vec3 F = fresnelSchlick(dot(halfwayDirection, viewDirection), F0);
-        float D = distributionGGX(normal, halfwayDirection, roughness);
-        float G = geometrySmith(normal, viewDirection, lightDirection,
-                                roughness);
+        finalColor += calculateCookTorranceDirectLighting(
+            normal, viewDirection, lightDirection, radiance, albedo,
+            metallic, roughness, F0);
+    }
 
-        vec3 numerator = D * G * F;
-        float denominator = max(4.0 * NdotV * NdotL, EPSILON);
-        vec3 specular = numerator / denominator;
-
-        vec3 kS = F;
-        vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
-        vec3 direct = (kD * albedo / PI + specular) * radiance * NdotL;
-        finalColor += direct;
+    if (directionalLight.directionEnabled.w > 0.5) {
+        vec3 lightDirection = safeNormalize(
+            -directionalLight.directionEnabled.xyz);
+        if (dot(lightDirection, lightDirection) > EPSILON) {
+            vec3 radiance = directionalLight.colorIntensity.rgb *
+                            directionalLight.colorIntensity.a;
+            finalColor += calculateCookTorranceDirectLighting(
+                normal, viewDirection, lightDirection, radiance, albedo,
+                metallic, roughness, F0);
+        }
     }
 
     outColor = vec4(finalColor, 1.0);

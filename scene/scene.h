@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -11,6 +12,7 @@
 
 #include "../core/result.h"
 #include "camera.h"
+#include "directional_light.h"
 #include "game_object.h"
 #include "point_light.h"
 #include "scene_limits.h"
@@ -34,6 +36,8 @@ public:
     gameObjects() const noexcept;
     [[nodiscard]] std::size_t pointLightCount() const noexcept;
     [[nodiscard]] const PointLight& pointLightAt(std::size_t index) const;
+    [[nodiscard]] const DirectionalLight*
+    directionalLight() const noexcept;
     [[nodiscard]] const Camera* activeCamera() const noexcept;
     [[nodiscard]] bool isActive() const noexcept;
     [[nodiscard]] Result setBackgroundColor(const glm::vec4& color);
@@ -56,6 +60,7 @@ private:
     std::array<std::size_t, scene_limits::maxPointLights>
         pointLightIndices_{};
     std::size_t pointLightCount_ = 0;
+    std::optional<std::size_t> directionalLightIndex_;
     std::shared_ptr<Camera> activeCamera_;
     glm::vec4 backgroundColor_{
         0.639f, 0.965f, 1.0f, 1.0f};

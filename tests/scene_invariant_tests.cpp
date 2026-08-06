@@ -6,6 +6,7 @@
 #include <memory>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -32,6 +33,10 @@ bool nearlyEqual(float actual, float expected) {
     return std::fabs(actual - expected) < 0.0001f;
 }
 
+bool hasDirectionalLightError(const Result& result) {
+    return result.error().find("Directional light") != std::string::npos;
+}
+
 }  // namespace
 
 static_assert(std::is_same_v<
@@ -40,6 +45,9 @@ static_assert(std::is_same_v<
 static_assert(std::is_same_v<
               decltype(std::declval<TestScene&>().pointLightAt(0)),
               const PointLight&>);
+static_assert(std::is_same_v<
+              decltype(std::declval<TestScene&>().directionalLight()),
+              const DirectionalLight*>);
 static_assert(std::is_same_v<
               decltype(std::declval<TestScene&>().activeCamera()),
               const Camera*>);
@@ -140,7 +148,18 @@ int main() {
                          defaultLight.position.z == 0.0f,
                      "Point lights do not default to the origin");
 
+    const DirectionalLight defaultDirectionalLight;
+    passed &= expect(defaultDirectionalLight.direction ==
+                         glm::vec3(0.0f, -1.0f, 0.0f),
+                     "Directional lights do not default to downward rays");
+    passed &= expect(defaultDirectionalLight.color == glm::vec3(1.0f),
+                     "Directional lights do not default to white");
+    passed &= expect(defaultDirectionalLight.intensity == 1.0f,
+                     "Directional lights do not default to intensity 1");
+
     TestScene scene;
+    passed &= expect(scene.directionalLight() == nullptr,
+                     "A new scene did not start without a directional light");
     passed &= expect(nearlyEqual(scene.backgroundColor().r, 0.639f) &&
                          nearlyEqual(scene.backgroundColor().g, 0.965f) &&
                          nearlyEqual(scene.backgroundColor().b, 1.0f) &&
@@ -227,6 +246,89 @@ int main() {
     passed &= expect(static_cast<bool>(scene.validateForActivation()),
                      "A valid zero-light scene failed validation");
 
+    const std::size_t objectsBeforeDirectional = scene.gameObjects().size();
+    const std::size_t pointsBeforeDirectional = scene.pointLightCount();
+    auto directionalLight = std::make_unique<DirectionalLight>();
+    const DirectionalLight* expectedDirectionalLight = directionalLight.get();
+    const Result directionalResult =
+        scene.addGameObject(std::move(directionalLight));
+    passed &= expect(static_cast<bool>(directionalResult),
+                     "A valid directional light was rejected");
+    passed &= expect(scene.directionalLight() == expectedDirectionalLight,
+                     "The scene did not retain the registered directional light");
+    passed &= expect(scene.gameObjects().size() == objectsBeforeDirectional + 1,
+                     "Adding a directional light did not add one owning object");
+    passed &= expect(scene.pointLightCount() == pointsBeforeDirectional,
+                     "Adding a directional light changed point-light registration");
+
+    const std::size_t objectsBeforeSecondDirectional = scene.gameObjects().size();
+    const std::size_t pointsBeforeSecondDirectional = scene.pointLightCount();
+    const Result secondDirectionalResult = scene.addGameObject(
+        std::make_unique<DirectionalLight>());
+    passed &= expect(!static_cast<bool>(secondDirectionalResult),
+                     "A scene accepted a second directional light");
+    passed &= expect(scene.directionalLight() == expectedDirectionalLight,
+                     "Rejecting a second directional light changed registration");
+    passed &= expect(scene.gameObjects().size() == objectsBeforeSecondDirectional,
+                     "Rejecting a second directional light changed ownership");
+    passed &= expect(scene.pointLightCount() == pointsBeforeSecondDirectional,
+                     "Rejecting a second directional light changed point lights");
+    passed &= expect(static_cast<bool>(scene.validateForActivation()),
+                     "A valid scene with one directional light failed validation");
+
+    auto expectInvalidDirectionalState =
+        [&passed](const char* message, const auto& configure) {
+            TestScene invalidScene;
+            const Result cameraResult = invalidScene.setActiveCamera(
+                std::make_shared<Camera>());
+            if (!expect(static_cast<bool>(cameraResult),
+                        "An invalid-light test could not set its camera")) {
+                passed = false;
+                return;
+            }
+
+            auto light = std::make_unique<DirectionalLight>();
+            configure(*light);
+            const Result addResult = invalidScene.addGameObject(
+                std::move(light));
+            if (!expect(static_cast<bool>(addResult),
+                        "An invalid directional light could not be added")) {
+                passed = false;
+                return;
+            }
+
+            const Result validationResult =
+                invalidScene.validateForActivation();
+            passed &= expect(!static_cast<bool>(validationResult) &&
+                                 hasDirectionalLightError(validationResult),
+                             message);
+        };
+
+    expectInvalidDirectionalState(
+        "A zero directional-light direction passed validation",
+        [](DirectionalLight& light) { light.direction = glm::vec3(0.0f); });
+    expectInvalidDirectionalState(
+        "A non-finite directional-light direction passed validation",
+        [](DirectionalLight& light) {
+            light.direction.x = std::numeric_limits<float>::quiet_NaN();
+        });
+    expectInvalidDirectionalState(
+        "A negative directional-light intensity passed validation",
+        [](DirectionalLight& light) { light.intensity = -1.0f; });
+    expectInvalidDirectionalState(
+        "A non-finite directional-light intensity passed validation",
+        [](DirectionalLight& light) {
+            light.intensity = std::numeric_limits<float>::infinity();
+        });
+    expectInvalidDirectionalState(
+        "A negative directional-light color passed validation",
+        [](DirectionalLight& light) { light.color.r = -1.0f; });
+    expectInvalidDirectionalState(
+        "A non-finite directional-light color passed validation",
+        [](DirectionalLight& light) {
+            light.color.g = std::numeric_limits<float>::infinity();
+        });
+
     for (std::size_t index = 0;
          index < scene_limits::maxPointLights; ++index) {
         auto light = std::make_unique<PointLight>();
@@ -244,8 +346,8 @@ int main() {
         scene.pointLightCount() == scene_limits::maxPointLights,
         "The scene did not contain exactly 16 point lights");
     passed &= expect(
-        scene.gameObjects().size() == scene_limits::maxPointLights,
-        "The 16 point lights did not have exactly 16 owning objects");
+        scene.gameObjects().size() == scene_limits::maxPointLights + 1,
+        "The 16 point lights did not preserve the directional-light object");
     passed &= expect(static_cast<bool>(scene.validateForActivation()),
                      "A valid 16-light scene failed validation");
 
@@ -257,7 +359,7 @@ int main() {
         scene.pointLightCount() == scene_limits::maxPointLights,
         "Rejecting the seventeenth light changed the light count");
     passed &= expect(
-        scene.gameObjects().size() == scene_limits::maxPointLights,
+        scene.gameObjects().size() == scene_limits::maxPointLights + 1,
         "Rejecting the seventeenth light changed object ownership");
     bool seventeenthLookupRejected = false;
     try {

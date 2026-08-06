@@ -85,24 +85,44 @@ struct LightData {
     float intensity;
 };
 
-struct LightsUBO {
+struct alignas(16) DirectionalLightData {
+    glm::vec4 directionEnabled{};
+    glm::vec4 colorIntensity{};
+};
+
+struct alignas(16) LightsUBO {
     std::array<LightData, scene_limits::maxPointLights> lights{};
     glm::vec4 ambientColorIntensity{};
+    DirectionalLightData directionalLight{};
     std::int32_t numLights = 0;
     std::array<std::uint32_t, 3> padding{};
 };
 
 static_assert(sizeof(LightData) == 32,
               "LightData must match the fragment shader's std140 layout");
-static_assert(
-    offsetof(LightsUBO, numLights) ==
-        sizeof(LightData) * scene_limits::maxPointLights + sizeof(glm::vec4),
-    "LightsUBO must match the fragment shader's std140 layout");
+static_assert(alignof(DirectionalLightData) == 16,
+              "DirectionalLightData must be 16-byte aligned");
+static_assert(offsetof(DirectionalLightData, directionEnabled) == 0,
+              "DirectionalLightData direction must match std140 offset");
+static_assert(offsetof(DirectionalLightData, colorIntensity) == 16,
+              "DirectionalLightData color must match std140 offset");
+static_assert(sizeof(DirectionalLightData) == 32,
+              "DirectionalLightData must match the fragment shader layout");
+static_assert(alignof(LightsUBO) == 16,
+              "LightsUBO must be 16-byte aligned");
+static_assert(offsetof(LightsUBO, lights) == 0,
+              "LightsUBO point lights must start at offset zero");
 static_assert(offsetof(LightsUBO, ambientColorIntensity) == 512,
               "LightsUBO ambient field must match std140 offset");
-static_assert(offsetof(LightsUBO, numLights) == 528,
-              "LightsUBO light count must match std140 offset");
-static_assert(sizeof(LightsUBO) == 544,
+static_assert(offsetof(LightsUBO, directionalLight) == 528,
+              "LightsUBO directional field must match std140 offset");
+static_assert(
+    offsetof(LightsUBO, numLights) ==
+        560,
+    "LightsUBO must match the fragment shader's std140 layout");
+static_assert(offsetof(LightsUBO, padding) == 564,
+              "LightsUBO trailing padding must match std140 offset");
+static_assert(sizeof(LightsUBO) == 576,
               "LightsUBO must include explicit std140 trailing padding");
 
 namespace std {
