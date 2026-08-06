@@ -5,6 +5,7 @@
 #include <string>
 
 #include <SDL3/SDL.h>
+#include <glm/mat4x4.hpp>
 #include <vulkan/vulkan.h>
 
 #include "../core/result.h"
@@ -32,7 +33,8 @@ public:
     void setInputEnabled(bool enabled) noexcept;
 
     [[nodiscard]] Result beginFrame(SceneRunState runState);
-    void drawEditor(Scene* scene, SceneRunState runState);
+    void drawEditor(Scene* scene, const glm::mat4& view,
+                    const glm::mat4& projection, SceneRunState runState);
     void finishFrame();
     void recordDrawData(VkCommandBuffer commandBuffer);
     [[nodiscard]] const GameObject*
@@ -53,10 +55,25 @@ public:
 private:
     [[nodiscard]] Result initializeVulkanBackend();
     void synchronizeSelection(Scene* scene) noexcept;
+    void selectGameObject(Scene* scene, GameObject* object) noexcept;
     void drawToolbar(SceneRunState runState);
     void drawSceneHierarchy(Scene* scene, bool disabled);
     void drawInspector(Scene* scene, bool disabled);
     void updateSceneInteractionAreaHovered() noexcept;
+    void drawTranslationGizmo(Scene* scene, const glm::mat4& view,
+                              const glm::mat4& projection,
+                              SceneRunState runState);
+    void processWorldSelection(Scene* scene, const glm::mat4& view,
+                               const glm::mat4& projection,
+                               SceneRunState runState);
+
+    struct SceneInteractionRect {
+        float x = 0.0f;
+        float y = 0.0f;
+        float width = 0.0f;
+        float height = 0.0f;
+        bool valid = false;
+    };
 
     VkInstance instance_ = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
@@ -73,11 +90,14 @@ private:
     bool vulkanBackendInitialized_ = false;
     bool frameStarted_ = false;
     bool drawDataReady_ = false;
+    bool inputEnabled_ = true;
+    bool gizmoDragActive_ = false;
     Scene* selectionScene_ = nullptr;
     GameObject* selectedGameObject_ = nullptr;
     std::string inspectorError_;
     EditorCommand pendingEditorCommand_ = EditorCommand::None;
     bool sceneInteractionAreaHovered_ = false;
+    SceneInteractionRect sceneInteractionRect_;
 };
 
 #endif

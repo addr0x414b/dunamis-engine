@@ -86,6 +86,19 @@ add_test(NAME scene_invariants
         COMMAND SceneInvariantTests
 )
 
+add_executable(EditorPickingTests editor_picking_tests.cpp)
+target_include_directories(EditorPickingTests PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_definitions(EditorPickingTests PRIVATE
+        DUNAMIS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(EditorPickingTests PRIVATE
+        EditorPicking
+        GameObject
+        VulkanUtils
+        assimp
+        glm
+        spdlog)
+add_test(NAME editor_picking_geometry COMMAND EditorPickingTests)
+
 add_executable(TextureLoadingTests texture_loading_tests.cpp)
 target_include_directories(TextureLoadingTests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(TextureLoadingTests PRIVATE

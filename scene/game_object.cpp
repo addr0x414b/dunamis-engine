@@ -786,6 +786,7 @@ Result GameObject::loadModel() {
                 }
             }
             profile.totalUniqueVertices += instance.mesh.vertices.size();
+            calculateMeshBounds(instance.mesh);
 
             if (instance.material.normalMapPixels) {
                 if (meshHasUsableTangents) {
@@ -908,6 +909,7 @@ Result GameObject::loadModel() {
 
 Result GameObject::addMeshInstance(MeshInstance meshInstance) {
     try {
+        calculateMeshBounds(meshInstance.mesh);
         meshInstances_.push_back(std::move(meshInstance));
     } catch (const std::exception& exception) {
         return Result::failure("Failed to add mesh instance: " +

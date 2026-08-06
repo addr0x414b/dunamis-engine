@@ -146,8 +146,9 @@ private:
 
     void updateUniformBuffer(uint32_t currentImage,
                              const std::unique_ptr<GameObject>& gameObject,
-                             glm::vec3 camPos, glm::vec3 camFront,
-                             glm::vec3 camUp);
+                             const glm::mat4& view,
+                             const glm::mat4& projection,
+                             glm::vec3 camFront);
     [[nodiscard]] Result recreateSwapchain();
     [[nodiscard]] Result recordCommandBuffer(VkCommandBuffer commandBuffer,
                                              uint32_t imageIndex,

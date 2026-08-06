@@ -1,5 +1,7 @@
 #include "vulkan_context.h"
 
+#include "editor_picking.h"
+
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
@@ -3218,32 +3220,15 @@ void VulkanContext::cleanupSwapchain() noexcept {
 
 void VulkanContext::updateUniformBuffer(
     uint32_t currentImage,
-    const std::unique_ptr<GameObject>& gameObject, glm::vec3 camPos,
-    glm::vec3 camFront, glm::vec3 camUp) {
+    const std::unique_ptr<GameObject>& gameObject, const glm::mat4& view,
+    const glm::mat4& projection, glm::vec3 camFront) {
     for (auto& instance : gameObject->meshInstances_) {
         UniformBufferObject ubo{};
 
-        ubo.model = glm::mat4(1.0f);
-
-        ubo.model = glm::translate(ubo.model, gameObject->position);
-
-        ubo.model = glm::rotate(ubo.model, glm::radians(gameObject->rotation.x),
-                            glm::vec3(1.0f, 0.0f, 0.0f));
-        ubo.model = glm::rotate(ubo.model, glm::radians(gameObject->rotation.y),
-                            glm::vec3(0.0f, 1.0f, 0.0f));
-        ubo.model = glm::rotate(ubo.model, glm::radians(gameObject->rotation.z),
-                            glm::vec3(0.0f, 0.0f, 1.0f));
-        
-        ubo.model = glm::scale(ubo.model, gameObject->scale);
-
-        ubo.view =
-            glm::lookAt(camPos, camPos + camFront, camUp);
-
-        ubo.proj = glm::perspective(
-            glm::radians(45.0f),
-            swapchainExtent.width / (float)swapchainExtent.height, 0.1f, 10000.0f);
-
-        ubo.proj[1][1] *= -1;
+        ubo.model = editor_picking::makeModelMatrix(
+            gameObject->position, gameObject->rotation, gameObject->scale);
+        ubo.view = view;
+        ubo.proj = projection;
 
         ubo.cameraPosition = camFront;
         memcpy(instance.renderData.uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
@@ -3343,7 +3328,15 @@ Result VulkanContext::drawFrame(Scene* scene, const Camera& renderCamera,
         return Result::failure("Failed to begin Dear ImGui frame: " +
                                imguiResult.error());
     }
-    imguiLayer.drawEditor(scene, runState);
+    const glm::mat4 view = glm::lookAt(
+        renderCamera.position, renderCamera.position + renderCamera.front,
+        renderCamera.up);
+    glm::mat4 projection = glm::perspective(
+        glm::radians(45.0f),
+        swapchainExtent.width / static_cast<float>(swapchainExtent.height),
+        0.1f, 10000.0f);
+    projection[1][1] *= -1.0f;
+    imguiLayer.drawEditor(scene, view, projection, runState);
     imguiLayer.finishFrame();
 
     Result recordResult = recordCommandBuffer(
@@ -3354,8 +3347,8 @@ Result VulkanContext::drawFrame(Scene* scene, const Camera& renderCamera,
 
 
     for (const auto& obj : scene->gameObjects()) {
-        updateUniformBuffer(currentFrame, obj, renderCamera.position,
-                            renderCamera.front, renderCamera.up);
+        updateUniformBuffer(currentFrame, obj, view, projection,
+                            renderCamera.front);
     }
 
 

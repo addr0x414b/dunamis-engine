@@ -3,11 +3,16 @@ target_sources(VulkanUtils INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/utils/vulkan_ut
 target_include_directories(VulkanUtils INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/utils)
 target_link_libraries(VulkanUtils INTERFACE glm)
 
+add_library(EditorPicking STATIC editor_picking.cpp)
+target_include_directories(EditorPicking PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(EditorPicking PRIVATE VulkanUtils glm)
+
 set(IMGUI_DIR ${PROJECT_SOURCE_DIR}/third_party/imgui)
 
 add_library(VulkanContext STATIC
         vulkan_context.cpp
         imgui_layer.cpp
+        ${PROJECT_SOURCE_DIR}/third_party/imguizmo/ImGuizmo.cpp
         ${IMGUI_DIR}/imgui.cpp
         ${IMGUI_DIR}/imgui_draw.cpp
         ${IMGUI_DIR}/imgui_tables.cpp
@@ -18,8 +23,9 @@ add_library(VulkanContext STATIC
 target_include_directories(VulkanContext PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(VulkanContext SYSTEM PRIVATE
         ${IMGUI_DIR}
-        ${IMGUI_DIR}/backends)
-target_link_libraries(VulkanContext PRIVATE SDL3::SDL3 Vulkan::Vulkan spdlog VulkanUtils GameObject Scene glm)
+        ${IMGUI_DIR}/backends
+        ${PROJECT_SOURCE_DIR}/third_party/imguizmo)
+target_link_libraries(VulkanContext PRIVATE SDL3::SDL3 Vulkan::Vulkan spdlog VulkanUtils EditorPicking GameObject Scene glm)
 
 add_library(VisualServer STATIC visual_server.cpp)
 target_include_directories(VisualServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

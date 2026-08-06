@@ -4,11 +4,16 @@
 #include <imgui_internal.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
+#include <ImGuizmo.h>
 #include <spdlog/spdlog.h>
 
 #include <cmath>
+#include <limits>
 #include <string>
 
+#include <glm/gtc/type_ptr.hpp>
+
+#include "editor_picking.h"
 #include "../scene/directional_light.h"
 #include "../scene/game_object.h"
 #include "../scene/point_light.h"
@@ -202,6 +207,8 @@ void ImGuiLayer::processEvent(const SDL_Event& event) noexcept {
 }
 
 void ImGuiLayer::setInputEnabled(bool enabled) noexcept {
+    inputEnabled_ = enabled;
+    gizmoDragActive_ = false;
     if (!contextCreated_) {
         return;
     }
@@ -239,6 +246,7 @@ Result ImGuiLayer::beginFrame(SceneRunState runState) {
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
+    ImGuizmo::BeginFrame();
     drawToolbar(runState);
     const ImGuiID dockspaceId = ImGui::GetID(dunamisDockspaceName);
     const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
@@ -250,7 +258,9 @@ Result ImGuiLayer::beginFrame(SceneRunState runState) {
     return Result::success();
 }
 
-void ImGuiLayer::drawEditor(Scene* scene, SceneRunState runState) {
+void ImGuiLayer::drawEditor(Scene* scene, const glm::mat4& view,
+                            const glm::mat4& projection,
+                            SceneRunState runState) {
     synchronizeSelection(scene);
     if (!frameStarted_) {
         return;
@@ -259,6 +269,9 @@ void ImGuiLayer::drawEditor(Scene* scene, SceneRunState runState) {
     if (scene != nullptr) {
         const bool disabled = runState == SceneRunState::Playing;
         drawSceneHierarchy(scene, disabled);
+        updateSceneInteractionAreaHovered();
+        drawTranslationGizmo(scene, view, projection, runState);
+        processWorldSelection(scene, view, projection, runState);
         drawInspector(scene, disabled);
     }
 }
@@ -345,6 +358,29 @@ void ImGuiLayer::synchronizeSelection(Scene* scene) noexcept {
     }
 }
 
+void ImGuiLayer::selectGameObject(Scene* scene, GameObject* object) noexcept {
+    if (scene == nullptr) {
+        selectionScene_ = nullptr;
+        clearSelection();
+        return;
+    }
+
+    selectionScene_ = scene;
+    if (object == nullptr) {
+        clearSelection();
+        return;
+    }
+
+    for (const auto& owner : scene->gameObjects()) {
+        if (owner.get() == object) {
+            selectedGameObject_ = object;
+            inspectorError_.clear();
+            return;
+        }
+    }
+    clearSelection();
+}
+
 void ImGuiLayer::drawSceneHierarchy(Scene* scene, bool disabled) {
     ImGui::SetNextWindowSize(ImVec2(300.0f, 400.0f),
                              ImGuiCond_FirstUseEver);
@@ -369,8 +405,7 @@ void ImGuiLayer::drawSceneHierarchy(Scene* scene, bool disabled) {
                                 : object->name.c_str();
         const bool selected = selectedGameObject_ == object;
         if (ImGui::Selectable(label, selected)) {
-            selectedGameObject_ = object;
-            inspectorError_.clear();
+            selectGameObject(scene, object);
         }
         ImGui::PopID();
     }
@@ -387,6 +422,142 @@ void ImGuiLayer::drawSceneHierarchy(Scene* scene, bool disabled) {
 
     ImGui::EndDisabled();
     ImGui::End();
+}
+
+void ImGuiLayer::drawTranslationGizmo(Scene* scene, const glm::mat4& view,
+                                      const glm::mat4& projection,
+                                      SceneRunState runState) {
+    if (runState != SceneRunState::Editing ||
+        !sceneInteractionRect_.valid) {
+        gizmoDragActive_ = false;
+        return;
+    }
+    GameObject* selected = const_cast<GameObject*>(
+        selectedGameObjectForScene(scene));
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    if (selected == nullptr || viewport == nullptr || viewport->Size.x <= 0.0f ||
+        viewport->Size.y <= 0.0f) {
+        gizmoDragActive_ = false;
+        return;
+    }
+
+    ImDrawList* drawList = ImGui::GetForegroundDrawList(viewport);
+    const ImVec2 clipMin(sceneInteractionRect_.x, sceneInteractionRect_.y);
+    const ImVec2 clipMax(sceneInteractionRect_.x + sceneInteractionRect_.width,
+                         sceneInteractionRect_.y + sceneInteractionRect_.height);
+    drawList->PushClipRect(clipMin, clipMax, true);
+    ImGuizmo::SetOrthographic(false);
+    ImGuizmo::SetDrawlist(drawList);
+    ImGuizmo::SetRect(viewport->Pos.x, viewport->Pos.y, viewport->Size.x,
+                      viewport->Size.y);
+    const glm::mat4 model = editor_picking::makeModelMatrix(
+        selected->position, selected->rotation, selected->scale);
+    const editor_picking::AggregateBounds aggregate =
+        editor_picking::aggregateBounds(selected->meshInstances());
+    const glm::vec3 worldCenter = editor_picking::worldBoundsCenter(
+        aggregate, model, selected->position);
+    glm::mat4 gizmoMatrix = editor_picking::makeTranslationMatrix(worldCenter);
+    const glm::vec3 originalGizmoCenter(gizmoMatrix[3]);
+    glm::mat4 imguizmoProjection = projection;
+    imguizmoProjection[1][1] *= -1.0f;
+    const bool manipulated = ImGuizmo::Manipulate(
+        glm::value_ptr(view), glm::value_ptr(imguizmoProjection),
+        ImGuizmo::TRANSLATE, ImGuizmo::WORLD, glm::value_ptr(gizmoMatrix));
+    drawList->PopClipRect();
+
+    if (manipulated) {
+        const glm::vec3 manipulatedGizmoCenter(gizmoMatrix[3]);
+        const glm::vec3 worldDelta =
+            manipulatedGizmoCenter - originalGizmoCenter;
+        if (isFiniteVector(manipulatedGizmoCenter) &&
+            isFiniteVector(worldDelta) && isFiniteVector(selected->position)) {
+            selected->position += worldDelta;
+            inspectorError_.clear();
+        }
+    }
+    gizmoDragActive_ = ImGuizmo::IsUsing() &&
+                       ImGui::IsMouseDown(ImGuiMouseButton_Left);
+}
+
+void ImGuiLayer::processWorldSelection(Scene* scene, const glm::mat4& view,
+                                       const glm::mat4& projection,
+                                       SceneRunState runState) {
+    if (runState != SceneRunState::Editing || !inputEnabled_ ||
+        !sceneInteractionRect_.valid || !sceneInteractionAreaHovered_ ||
+        gizmoDragActive_ || ImGuizmo::IsOver() || ImGuizmo::IsUsing() ||
+        ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
+        !ImGui::IsMouseClicked(ImGuiMouseButton_Left, false)) {
+        return;
+    }
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    if (viewport == nullptr || viewport->Size.x <= 0.0f ||
+        viewport->Size.y <= 0.0f) {
+        return;
+    }
+
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    const float localX = mouse.x - viewport->Pos.x;
+    const float localY = mouse.y - viewport->Pos.y;
+    const float ndcX = 2.0f * localX / viewport->Size.x - 1.0f;
+    const float ndcY = 2.0f * localY / viewport->Size.y - 1.0f;
+    const glm::mat4 inverseViewProjection = glm::inverse(projection * view);
+    const glm::vec4 nearPoint = inverseViewProjection *
+        glm::vec4(ndcX, ndcY, 0.0f, 1.0f);
+    const glm::vec4 farPoint = inverseViewProjection *
+        glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
+    if (!std::isfinite(nearPoint.w) || !std::isfinite(farPoint.w) ||
+        std::abs(nearPoint.w) < 1.0e-6f || std::abs(farPoint.w) < 1.0e-6f) {
+        return;
+    }
+    const glm::vec3 origin = glm::vec3(nearPoint) / nearPoint.w;
+    const glm::vec3 farWorld = glm::vec3(farPoint) / farPoint.w;
+    const glm::vec3 direction = farWorld - origin;
+    const float directionLength = glm::length(direction);
+    if (!isFiniteVector(origin) || !isFiniteVector(farWorld) ||
+        !std::isfinite(directionLength) || directionLength < 1.0e-6f) {
+        return;
+    }
+    const editor_picking::Ray ray{origin, direction / directionLength};
+
+    GameObject* closestObject = nullptr;
+    float closestDistance = std::numeric_limits<float>::infinity();
+    for (const auto& owner : scene->gameObjects()) {
+        GameObject* object = owner.get();
+        if (object == nullptr) {
+            continue;
+        }
+        const glm::mat4 model = editor_picking::makeModelMatrix(
+            object->position, object->rotation, object->scale);
+        std::size_t meshIndex = 0;
+        for (const MeshInstance& instance : object->meshInstances()) {
+            float distance = 0.0f;
+            editor_picking::MeshPickDiagnostics diagnostics;
+            const bool hit = editor_picking::intersectMeshWorld(
+                ray, instance.mesh, model, distance, &diagnostics);
+#ifndef NDEBUG
+            const Mesh::Bounds& bounds = instance.mesh.bounds;
+            spdlog::debug(
+                "Editor pick object='{}' meshes={} mesh={} vertices={} "
+                "indices={} boundsValid={} boundsMin=({}, {}, {}) "
+                "boundsMax=({}, {}, {}) invertible={} broadPhase={} "
+                "triangles={} hitDistance={}",
+                object->name, object->meshInstances().size(), meshIndex,
+                instance.mesh.vertices.size(), instance.mesh.indices.size(),
+                bounds.valid, bounds.minimum.x, bounds.minimum.y,
+                bounds.minimum.z, bounds.maximum.x, bounds.maximum.y,
+                bounds.maximum.z, diagnostics.transformInvertible,
+                diagnostics.broadPhasePassed, diagnostics.triangleTestingReached,
+                hit ? distance : -1.0f);
+#endif
+            if (hit &&
+                distance < closestDistance) {
+                closestDistance = distance;
+                closestObject = object;
+            }
+            ++meshIndex;
+        }
+    }
+    selectGameObject(scene, closestObject);
 }
 
 void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
@@ -535,6 +706,7 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
 
 void ImGuiLayer::updateSceneInteractionAreaHovered() noexcept {
     sceneInteractionAreaHovered_ = false;
+    sceneInteractionRect_ = {};
     ImGuiContext* context = ImGui::GetCurrentContext();
     if (context == nullptr) {
         return;
@@ -557,6 +729,18 @@ void ImGuiLayer::updateSceneInteractionAreaHovered() noexcept {
         centralNode->Pos,
         ImVec2(centralNode->Pos.x + centralNode->Size.x,
                centralNode->Pos.y + centralNode->Size.y));
+    if (centralRect.GetWidth() <= 0.0f || centralRect.GetHeight() <= 0.0f ||
+        centralRect.Min.x < viewportRect.Min.x ||
+        centralRect.Min.y < viewportRect.Min.y ||
+        centralRect.Max.x > viewportRect.Max.x ||
+        centralRect.Max.y > viewportRect.Max.y) {
+        return;
+    }
+    sceneInteractionRect_.x = centralRect.Min.x;
+    sceneInteractionRect_.y = centralRect.Min.y;
+    sceneInteractionRect_.width = centralRect.GetWidth();
+    sceneInteractionRect_.height = centralRect.GetHeight();
+    sceneInteractionRect_.valid = true;
     const bool imguiObstructed = context->HoveredWindow != nullptr ||
                                  context->HoveredId != 0 ||
                                  context->ActiveId != 0;
@@ -569,7 +753,6 @@ void ImGuiLayer::finishFrame() {
     if (!frameStarted_) {
         return;
     }
-    updateSceneInteractionAreaHovered();
     ImGui::Render();
     frameStarted_ = false;
     drawDataReady_ = true;
@@ -633,6 +816,9 @@ void ImGuiLayer::shutdown() noexcept {
     selectedGameObject_ = nullptr;
     pendingEditorCommand_ = EditorCommand::None;
     sceneInteractionAreaHovered_ = false;
+    sceneInteractionRect_ = {};
+    inputEnabled_ = true;
+    gizmoDragActive_ = false;
     inspectorError_.clear();
 
     if (vulkanBackendInitialized_) {
@@ -670,5 +856,8 @@ void ImGuiLayer::abandon() noexcept {
     selectedGameObject_ = nullptr;
     pendingEditorCommand_ = EditorCommand::None;
     sceneInteractionAreaHovered_ = false;
+    sceneInteractionRect_ = {};
+    inputEnabled_ = true;
+    gizmoDragActive_ = false;
     inspectorError_.clear();
 }

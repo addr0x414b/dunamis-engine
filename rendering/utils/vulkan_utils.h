@@ -2,8 +2,10 @@
 #define VULKAN_UTILS_H
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 
@@ -168,11 +170,46 @@ struct Mesh {
     const char* modelPath;
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
+    struct Bounds {
+        glm::vec3 minimum{0.0f};
+        glm::vec3 maximum{0.0f};
+        bool valid = false;
+    } bounds;
     VkBuffer vertexBuffer = VK_NULL_HANDLE;
     VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
     VkBuffer indexBuffer = VK_NULL_HANDLE;
     VkDeviceMemory indexBufferMemory = VK_NULL_HANDLE;
 };
+
+inline void calculateMeshBounds(Mesh& mesh) noexcept {
+    mesh.bounds = {};
+    bool foundFinitePosition = false;
+    glm::vec3 minimum(0.0f);
+    glm::vec3 maximum(0.0f);
+    for (const Vertex& vertex : mesh.vertices) {
+        const glm::vec3& position = vertex.pos;
+        if (!std::isfinite(position.x) || !std::isfinite(position.y) ||
+            !std::isfinite(position.z)) {
+            continue;
+        }
+        if (!foundFinitePosition) {
+            minimum = position;
+            maximum = position;
+            foundFinitePosition = true;
+            continue;
+        }
+        minimum = glm::min(minimum, position);
+        maximum = glm::max(maximum, position);
+    }
+
+    if (!foundFinitePosition) {
+        return;
+    }
+
+    mesh.bounds.minimum = minimum;
+    mesh.bounds.maximum = maximum;
+    mesh.bounds.valid = true;
+}
 
 enum class MaterialAlphaMode : std::uint32_t {
     Opaque = 0,
