@@ -7,6 +7,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <SDL3/SDL.h>
@@ -78,10 +79,20 @@ private:
     [[nodiscard]] Result createDescriptorSets(
         const std::unique_ptr<GameObject>& gameObject);
     [[nodiscard]] Result createLightsUBO();
+    [[nodiscard]] Result beginSceneResourceLoad(Scene* scene);
+    [[nodiscard]] Result commitSceneResourceLoad(Scene* scene);
+    [[nodiscard]] Result cancelSceneResourceLoad();
+    [[nodiscard]] Result unloadSceneResources(Scene* scene);
+    [[nodiscard]] Result switchScene(Scene* scene);
+    [[nodiscard]] bool hasSceneResources(const Scene* scene) const noexcept;
 
-    [[nodiscard]] Result drawFrame(Scene* scene);
+    [[nodiscard]] Result drawFrame(Scene* scene, const Camera& renderCamera,
+                                   SceneRunState runState);
     void processEvent(const SDL_Event& event) noexcept;
     void setImGuiInputEnabled(bool enabled) noexcept;
+    void clearEditorSelection() noexcept;
+    [[nodiscard]] EditorCommand consumeEditorCommand() noexcept;
+    [[nodiscard]] bool sceneInteractionAreaHovered() const noexcept;
 
     struct OwnedBufferAllocation {
         VkBuffer* bufferSlot = nullptr;
@@ -114,12 +125,24 @@ private:
         std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> sets{};
     };
 
+    struct SceneResourceOwnership {
+        std::vector<OwnedBufferAllocation> temporaryBuffers;
+        std::vector<OwnedBufferAllocation> buffers;
+        std::vector<OwnedImageAllocation> images;
+        std::vector<OwnedImageView> imageViews;
+        std::vector<OwnedSampler> samplers;
+        std::vector<OwnedDescriptorSets> descriptorSets;
+        std::vector<RenderData*> renderData;
+    };
+
     [[nodiscard]] Result validateSceneRenderStateIsEmpty(
         const Scene* scene) const;
     [[nodiscard]] Result validateTextureData(
         const std::unique_ptr<GameObject>& gameObject) const;
     [[nodiscard]] Result prepareSceneResourceTracking(const Scene* scene);
     void cleanupTrackedSceneResources() noexcept;
+    void cleanupSceneResources(SceneResourceOwnership& resources,
+                               bool freeDescriptorSets) noexcept;
 
     void updateUniformBuffer(uint32_t currentImage,
                              const std::unique_ptr<GameObject>& gameObject,
@@ -128,7 +151,8 @@ private:
     [[nodiscard]] Result recreateSwapchain();
     [[nodiscard]] Result recordCommandBuffer(VkCommandBuffer commandBuffer,
                                              uint32_t imageIndex,
-                                             Scene* scene);
+                                             Scene* scene,
+                                             SceneRunState runState);
 
     [[nodiscard]] Result createInstance();
     [[nodiscard]] Result checkValidationLayerSupport(bool& supported) const;
@@ -296,6 +320,9 @@ private:
     std::vector<OwnedSampler> ownedSceneSamplers;
     std::vector<OwnedDescriptorSets> ownedSceneDescriptorSets;
     std::vector<RenderData*> ownedRenderData;
+    std::unordered_map<const Scene*, SceneResourceOwnership>
+        sceneResourceOwnership_;
+    const Scene* sceneResourceLoadTarget_ = nullptr;
 
     ImGuiLayer imguiLayer;
 

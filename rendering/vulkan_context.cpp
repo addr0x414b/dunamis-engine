@@ -223,6 +223,14 @@ Result VulkanContext::validateSceneRenderStateIsEmpty(
 }
 
 Result VulkanContext::prepareSceneResourceTracking(const Scene* scene) {
+    if (!ownedTemporaryBuffers.empty() || !ownedSceneBuffers.empty() ||
+        !ownedSceneImages.empty() || !ownedSceneImageViews.empty() ||
+        !ownedSceneSamplers.empty() || !ownedSceneDescriptorSets.empty() ||
+        !ownedRenderData.empty()) {
+        return Result::failure(
+            "Another scene resource load is already in progress");
+    }
+
     size_t meshInstanceCount = 0;
     for (const auto& object : scene->gameObjects()) {
         if (object) {
@@ -246,6 +254,156 @@ Result VulkanContext::prepareSceneResourceTracking(const Scene* scene) {
     }
 
     return Result::success();
+}
+
+Result VulkanContext::beginSceneResourceLoad(Scene* scene) {
+    if (!initialized) {
+        return Result::failure("Vulkan Context is not initialized");
+    }
+    if (!scene) {
+        return Result::failure("Cannot load resources for a null scene");
+    }
+    if (sceneResourceLoadTarget_) {
+        return Result::failure(
+            "Another scene resource load is already in progress");
+    }
+    if (hasSceneResources(scene)) {
+        return Result::failure("Scene rendering resources are already loaded");
+    }
+
+    Result result = validateSceneRenderStateIsEmpty(scene);
+    if (!result) {
+        return result;
+    }
+    try {
+        sceneResourceOwnership_.try_emplace(scene);
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "Failed to allocate scene resource ownership: " +
+            std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "Failed to allocate scene resource ownership with an unknown "
+            "error");
+    }
+    sceneResourceLoadTarget_ = scene;
+    result = prepareSceneResourceTracking(scene);
+    if (!result) {
+        sceneResourceOwnership_.erase(scene);
+        sceneResourceLoadTarget_ = nullptr;
+    }
+    return result;
+}
+
+Result VulkanContext::commitSceneResourceLoad(Scene* scene) {
+    if (!scene) {
+        return Result::failure("Cannot commit resources for a null scene");
+    }
+    if (sceneResourceLoadTarget_ != scene) {
+        return Result::failure(
+            "Scene is not the current resource-load target");
+    }
+
+    auto ownership = sceneResourceOwnership_.find(scene);
+    if (ownership == sceneResourceOwnership_.end()) {
+        return Result::failure("Scene resource ownership is unavailable");
+    }
+    SceneResourceOwnership& resources = ownership->second;
+    resources.temporaryBuffers = std::move(ownedTemporaryBuffers);
+    resources.buffers = std::move(ownedSceneBuffers);
+    resources.images = std::move(ownedSceneImages);
+    resources.imageViews = std::move(ownedSceneImageViews);
+    resources.samplers = std::move(ownedSceneSamplers);
+    resources.descriptorSets = std::move(ownedSceneDescriptorSets);
+    resources.renderData = std::move(ownedRenderData);
+    sceneResourceLoadTarget_ = nullptr;
+    return Result::success();
+}
+
+Result VulkanContext::cancelSceneResourceLoad() {
+    if (device != VK_NULL_HANDLE) {
+        const VkResult result = vkDeviceWaitIdle(device);
+        if (!waitEstablishedCompletion(result)) {
+            return vkFailure(
+                "vkDeviceWaitIdle(cancel scene resource load)", result);
+        }
+        hasSubmittedWork = false;
+        singleTimeSubmissionMayBePending = false;
+    }
+    cleanupTrackedSceneResources();
+    if (sceneResourceLoadTarget_) {
+        sceneResourceOwnership_.erase(sceneResourceLoadTarget_);
+        sceneResourceLoadTarget_ = nullptr;
+    }
+    return Result::success();
+}
+
+Result VulkanContext::unloadSceneResources(Scene* scene) {
+    if (!initialized) {
+        return Result::failure("Vulkan Context is not initialized");
+    }
+    if (!scene) {
+        return Result::failure("Cannot unload resources for a null scene");
+    }
+    if (scene == currentScene) {
+        return Result::failure(
+            "Cannot unload resources for the current render scene");
+    }
+
+    const auto ownership = sceneResourceOwnership_.find(scene);
+    if (ownership == sceneResourceOwnership_.end()) {
+        return Result::success();
+    }
+    const VkResult result = vkDeviceWaitIdle(device);
+    if (!waitEstablishedCompletion(result)) {
+        return vkFailure("vkDeviceWaitIdle(unload scene resources)", result);
+    }
+    hasSubmittedWork = false;
+    singleTimeSubmissionMayBePending = false;
+
+    for (const auto& descriptorOwnership :
+         ownership->second.descriptorSets) {
+        if (!descriptorOwnership.slots) {
+            continue;
+        }
+        const size_t count = std::min(
+            descriptorOwnership.slots->size(),
+            descriptorOwnership.sets.size());
+        if (count == 0) {
+            continue;
+        }
+        const VkResult freeResult = vkFreeDescriptorSets(
+            device, descriptorPool, static_cast<uint32_t>(count),
+            descriptorOwnership.sets.data());
+        if (freeResult != VK_SUCCESS) {
+            return vkFailure("vkFreeDescriptorSets(unload scene)",
+                             freeResult);
+        }
+    }
+    cleanupSceneResources(ownership->second, false);
+    sceneResourceOwnership_.erase(ownership);
+    return Result::success();
+}
+
+Result VulkanContext::switchScene(Scene* scene) {
+    if (!initialized) {
+        return Result::failure("Vulkan Context is not initialized");
+    }
+    if (!scene) {
+        return Result::failure("Cannot switch to a null scene");
+    }
+    if (!hasSceneResources(scene)) {
+        return Result::failure(
+            "Incoming scene rendering resources are not loaded");
+    }
+    currentScene = scene;
+    return Result::success();
+}
+
+bool VulkanContext::hasSceneResources(const Scene* scene) const noexcept {
+    return scene && sceneResourceOwnership_.find(scene) !=
+                        sceneResourceOwnership_.end() &&
+           scene != sceneResourceLoadTarget_;
 }
 
 Result VulkanContext::validateTextureData(
@@ -350,11 +508,6 @@ Result VulkanContext::init(SDL_Window* w, Scene* scene) {
     if (!result) {
         return result;
     }
-    result = prepareSceneResourceTracking(scene);
-    if (!result) {
-        return result;
-    }
-
     window = w;
     currentScene = scene;
 
@@ -3123,7 +3276,20 @@ void VulkanContext::setImGuiInputEnabled(bool enabled) noexcept {
     imguiLayer.setInputEnabled(enabled);
 }
 
-Result VulkanContext::drawFrame(Scene* scene) {
+void VulkanContext::clearEditorSelection() noexcept {
+    imguiLayer.clearSelection();
+}
+
+EditorCommand VulkanContext::consumeEditorCommand() noexcept {
+    return imguiLayer.consumeEditorCommand();
+}
+
+bool VulkanContext::sceneInteractionAreaHovered() const noexcept {
+    return imguiLayer.sceneInteractionAreaHovered();
+}
+
+Result VulkanContext::drawFrame(Scene* scene, const Camera& renderCamera,
+                                SceneRunState runState) {
     if (!initialized) {
         return Result::failure("Vulkan Context is not initialized");
     }
@@ -3137,11 +3303,6 @@ Result VulkanContext::drawFrame(Scene* scene) {
     }
     if (!scene->isActive()) {
         return Result::failure("Cannot draw an inactive scene");
-    }
-    const Camera* camera = scene->activeCamera();
-    if (!camera) {
-        return Result::failure(
-            "Cannot draw a scene without an active camera");
     }
     if (scene->pointLightCount() > scene_limits::maxPointLights) {
         return Result::failure(
@@ -3177,24 +3338,24 @@ Result VulkanContext::drawFrame(Scene* scene) {
         return vkFailure("vkResetCommandBuffer", result);
     }
 
-    Result imguiResult = imguiLayer.beginFrame();
+    Result imguiResult = imguiLayer.beginFrame(runState);
     if (!imguiResult) {
         return Result::failure("Failed to begin Dear ImGui frame: " +
                                imguiResult.error());
     }
-    imguiLayer.drawEditor(scene);
+    imguiLayer.drawEditor(scene, runState);
     imguiLayer.finishFrame();
 
     Result recordResult = recordCommandBuffer(
-        commandBuffers[currentFrame], imageIndex, scene);
+        commandBuffers[currentFrame], imageIndex, scene, runState);
     if (!recordResult) {
         return recordResult;
     }
 
 
     for (const auto& obj : scene->gameObjects()) {
-        updateUniformBuffer(currentFrame, obj, camera->position,
-                            camera->front, camera->up);
+        updateUniformBuffer(currentFrame, obj, renderCamera.position,
+                            renderCamera.front, renderCamera.up);
     }
 
 
@@ -3255,7 +3416,8 @@ Result VulkanContext::drawFrame(Scene* scene) {
 
 Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
                                           uint32_t imageIndex,
-                                          Scene* scene) {
+                                          Scene* scene,
+                                          SceneRunState runState) {
     if (!scene) {
         return Result::failure(
             "Cannot record a command buffer for a null scene");
@@ -3393,7 +3555,8 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
 
     const GameObject* selectedObject =
         imguiLayer.selectedGameObjectForScene(scene);
-    if (selectedObject != nullptr && !selectedObject->meshInstances_.empty() &&
+    if (runState == SceneRunState::Editing && selectedObject != nullptr &&
+        !selectedObject->meshInstances_.empty() &&
         swapchainExtent.width > 0 && swapchainExtent.height > 0) {
         const OutlinePushConstants outlinePushConstants{
             glm::vec4(1.0f, 0.55f, 0.05f, 1.0f),
@@ -3503,23 +3666,48 @@ Result VulkanContext::recreateSwapchain() {
 }
 
 void VulkanContext::cleanupTrackedSceneResources() noexcept {
+    SceneResourceOwnership resources;
+    resources.temporaryBuffers = std::move(ownedTemporaryBuffers);
+    resources.buffers = std::move(ownedSceneBuffers);
+    resources.images = std::move(ownedSceneImages);
+    resources.imageViews = std::move(ownedSceneImageViews);
+    resources.samplers = std::move(ownedSceneSamplers);
+    resources.descriptorSets = std::move(ownedSceneDescriptorSets);
+    resources.renderData = std::move(ownedRenderData);
+    cleanupSceneResources(resources, false);
+}
+
+void VulkanContext::cleanupSceneResources(
+    SceneResourceOwnership& resources,
+    bool freeDescriptorSets) noexcept {
     if (device == VK_NULL_HANDLE) {
-        ownedTemporaryBuffers.clear();
-        ownedSceneBuffers.clear();
-        ownedSceneImages.clear();
-        ownedSceneImageViews.clear();
-        ownedSceneSamplers.clear();
-        ownedSceneDescriptorSets.clear();
-        ownedRenderData.clear();
+        resources.temporaryBuffers.clear();
+        resources.buffers.clear();
+        resources.images.clear();
+        resources.imageViews.clear();
+        resources.samplers.clear();
+        resources.descriptorSets.clear();
+        resources.renderData.clear();
         return;
     }
 
-    for (auto& ownership : ownedSceneDescriptorSets) {
+    for (auto& ownership : resources.descriptorSets) {
         if (!ownership.slots) {
             continue;
         }
         const size_t count =
             std::min(ownership.slots->size(), ownership.sets.size());
+        if (freeDescriptorSets && descriptorPool != VK_NULL_HANDLE &&
+            count > 0) {
+            const VkResult result = vkFreeDescriptorSets(
+                device, descriptorPool, static_cast<uint32_t>(count),
+                ownership.sets.data());
+            if (result != VK_SUCCESS) {
+                spdlog::error(
+                    "Failed to free runtime descriptor sets (VkResult {})",
+                    static_cast<int>(result));
+            }
+        }
         for (size_t i = 0; i < count; ++i) {
             if ((*ownership.slots)[i] == ownership.sets[i]) {
                 (*ownership.slots)[i] = VK_NULL_HANDLE;
@@ -3527,7 +3715,7 @@ void VulkanContext::cleanupTrackedSceneResources() noexcept {
         }
     }
 
-    for (auto& ownership : ownedSceneImageViews) {
+    for (auto& ownership : resources.imageViews) {
         if (ownership.view != VK_NULL_HANDLE) {
             vkDestroyImageView(device, ownership.view, nullptr);
             if (ownership.slot && *ownership.slot == ownership.view) {
@@ -3536,7 +3724,7 @@ void VulkanContext::cleanupTrackedSceneResources() noexcept {
         }
     }
 
-    for (auto& ownership : ownedSceneSamplers) {
+    for (auto& ownership : resources.samplers) {
         if (ownership.sampler != VK_NULL_HANDLE) {
             vkDestroySampler(device, ownership.sampler, nullptr);
             if (ownership.slot && *ownership.slot == ownership.sampler) {
@@ -3545,7 +3733,7 @@ void VulkanContext::cleanupTrackedSceneResources() noexcept {
         }
     }
 
-    for (auto& ownership : ownedSceneImages) {
+    for (auto& ownership : resources.images) {
         if (ownership.image != VK_NULL_HANDLE) {
             vkDestroyImage(device, ownership.image, nullptr);
             if (ownership.imageSlot &&
@@ -3562,7 +3750,7 @@ void VulkanContext::cleanupTrackedSceneResources() noexcept {
         }
     }
 
-    for (auto& ownership : ownedTemporaryBuffers) {
+    for (auto& ownership : resources.temporaryBuffers) {
         if (ownership.buffer != VK_NULL_HANDLE) {
             vkDestroyBuffer(device, ownership.buffer, nullptr);
         }
@@ -3571,7 +3759,7 @@ void VulkanContext::cleanupTrackedSceneResources() noexcept {
         }
     }
 
-    for (auto& ownership : ownedSceneBuffers) {
+    for (auto& ownership : resources.buffers) {
         if (ownership.mappedAddress != nullptr &&
             ownership.memory != VK_NULL_HANDLE) {
             vkUnmapMemory(device, ownership.memory);
@@ -3596,7 +3784,7 @@ void VulkanContext::cleanupTrackedSceneResources() noexcept {
         }
     }
 
-    for (RenderData* renderData : ownedRenderData) {
+    for (RenderData* renderData : resources.renderData) {
         if (!renderData) {
             continue;
         }
@@ -3630,13 +3818,13 @@ void VulkanContext::cleanupTrackedSceneResources() noexcept {
         }
     }
 
-    ownedTemporaryBuffers.clear();
-    ownedSceneBuffers.clear();
-    ownedSceneImages.clear();
-    ownedSceneImageViews.clear();
-    ownedSceneSamplers.clear();
-    ownedSceneDescriptorSets.clear();
-    ownedRenderData.clear();
+    resources.temporaryBuffers.clear();
+    resources.buffers.clear();
+    resources.images.clear();
+    resources.imageViews.clear();
+    resources.samplers.clear();
+    resources.descriptorSets.clear();
+    resources.renderData.clear();
 }
 
 bool VulkanContext::cleanup() noexcept {
@@ -3646,7 +3834,8 @@ bool VulkanContext::cleanup() noexcept {
         !ownedSceneBuffers.empty() ||
         !ownedSceneImages.empty() || !ownedSceneImageViews.empty() ||
         !ownedSceneSamplers.empty() ||
-        !ownedSceneDescriptorSets.empty();
+        !ownedSceneDescriptorSets.empty() ||
+        !sceneResourceOwnership_.empty();
     if (hadResources) {
         spdlog::info("Cleaning up Vulkan Context...");
     }
@@ -3681,6 +3870,12 @@ bool VulkanContext::cleanup() noexcept {
         }
 
         cleanupTrackedSceneResources();
+        for (auto& [scene, resources] : sceneResourceOwnership_) {
+            (void)scene;
+            cleanupSceneResources(resources, false);
+        }
+        sceneResourceOwnership_.clear();
+        sceneResourceLoadTarget_ = nullptr;
 
         if (lightsBuffer != VK_NULL_HANDLE) {
             vkDestroyBuffer(device, lightsBuffer, nullptr);
@@ -3763,6 +3958,12 @@ bool VulkanContext::cleanup() noexcept {
         imageAvailableSemaphores.clear();
         inFlightFences.clear();
         cleanupTrackedSceneResources();
+        for (auto& [scene, resources] : sceneResourceOwnership_) {
+            (void)scene;
+            cleanupSceneResources(resources, false);
+        }
+        sceneResourceOwnership_.clear();
+        sceneResourceLoadTarget_ = nullptr;
     }
 
     graphicsQueue = VK_NULL_HANDLE;
@@ -3815,6 +4016,7 @@ bool VulkanContext::cleanup() noexcept {
     singleTimeSubmissionMayBePending = false;
     initialized = false;
     currentScene = nullptr;
+    sceneResourceLoadTarget_ = nullptr;
     window = nullptr;
 
     if (hadResources) {

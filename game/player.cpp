@@ -1,5 +1,7 @@
 #include "player.h"
 
+#include <utility>
+
 void Player::init() {
     name = "Player";
 
@@ -10,7 +12,15 @@ void Player::init() {
 }
 
 void Player::start(std::shared_ptr<InputManager> input) {
-    (void)input;
+    if (!input) {
+        return;
+    }
+
+    const Result result = input->requestGameplayMouseCapture();
+    if (!result) {
+        spdlog::error("Player failed to capture gameplay mouse: {}",
+                      result.error());
+    }
 }
 
 void Player::update(std::shared_ptr<InputManager> input) {

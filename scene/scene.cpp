@@ -3,6 +3,7 @@
 #include <cmath>
 #include <exception>
 #include <stdexcept>
+#include <typeinfo>
 #include <utility>
 
 namespace {
@@ -110,9 +111,6 @@ Result Scene::validateForActivation() const {
     if (active_) {
         return Result::failure("Scene is already active");
     }
-    if (!activeCamera_) {
-        return Result::failure("Scene does not have an active camera");
-    }
     if (pointLightCount_ > scene_limits::maxPointLights) {
         return Result::failure(
             "Scene exceeds the maximum point-light count");
@@ -178,6 +176,80 @@ Result Scene::validateForActivation() const {
                 return Result::failure(
                     "Scene contains a duplicate point-light registration");
             }
+        }
+    }
+
+    return Result::success();
+}
+
+Result Scene::copyAuthoringStateTo(Scene& runtimeScene) const {
+    if (this == &runtimeScene) {
+        return Result::failure(
+            "Authoring state destination must be a different scene");
+    }
+    const auto& editorObjects = gameObjects_;
+    const auto& runtimeObjects = runtimeScene.gameObjects_;
+    if (editorObjects.size() != runtimeObjects.size()) {
+        return Result::failure(
+            "Editor and runtime scene object counts do not match");
+    }
+
+    for (std::size_t index = 0; index < editorObjects.size(); ++index) {
+        if (!editorObjects[index] || !runtimeObjects[index]) {
+            return Result::failure(
+                "Editor/runtime topology contains a null object at index " +
+                std::to_string(index));
+        }
+        if (typeid(*editorObjects[index]) !=
+            typeid(*runtimeObjects[index])) {
+            return Result::failure(
+                "Editor/runtime object types do not match at index " +
+                std::to_string(index));
+        }
+    }
+
+    Result result = runtimeScene.setBackgroundColor(backgroundColor_);
+    if (!result) {
+        return Result::failure(
+            "Failed to copy editor background color: " + result.error());
+    }
+    result = runtimeScene.setAmbientLight(ambientColor_, ambientIntensity_);
+    if (!result) {
+        return Result::failure(
+            "Failed to copy editor ambient light: " + result.error());
+    }
+    runtimeScene.name = name;
+
+    for (std::size_t index = 0; index < editorObjects.size(); ++index) {
+        const GameObject& editorObject = *editorObjects[index];
+        GameObject& runtimeObject = *runtimeObjects[index];
+        runtimeObject.name = editorObject.name;
+        runtimeObject.position = editorObject.position;
+        runtimeObject.rotation = editorObject.rotation;
+        runtimeObject.scale = editorObject.scale;
+
+        if (const auto* editorPointLight =
+                dynamic_cast<const PointLight*>(&editorObject)) {
+            auto& runtimePointLight =
+                static_cast<PointLight&>(runtimeObject);
+            runtimePointLight.color = editorPointLight->color;
+            runtimePointLight.intensity = editorPointLight->intensity;
+        } else if (const auto* editorDirectionalLight =
+                       dynamic_cast<const DirectionalLight*>(&editorObject)) {
+            auto& runtimeDirectionalLight =
+                static_cast<DirectionalLight&>(runtimeObject);
+            runtimeDirectionalLight.direction =
+                editorDirectionalLight->direction;
+            runtimeDirectionalLight.color = editorDirectionalLight->color;
+            runtimeDirectionalLight.intensity =
+                editorDirectionalLight->intensity;
+        }
+
+        if (const auto* editorCamera =
+                dynamic_cast<const Camera*>(&editorObject)) {
+            auto& runtimeCamera = static_cast<Camera&>(runtimeObject);
+            runtimeCamera.front = editorCamera->front;
+            runtimeCamera.up = editorCamera->up;
         }
     }
 

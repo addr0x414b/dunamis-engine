@@ -3,10 +3,12 @@
 
 #include "platform.h"
 #include "result.h"
+#include "editor_camera_controller.h"
+#include "editor_state.h"
 
-#include "../game/level_1.h"
 #include "../input/input_manager.h"
 #include "../rendering/visual_server.h"
+#include "../scene/scene_manager.h"
 
 class Dunamis {
 public:
@@ -23,14 +25,19 @@ public:
     [[nodiscard]] bool shutdown() noexcept;
 
 private:
-    // Members are destroyed in reverse declaration order. The scene and
-    // platform must remain alive while the renderer shuts down.
-    Level1 level1;
+    [[nodiscard]] Result beginPlay();
+    [[nodiscard]] Result stopPlay();
+    [[nodiscard]] const Camera& renderCamera() const noexcept;
+    void synchronizeImGuiInput() noexcept;
+
+    EditorCameraController editorCameraController;
     Platform platform;
+    SceneManager sceneManager_;
     VisualServer visualServer;
     std::shared_ptr<InputManager> inputManager;
     bool initializationAttempted = false;
     bool initialized = false;
+    SceneRunState runState = SceneRunState::Editing;
 };
 
 #endif

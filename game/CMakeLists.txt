@@ -4,4 +4,4 @@ target_link_libraries(Level1 PRIVATE Scene assimp glm spdlog Player)
 
 add_library(Player STATIC player.cpp)
 target_include_directories(Player PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(Player PRIVATE spdlog GameObject Camera)
+target_link_libraries(Player PRIVATE spdlog GameObject Camera InputManager)

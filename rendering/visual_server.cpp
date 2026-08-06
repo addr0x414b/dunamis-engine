@@ -1,7 +1,5 @@
 #include "visual_server.h"
 
-#include "../input/input_manager.h"
-
 Result VisualServer::initialize(SDL_Window* window, Scene* scene) {
     spdlog::info("Initializing Visual Server...");
 
@@ -67,7 +65,8 @@ Result VisualServer::initGameObjects() {
             static_cast<uint32_t>(o->meshInstances().size());
     }
 
-    Result result = vulkanContext.createDescriptorPool(totalMeshInstances);
+    Result result = vulkanContext.createDescriptorPool(
+        totalMeshInstances * 2);
     if (!result) {
         return result;
     }
@@ -77,55 +76,155 @@ Result VisualServer::initGameObjects() {
         return result;
     }
 
+    return loadSceneResources(currentScene);
+}
+
+Result VisualServer::loadSceneResources(Scene* scene) {
+    if (!scene) {
+        return Result::failure(
+            "Cannot load rendering resources for a null scene");
+    }
+
+    Result result = vulkanContext.beginSceneResourceLoad(scene);
+    if (!result) {
+        return Result::failure(
+            "Failed to begin scene resource loading: " + result.error());
+    }
+
     spdlog::info("Initializing scene game object visual data...");
-    for (const auto& gameObject : currentScene->gameObjects()) {
+    for (const auto& gameObject : scene->gameObjects()) {
         result = vulkanContext.createTextureImages(gameObject);
         if (!result) {
-            return result;
+            break;
         }
         result = vulkanContext.createTextureImageViews(gameObject);
         if (!result) {
-            return result;
+            break;
         }
         result = vulkanContext.createTextureSamplers(gameObject);
         if (!result) {
-            return result;
+            break;
         }
         result = vulkanContext.createVertexBuffers(gameObject);
         if (!result) {
-            return result;
+            break;
         }
         result = vulkanContext.createIndexBuffers(gameObject);
         if (!result) {
-            return result;
+            break;
         }
         result = vulkanContext.createUniformBuffers(gameObject);
         if (!result) {
-            return result;
+            break;
         }
         result = vulkanContext.createDescriptorSets(gameObject);
         if (!result) {
-            return result;
+            break;
         }
+    }
+    if (!result) {
+        const Result cleanupResult = vulkanContext.cancelSceneResourceLoad();
+        if (!cleanupResult) {
+            return Result::failure(
+                "Scene rendering resource creation failed: " +
+                result.error() + "; partial-resource cleanup failed: " +
+                cleanupResult.error());
+        }
+        return Result::failure(
+            "Scene rendering resource creation failed: " + result.error());
+    }
+
+    result = vulkanContext.commitSceneResourceLoad(scene);
+    if (!result) {
+        const Result cleanupResult = vulkanContext.cancelSceneResourceLoad();
+        if (!cleanupResult) {
+            return Result::failure(
+                "Failed to commit scene rendering resources: " +
+                result.error() + "; partial-resource cleanup failed: " +
+                cleanupResult.error());
+        }
+        return Result::failure(
+            "Failed to commit scene rendering resources: " +
+            result.error());
     }
     spdlog::info("Successfully initialized all game object visual data");
     return Result::success();
 }
 
-Result VisualServer::run() {
+Result VisualServer::unloadSceneResources(Scene* scene) {
+    if (!initialized) {
+        return Result::failure("Visual Server is not initialized");
+    }
+    Result result = vulkanContext.unloadSceneResources(scene);
+    if (!result) {
+        return Result::failure(
+            "Failed to unload scene rendering resources: " +
+            result.error());
+    }
+    return Result::success();
+}
+
+Result VisualServer::switchScene(Scene* scene) {
     if (!initialized || !currentScene) {
         return Result::failure("Visual Server is not initialized");
     }
-    return vulkanContext.drawFrame(currentScene);
+    if (!scene) {
+        return Result::failure("Cannot switch rendering to a null scene");
+    }
+    if (scene == currentScene) {
+        return Result::success();
+    }
+
+    clearEditorSelection();
+    Result result = scene->activate();
+    if (!result) {
+        return Result::failure(
+            "Incoming scene cannot be activated: " + result.error());
+    }
+    result = vulkanContext.switchScene(scene);
+    if (!result) {
+        scene->deactivate();
+        return Result::failure(
+            "Vulkan scene switch failed: " + result.error());
+    }
+
+    currentScene->deactivate();
+    currentScene = scene;
+    return Result::success();
+}
+
+Scene* VisualServer::renderScene() const noexcept { return currentScene; }
+
+Result VisualServer::run(Scene* scene, const Camera& renderCamera,
+                         SceneRunState runState) {
+    if (!initialized || !currentScene) {
+        return Result::failure("Visual Server is not initialized");
+    }
+    if (!scene || scene != currentScene) {
+        return Result::failure(
+            "Requested scene does not match the active render scene");
+    }
+    return vulkanContext.drawFrame(scene, renderCamera, runState);
 }
 
 void VisualServer::processEvent(const SDL_Event& event) noexcept {
     vulkanContext.processEvent(event);
 }
 
-void VisualServer::setInputMode(InputMode mode) noexcept {
-    vulkanContext.setImGuiInputEnabled(
-        mode == InputMode::EditorInteractive);
+void VisualServer::setImGuiInputEnabled(bool enabled) noexcept {
+    vulkanContext.setImGuiInputEnabled(enabled);
+}
+
+void VisualServer::clearEditorSelection() noexcept {
+    vulkanContext.clearEditorSelection();
+}
+
+EditorCommand VisualServer::consumeEditorCommand() noexcept {
+    return vulkanContext.consumeEditorCommand();
+}
+
+bool VisualServer::sceneInteractionAreaHovered() const noexcept {
+    return vulkanContext.sceneInteractionAreaHovered();
 }
 
 bool VisualServer::shutdown() noexcept {

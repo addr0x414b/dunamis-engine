@@ -19,8 +19,8 @@ public:
 
 private:
     float speed = 1.0f;
-    double lastX;
-    double lastY;
+    double lastX = 0.0;
+    double lastY = 0.0;
     double yaw = -90.0f;
     double pitch = 0.0f;
 };

@@ -1,4 +1,5 @@
 #include "level_1.h"
+
 #include <stdexcept>
 
 void Level1::init() {
@@ -119,6 +120,9 @@ void Level1::start() {
 void Level1::update() {
     for (const auto& obj : gameObjects()) {
         obj->update();
+        if (obj->name == "Point Light") {
+            obj->position.z += 0.1f;
+        }
     }
     player.update(inputManager);
 }

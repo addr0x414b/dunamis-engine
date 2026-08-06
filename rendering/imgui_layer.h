@@ -8,6 +8,7 @@
 #include <vulkan/vulkan.h>
 
 #include "../core/result.h"
+#include "../core/editor_state.h"
 
 class Scene;
 class GameObject;
@@ -30,12 +31,15 @@ public:
     void processEvent(const SDL_Event& event) noexcept;
     void setInputEnabled(bool enabled) noexcept;
 
-    [[nodiscard]] Result beginFrame();
-    void drawEditor(Scene* scene);
+    [[nodiscard]] Result beginFrame(SceneRunState runState);
+    void drawEditor(Scene* scene, SceneRunState runState);
     void finishFrame();
     void recordDrawData(VkCommandBuffer commandBuffer);
     [[nodiscard]] const GameObject*
     selectedGameObjectForScene(const Scene* scene) const noexcept;
+    void clearSelection() noexcept;
+    [[nodiscard]] EditorCommand consumeEditorCommand() noexcept;
+    [[nodiscard]] bool sceneInteractionAreaHovered() const noexcept;
 
     [[nodiscard]] Result onSwapchainRecreated(
         VkRenderPass renderPass, VkSampleCountFlagBits msaaSamples,
@@ -48,10 +52,11 @@ public:
 
 private:
     [[nodiscard]] Result initializeVulkanBackend();
-    void clearSelection() noexcept;
     void synchronizeSelection(Scene* scene) noexcept;
-    void drawSceneHierarchy(Scene* scene);
-    void drawInspector(Scene* scene);
+    void drawToolbar(SceneRunState runState);
+    void drawSceneHierarchy(Scene* scene, bool disabled);
+    void drawInspector(Scene* scene, bool disabled);
+    void updateSceneInteractionAreaHovered() noexcept;
 
     VkInstance instance_ = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
@@ -71,6 +76,8 @@ private:
     Scene* selectionScene_ = nullptr;
     GameObject* selectedGameObject_ = nullptr;
     std::string inspectorError_;
+    EditorCommand pendingEditorCommand_ = EditorCommand::None;
+    bool sceneInteractionAreaHovered_ = false;
 };
 
 #endif

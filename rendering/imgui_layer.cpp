@@ -228,7 +228,7 @@ void ImGuiLayer::setInputEnabled(bool enabled) noexcept {
     ImGui::SetWindowFocus(nullptr);
 }
 
-Result ImGuiLayer::beginFrame() {
+Result ImGuiLayer::beginFrame(SceneRunState runState) {
     if (!initialized()) {
         return Result::failure("Cannot begin an uninitialized Dear ImGui frame");
     }
@@ -239,9 +239,10 @@ Result ImGuiLayer::beginFrame() {
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
+    drawToolbar(runState);
     const ImGuiID dockspaceId = ImGui::GetID(dunamisDockspaceName);
     const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
-    buildDefaultDockLayout(dockspaceId, mainViewport->Size);
+    buildDefaultDockLayout(dockspaceId, mainViewport->WorkSize);
     ImGui::DockSpaceOverViewport(
         dockspaceId, mainViewport, ImGuiDockNodeFlags_PassthruCentralNode);
     frameStarted_ = true;
@@ -249,16 +250,40 @@ Result ImGuiLayer::beginFrame() {
     return Result::success();
 }
 
-void ImGuiLayer::drawEditor(Scene* scene) {
+void ImGuiLayer::drawEditor(Scene* scene, SceneRunState runState) {
     synchronizeSelection(scene);
     if (!frameStarted_) {
         return;
     }
 
     if (scene != nullptr) {
-        drawSceneHierarchy(scene);
-        drawInspector(scene);
+        const bool disabled = runState == SceneRunState::Playing;
+        drawSceneHierarchy(scene, disabled);
+        drawInspector(scene, disabled);
     }
+}
+
+void ImGuiLayer::drawToolbar(SceneRunState runState) {
+    if (!ImGui::BeginMainMenuBar()) {
+        return;
+    }
+
+    const bool editing = runState == SceneRunState::Editing;
+    ImGui::BeginDisabled(!editing);
+    if (ImGui::Button("Play") &&
+        pendingEditorCommand_ == EditorCommand::None) {
+        pendingEditorCommand_ = EditorCommand::Play;
+    }
+    ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    ImGui::BeginDisabled(editing);
+    if (ImGui::Button("Stop") &&
+        pendingEditorCommand_ == EditorCommand::None) {
+        pendingEditorCommand_ = EditorCommand::Stop;
+    }
+    ImGui::EndDisabled();
+    ImGui::EndMainMenuBar();
 }
 
 const GameObject* ImGuiLayer::selectedGameObjectForScene(
@@ -279,6 +304,16 @@ const GameObject* ImGuiLayer::selectedGameObjectForScene(
 void ImGuiLayer::clearSelection() noexcept {
     selectedGameObject_ = nullptr;
     inspectorError_.clear();
+}
+
+EditorCommand ImGuiLayer::consumeEditorCommand() noexcept {
+    const EditorCommand command = pendingEditorCommand_;
+    pendingEditorCommand_ = EditorCommand::None;
+    return command;
+}
+
+bool ImGuiLayer::sceneInteractionAreaHovered() const noexcept {
+    return sceneInteractionAreaHovered_;
 }
 
 void ImGuiLayer::synchronizeSelection(Scene* scene) noexcept {
@@ -310,13 +345,15 @@ void ImGuiLayer::synchronizeSelection(Scene* scene) noexcept {
     }
 }
 
-void ImGuiLayer::drawSceneHierarchy(Scene* scene) {
+void ImGuiLayer::drawSceneHierarchy(Scene* scene, bool disabled) {
     ImGui::SetNextWindowSize(ImVec2(300.0f, 400.0f),
                              ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Scene Hierarchy")) {
         ImGui::End();
         return;
     }
+
+    ImGui::BeginDisabled(disabled);
 
     bool hasObject = false;
     for (const auto& objectOwner : scene->gameObjects()) {
@@ -348,10 +385,11 @@ void ImGuiLayer::drawSceneHierarchy(Scene* scene) {
         clearSelection();
     }
 
+    ImGui::EndDisabled();
     ImGui::End();
 }
 
-void ImGuiLayer::drawInspector(Scene* scene) {
+void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
     ImGui::SetNextWindowSize(ImVec2(340.0f, 500.0f),
                              ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Inspector")) {
@@ -359,9 +397,12 @@ void ImGuiLayer::drawInspector(Scene* scene) {
         return;
     }
 
+    ImGui::BeginDisabled(disabled);
+
     if (scene == nullptr || selectedGameObject_ == nullptr) {
         ImGui::TextUnformatted(
             "Select a GameObject from the Scene Hierarchy.");
+        ImGui::EndDisabled();
         ImGui::End();
         return;
     }
@@ -488,13 +529,47 @@ void ImGuiLayer::drawInspector(Scene* scene) {
                            inspectorError_.c_str());
     }
 
+    ImGui::EndDisabled();
     ImGui::End();
+}
+
+void ImGuiLayer::updateSceneInteractionAreaHovered() noexcept {
+    sceneInteractionAreaHovered_ = false;
+    ImGuiContext* context = ImGui::GetCurrentContext();
+    if (context == nullptr) {
+        return;
+    }
+
+    const ImGuiID dockspaceId = ImGui::GetID(dunamisDockspaceName);
+    const ImGuiDockNode* centralNode =
+        ImGui::DockBuilderGetCentralNode(dockspaceId);
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    if (centralNode == nullptr || viewport == nullptr) {
+        return;
+    }
+
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    const ImRect viewportRect(
+        viewport->Pos,
+        ImVec2(viewport->Pos.x + viewport->Size.x,
+               viewport->Pos.y + viewport->Size.y));
+    const ImRect centralRect(
+        centralNode->Pos,
+        ImVec2(centralNode->Pos.x + centralNode->Size.x,
+               centralNode->Pos.y + centralNode->Size.y));
+    const bool imguiObstructed = context->HoveredWindow != nullptr ||
+                                 context->HoveredId != 0 ||
+                                 context->ActiveId != 0;
+    sceneInteractionAreaHovered_ = viewportRect.Contains(mouse) &&
+                                   centralRect.Contains(mouse) &&
+                                   !imguiObstructed;
 }
 
 void ImGuiLayer::finishFrame() {
     if (!frameStarted_) {
         return;
     }
+    updateSceneInteractionAreaHovered();
     ImGui::Render();
     frameStarted_ = false;
     drawDataReady_ = true;
@@ -556,6 +631,8 @@ void ImGuiLayer::shutdown() noexcept {
     drawDataReady_ = false;
     selectionScene_ = nullptr;
     selectedGameObject_ = nullptr;
+    pendingEditorCommand_ = EditorCommand::None;
+    sceneInteractionAreaHovered_ = false;
     inspectorError_.clear();
 
     if (vulkanBackendInitialized_) {
@@ -591,5 +668,7 @@ void ImGuiLayer::abandon() noexcept {
     imageCount_ = 0;
     selectionScene_ = nullptr;
     selectedGameObject_ = nullptr;
+    pendingEditorCommand_ = EditorCommand::None;
+    sceneInteractionAreaHovered_ = false;
     inspectorError_.clear();
 }

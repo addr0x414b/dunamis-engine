@@ -31,6 +31,11 @@ public:
         std::unique_ptr<GameObject> gameObject);
     [[nodiscard]] Result setActiveCamera(std::shared_ptr<Camera> camera);
     [[nodiscard]] Result validateForActivation() const;
+    // A future engine property/serialization system will allow arbitrary
+    // custom game properties exposed in the editor to transfer to the
+    // runtime scene. Runtime reset remains automatic because the disposable
+    // runtime scene is destroyed on Stop.
+    [[nodiscard]] Result copyAuthoringStateTo(Scene& destination) const;
 
     [[nodiscard]] const std::vector<std::unique_ptr<GameObject>>&
     gameObjects() const noexcept;

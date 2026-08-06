@@ -1,0 +1,69 @@
+#include "editor_camera_controller.h"
+
+#include <algorithm>
+#include <cmath>
+
+#include <glm/glm.hpp>
+
+#include "../input/input_manager.h"
+
+EditorCameraController::EditorCameraController() {
+    camera_.position = glm::vec3(0.0f, 0.0f, 300.0f);
+    camera_.front = glm::vec3(0.0f, 0.0f, -1.0f);
+    camera_.up = glm::vec3(0.0f, 1.0f, 0.0f);
+}
+
+void EditorCameraController::update(const InputManager& input) {
+    if (!input.editorCameraInputEnabled()) {
+        return;
+    }
+
+    float speed = 1.0f;
+    if (input.isKeyDown(SDLK_LSHIFT)) {
+        speed = 5.0f;
+    } else if (input.isKeyDown(SDLK_LCTRL)) {
+        speed = 0.3f;
+    }
+
+    const glm::vec3 right =
+        glm::normalize(glm::cross(camera_.front, camera_.up));
+    if (input.isKeyDown(SDLK_W)) {
+        camera_.position += speed * camera_.front;
+    }
+    if (input.isKeyDown(SDLK_S)) {
+        camera_.position -= speed * camera_.front;
+    }
+    if (input.isKeyDown(SDLK_D)) {
+        camera_.position += speed * right;
+    }
+    if (input.isKeyDown(SDLK_A)) {
+        camera_.position -= speed * right;
+    }
+    if (input.isKeyDown(SDLK_E)) {
+        camera_.position += speed * camera_.up;
+    }
+    if (input.isKeyDown(SDLK_Q)) {
+        camera_.position -= speed * camera_.up;
+    }
+
+    constexpr float sensitivity = 0.1f;
+    yaw_ += static_cast<double>(input.getMouseRelX()) * sensitivity;
+    pitch_ -= static_cast<double>(input.getMouseRelY()) * sensitivity;
+    pitch_ = std::clamp(pitch_, -89.0, 89.0);
+
+    glm::vec3 direction;
+    direction.x = static_cast<float>(
+        std::cos(glm::radians(yaw_)) * std::cos(glm::radians(pitch_)));
+    direction.y = static_cast<float>(std::sin(glm::radians(pitch_)));
+    direction.z = static_cast<float>(
+        std::sin(glm::radians(yaw_)) * std::cos(glm::radians(pitch_)));
+    camera_.front = glm::normalize(direction);
+}
+
+const Camera& EditorCameraController::camera() const noexcept {
+    return camera_;
+}
+
+Camera& EditorCameraController::camera() noexcept {
+    return camera_;
+}

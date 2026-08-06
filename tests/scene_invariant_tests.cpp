@@ -1,4 +1,6 @@
 #include "scene/scene.h"
+#include "scene/scene_manager.h"
+#include "input/input_manager.h"
 
 #include <cstddef>
 #include <cmath>
@@ -21,6 +23,34 @@ public:
     void update() override {}
 };
 
+class DerivedGameObject final : public GameObject {};
+
+class ManagedObject final : public GameObject {
+public:
+    ManagedObject() : instanceId(++nextInstanceId) { ++liveCount; }
+    ~ManagedObject() override { --liveCount; }
+
+    inline static int liveCount = 0;
+    inline static int nextInstanceId = 0;
+    const int instanceId;
+};
+
+class ManagedScene final : public Scene {
+public:
+    ManagedScene() { ++constructionCount; }
+
+    void init() override {
+        Result result = addGameObject(std::make_unique<ManagedObject>());
+        if (!result) {
+            throw std::runtime_error(result.error());
+        }
+    }
+    void start() override {}
+    void update() override {}
+
+    inline static int constructionCount = 0;
+};
+
 bool expect(bool condition, const char* message) {
     if (!condition) {
         std::cerr << message << '\n';
@@ -35,6 +65,185 @@ bool nearlyEqual(float actual, float expected) {
 
 bool hasDirectionalLightError(const Result& result) {
     return result.error().find("Directional light") != std::string::npos;
+}
+
+bool runAuthoringTransferTests() {
+    bool passed = true;
+    TestScene editing;
+    TestScene runtime;
+    editing.name = "Edited Level";
+    passed &= expect(static_cast<bool>(
+                         editing.setBackgroundColor({0.1f, 0.2f, 0.3f, 0.4f})),
+                     "Could not configure authoring background color");
+    passed &= expect(static_cast<bool>(
+                         editing.setAmbientLight({0.4f, 0.5f, 0.6f}, 3.0f)),
+                     "Could not configure authoring ambient light");
+
+    auto editingObject = std::make_unique<GameObject>();
+    GameObject* editingObjectPointer = editingObject.get();
+    editingObject->name = "Edited object";
+    editingObject->position = {1.0f, 2.0f, 3.0f};
+    editingObject->rotation = {4.0f, 5.0f, 6.0f};
+    editingObject->scale = {7.0f, 8.0f, 9.0f};
+    auto runtimeObject = std::make_unique<GameObject>();
+    GameObject* runtimeObjectPointer = runtimeObject.get();
+    passed &= expect(static_cast<bool>(
+                         editing.addGameObject(std::move(editingObject))),
+                     "Could not add editing object for transfer test");
+    passed &= expect(static_cast<bool>(
+                         runtime.addGameObject(std::move(runtimeObject))),
+                     "Could not add runtime object for transfer test");
+
+    auto editingPoint = std::make_unique<PointLight>();
+    PointLight* editingPointPointer = editingPoint.get();
+    editingPoint->color = {0.2f, 0.3f, 0.4f};
+    editingPoint->intensity = 11.0f;
+    auto runtimePoint = std::make_unique<PointLight>();
+    PointLight* runtimePointPointer = runtimePoint.get();
+    passed &= expect(static_cast<bool>(
+                         editing.addGameObject(std::move(editingPoint))),
+                     "Could not add editing point light for transfer test");
+    passed &= expect(static_cast<bool>(
+                         runtime.addGameObject(std::move(runtimePoint))),
+                     "Could not add runtime point light for transfer test");
+
+    auto editingDirectional = std::make_unique<DirectionalLight>();
+    DirectionalLight* editingDirectionalPointer = editingDirectional.get();
+    editingDirectional->direction = {1.0f, -2.0f, 3.0f};
+    editingDirectional->color = {0.7f, 0.8f, 0.9f};
+    editingDirectional->intensity = 12.0f;
+    auto runtimeDirectional = std::make_unique<DirectionalLight>();
+    DirectionalLight* runtimeDirectionalPointer = runtimeDirectional.get();
+    passed &= expect(static_cast<bool>(editing.addGameObject(
+                         std::move(editingDirectional))),
+                     "Could not add editing directional light");
+    passed &= expect(static_cast<bool>(runtime.addGameObject(
+                         std::move(runtimeDirectional))),
+                     "Could not add runtime directional light");
+
+    auto editingCamera = std::make_unique<Camera>();
+    Camera* editingCameraPointer = editingCamera.get();
+    editingCamera->front = {0.5f, 0.25f, -0.75f};
+    editingCamera->up = {0.0f, 0.5f, 0.5f};
+    auto runtimeCamera = std::make_unique<Camera>();
+    Camera* runtimeCameraPointer = runtimeCamera.get();
+    passed &= expect(static_cast<bool>(
+                         editing.addGameObject(std::move(editingCamera))),
+                     "Could not add editing camera for transfer test");
+    passed &= expect(static_cast<bool>(
+                         runtime.addGameObject(std::move(runtimeCamera))),
+                     "Could not add runtime camera for transfer test");
+
+    const Result transfer = editing.copyAuthoringStateTo(runtime);
+    passed &= expect(static_cast<bool>(transfer),
+                     "Matching authoring topology was rejected");
+    passed &= expect(runtime.name == editing.name &&
+                         runtime.backgroundColor() == editing.backgroundColor() &&
+                         runtime.ambientColor() == editing.ambientColor() &&
+                         runtime.ambientIntensity() == editing.ambientIntensity(),
+                     "Scene authoring properties were not transferred");
+    passed &= expect(runtimeObjectPointer->name == "Edited object" &&
+                         runtimeObjectPointer->position == glm::vec3(1.0f, 2.0f, 3.0f) &&
+                         runtimeObjectPointer->rotation == glm::vec3(4.0f, 5.0f, 6.0f) &&
+                         runtimeObjectPointer->scale == glm::vec3(7.0f, 8.0f, 9.0f),
+                     "GameObject authoring transform was not transferred");
+    passed &= expect(runtimePointPointer->color == editingPointPointer->color &&
+                         runtimePointPointer->intensity == 11.0f,
+                     "Point-light authoring state was not transferred");
+    passed &= expect(runtimeDirectionalPointer->direction ==
+                             editingDirectionalPointer->direction &&
+                         runtimeDirectionalPointer->color ==
+                             editingDirectionalPointer->color &&
+                         runtimeDirectionalPointer->intensity == 12.0f,
+                     "Directional-light authoring state was not transferred");
+    passed &= expect(runtimeCameraPointer->front == editingCameraPointer->front &&
+                         runtimeCameraPointer->up == editingCameraPointer->up,
+                     "Camera authoring vectors were not transferred");
+    passed &= expect(editingObjectPointer->position == glm::vec3(1.0f, 2.0f, 3.0f),
+                     "Authoring transfer mutated the editing scene");
+
+    TestScene countSource;
+    TestScene countDestination;
+    auto countDestinationObject = std::make_unique<GameObject>();
+    GameObject* countDestinationPointer = countDestinationObject.get();
+    countDestinationPointer->position = {91.0f, 92.0f, 93.0f};
+    passed &= expect(countSource.addGameObject(std::make_unique<GameObject>()) &&
+                         countSource.addGameObject(std::make_unique<GameObject>()) &&
+                         countDestination.addGameObject(
+                             std::move(countDestinationObject)),
+                     "Could not configure object-count mismatch test");
+    passed &= expect(!countSource.copyAuthoringStateTo(countDestination) &&
+                         countDestinationPointer->position ==
+                             glm::vec3(91.0f, 92.0f, 93.0f),
+                     "Object-count mismatch mutated the destination");
+
+    TestScene typeSource;
+    TestScene typeDestination;
+    auto typeDestinationObject = std::make_unique<DerivedGameObject>();
+    GameObject* typeDestinationPointer = typeDestinationObject.get();
+    typeDestinationPointer->position = {81.0f, 82.0f, 83.0f};
+    passed &= expect(typeSource.addGameObject(std::make_unique<GameObject>()) &&
+                         typeDestination.addGameObject(
+                             std::move(typeDestinationObject)),
+                     "Could not configure object-type mismatch test");
+    passed &= expect(!typeSource.copyAuthoringStateTo(typeDestination) &&
+                         typeDestinationPointer->position ==
+                             glm::vec3(81.0f, 82.0f, 83.0f),
+                     "Object-type mismatch mutated the destination");
+    return passed;
+}
+
+bool runSceneManagerTests() {
+    bool passed = true;
+    ManagedScene::constructionCount = 0;
+    ManagedObject::liveCount = 0;
+    ManagedObject::nextInstanceId = 0;
+    auto input = std::make_shared<InputManager>();
+    SceneManager manager;
+    passed &= expect(static_cast<bool>(
+                         manager.initialize<ManagedScene>("Managed", input)),
+                     "Scene Manager initialization failed");
+    Scene* editing = manager.editingScene();
+    GameObject* editingObject = editing->gameObjects().front().get();
+    passed &= expect(manager.activeScene() == editing &&
+                         ManagedScene::constructionCount == 1 &&
+                         ManagedObject::liveCount == 1,
+                     "Scene Manager did not retain one editing scene");
+
+    passed &= expect(static_cast<bool>(manager.prepareRuntimeScene()),
+                     "Scene Manager could not prepare a runtime scene");
+    Scene* firstRuntime = manager.runtimeScene();
+    GameObject* firstRuntimeObject = firstRuntime->gameObjects().front().get();
+    const int firstRuntimeObjectId =
+        static_cast<ManagedObject*>(firstRuntimeObject)->instanceId;
+    passed &= expect(firstRuntime != editing &&
+                         firstRuntimeObject != editingObject &&
+                         manager.activeScene() == editing &&
+                         ManagedObject::liveCount == 2,
+                     "Prepared runtime scene ownership is incorrect");
+    passed &= expect(manager.commitRuntimeScene() &&
+                         manager.activeScene() == firstRuntime &&
+                         manager.returnToEditingScene() &&
+                         manager.destroyRuntimeScene(),
+                     "Scene Manager could not complete a runtime lifecycle");
+    passed &= expect(manager.editingScene() == editing &&
+                         manager.runtimeScene() == nullptr &&
+                         ManagedObject::liveCount == 1,
+                     "Destroying runtime scene affected the editing scene");
+
+    passed &= expect(static_cast<bool>(manager.prepareRuntimeScene()),
+                     "Scene Manager could not prepare a second runtime scene");
+    passed &= expect(
+                         static_cast<ManagedObject*>(
+                             manager.runtimeScene()->gameObjects().front().get())
+                                 ->instanceId != firstRuntimeObjectId &&
+                         ManagedScene::constructionCount == 3,
+                     "Repeated Play did not construct fresh runtime objects");
+    manager.cancelPreparedRuntimeScene();
+    manager.shutdown();
+    passed &= expect(ManagedObject::liveCount == 0,
+                     "Scene Manager shutdown leaked owned scenes");
+    return passed;
 }
 
 struct CountingPixelDeleter {
@@ -78,6 +287,8 @@ static_assert(alignof(MaterialPushConstants) % 4 == 0);
 
 int main() {
     bool passed = true;
+    passed &= runAuthoringTransferTests();
+    passed &= runSceneManagerTests();
 
     Vertex vertex{};
     vertex.normal = {0.0f, 0.0f, 1.0f};
@@ -250,8 +461,8 @@ int main() {
     }
     passed &= expect(zeroLightLookupRejected,
                      "A zero-light scene accepted a light lookup");
-    passed &= expect(!scene.validateForActivation(),
-                     "A scene without an active camera passed validation");
+    passed &= expect(static_cast<bool>(scene.validateForActivation()),
+                     "A scene without an active camera failed validation");
     passed &= expect(
         !scene.addGameObject(std::unique_ptr<GameObject>{}),
         "A scene accepted a null game object");
