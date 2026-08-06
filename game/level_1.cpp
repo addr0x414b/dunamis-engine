@@ -31,7 +31,7 @@ void Level1::init() {
     (void)addGameObject(std::move(test2));*/
 
     auto test3 = std::make_unique<GameObject>();
-    test3->name = "GLTF test";
+    test3->name = "Sponza";
     test3->scale = glm::vec3(1.0f, 1.0f, 1.0f);
     test3->modelPath = "game/assets/models/glTF-Sample-Assets/Models/Sponza/glTF/Sponza.gltf";
     (void)test3->loadModel();
@@ -47,7 +47,7 @@ void Level1::init() {
     (void)addGameObject(std::move(test4));*/
 
     auto test4 = std::make_unique<DirectionalLight>();
-    test4->name = "GLTF test";
+    test4->name = "Direc Light";
     test4->scale = glm::vec3(200.0f, 200.0f, 200.0f);
     test4->position = glm::vec3(50.0f, 20.0f, 100.0f);
     test4->modelPath = "game/assets/models/Avocado.glb";
@@ -56,8 +56,8 @@ void Level1::init() {
     (void)addGameObject(std::move(test4));
 
     auto test5 = std::make_unique<PointLight>();
-    test5->name = "GLTF test";
-    test5->scale = glm::vec3(200.0f, 200.0f, 200.0f);
+    test5->name = "Point Light";
+    test5->scale = glm::vec3(500.0f, 500.0f, 500.0f);
     test5->position = glm::vec3(250.0f, 20.0f, 100.0f);
     test5->modelPath = "game/assets/models/Avocado.glb";
     test5->intensity = 100.0f;

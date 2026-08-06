@@ -1,13 +1,71 @@
 #include "imgui_layer.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
 #include <spdlog/spdlog.h>
 
+#include <cmath>
 #include <string>
 
+#include "../scene/directional_light.h"
+#include "../scene/game_object.h"
+#include "../scene/point_light.h"
+#include "../scene/scene.h"
+
 namespace {
+
+constexpr const char* dunamisDockspaceName =
+    "DunamisEditorDockspace_v1";
+constexpr float minDirectionalDirectionLengthSquared = 1.0e-8f;
+
+void buildDefaultDockLayout(ImGuiID dockspaceId,
+                            const ImVec2& viewportSize) {
+    if (ImGui::DockBuilderGetNode(dockspaceId) != nullptr) {
+        return;
+    }
+
+    ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
+    ImGui::DockBuilderSetNodeSize(dockspaceId, viewportSize);
+
+    ImGuiID centralDockId = dockspaceId;
+    ImGuiID leftDockId = 0;
+    ImGuiID rightDockId = 0;
+
+    ImGui::DockBuilderSplitNode(centralDockId, ImGuiDir_Left, 0.20f,
+                                &leftDockId, &centralDockId);
+    ImGui::DockBuilderSplitNode(centralDockId, ImGuiDir_Right, 0.25f,
+                                &rightDockId, &centralDockId);
+
+    ImGui::DockBuilderDockWindow("Scene Hierarchy", leftDockId);
+    ImGui::DockBuilderDockWindow("Inspector", rightDockId);
+    ImGui::DockBuilderFinish(dockspaceId);
+}
+
+bool isFiniteVector(const glm::vec3& vector) noexcept {
+    return std::isfinite(vector.x) && std::isfinite(vector.y) &&
+           std::isfinite(vector.z);
+}
+
+bool isFiniteNonnegativeVector(const glm::vec3& vector) noexcept {
+    return isFiniteVector(vector) && vector.x >= 0.0f &&
+           vector.y >= 0.0f && vector.z >= 0.0f;
+}
+
+bool isFiniteNonnegative(float value) noexcept {
+    return std::isfinite(value) && value >= 0.0f;
+}
+
+bool isValidDirectionalDirection(const glm::vec3& direction) noexcept {
+    if (!isFiniteVector(direction)) {
+        return false;
+    }
+
+    const float lengthSquared = glm::dot(direction, direction);
+    return std::isfinite(lengthSquared) &&
+           lengthSquared > minDirectionalDirectionLengthSquared;
+}
 
 void checkImGuiVulkanResult(VkResult result) noexcept {
     if (result == VK_SUCCESS) {
@@ -181,31 +239,233 @@ Result ImGuiLayer::beginFrame() {
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
+    const ImGuiID dockspaceId = ImGui::GetID(dunamisDockspaceName);
+    const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
+    buildDefaultDockLayout(dockspaceId, mainViewport->Size);
     ImGui::DockSpaceOverViewport(
-        0, ImGui::GetMainViewport(),
-        ImGuiDockNodeFlags_PassthruCentralNode);
+        dockspaceId, mainViewport, ImGuiDockNodeFlags_PassthruCentralNode);
     frameStarted_ = true;
     drawDataReady_ = false;
     return Result::success();
 }
 
-void ImGuiLayer::drawTestWindow() {
+void ImGuiLayer::drawEditor(Scene* scene) {
+    synchronizeSelection(scene);
     if (!frameStarted_) {
         return;
     }
 
-    ImGui::Begin("Dunamis Debug UI");
-    ImGui::TextUnformatted("Dear ImGui is active.");
-    const ImGuiIO& io = ImGui::GetIO();
-    ImGui::Text("Framerate: %.1f FPS", io.Framerate);
-    ImGui::Text("Frame time: %.3f ms",
-                io.Framerate > 0.0f ? 1000.0f / io.Framerate : 0.0f);
-    ImGui::Checkbox("Show Dear ImGui demo window", &showDemoWindow_);
-    ImGui::End();
-
-    if (showDemoWindow_) {
-        ImGui::ShowDemoWindow(&showDemoWindow_);
+    if (scene != nullptr) {
+        drawSceneHierarchy(scene);
+        drawInspector(scene);
     }
+}
+
+void ImGuiLayer::synchronizeSelection(Scene* scene) noexcept {
+    if (scene != selectionScene_) {
+        selectionScene_ = scene;
+        selectedGameObject_ = nullptr;
+        inspectorError_.clear();
+    }
+
+    if (scene == nullptr) {
+        selectionScene_ = nullptr;
+        selectedGameObject_ = nullptr;
+        inspectorError_.clear();
+        return;
+    }
+
+    if (selectedGameObject_ == nullptr) {
+        return;
+    }
+
+    bool selectedObjectIsPresent = false;
+    for (const auto& object : scene->gameObjects()) {
+        if (object.get() == selectedGameObject_) {
+            selectedObjectIsPresent = true;
+            break;
+        }
+    }
+
+    if (!selectedObjectIsPresent) {
+        selectedGameObject_ = nullptr;
+        inspectorError_.clear();
+    }
+}
+
+void ImGuiLayer::drawSceneHierarchy(Scene* scene) {
+    ImGui::SetNextWindowSize(ImVec2(300.0f, 400.0f),
+                             ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Scene Hierarchy")) {
+        ImGui::End();
+        return;
+    }
+
+    bool hasObject = false;
+    for (const auto& objectOwner : scene->gameObjects()) {
+        GameObject* object = objectOwner.get();
+        if (object == nullptr) {
+            continue;
+        }
+
+        hasObject = true;
+        ImGui::PushID(static_cast<const void*>(object));
+        const char* label = object->name.empty()
+                                ? "<Unnamed GameObject>"
+                                : object->name.c_str();
+        const bool selected = selectedGameObject_ == object;
+        if (ImGui::Selectable(label, selected)) {
+            selectedGameObject_ = object;
+            inspectorError_.clear();
+        }
+        ImGui::PopID();
+    }
+
+    if (!hasObject) {
+        ImGui::TextUnformatted("No GameObjects in the active scene.");
+    }
+
+    ImGui::End();
+}
+
+void ImGuiLayer::drawInspector(Scene* scene) {
+    ImGui::SetNextWindowSize(ImVec2(340.0f, 500.0f),
+                             ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Inspector")) {
+        ImGui::End();
+        return;
+    }
+
+    if (scene == nullptr || selectedGameObject_ == nullptr) {
+        ImGui::TextUnformatted(
+            "Select a GameObject from the Scene Hierarchy.");
+        ImGui::End();
+        return;
+    }
+
+    const char* objectName = selectedGameObject_->name.empty()
+                                 ? "<Unnamed GameObject>"
+                                 : selectedGameObject_->name.c_str();
+    PointLight* pointLight = dynamic_cast<PointLight*>(selectedGameObject_);
+    DirectionalLight* directionalLight =
+        dynamic_cast<DirectionalLight*>(selectedGameObject_);
+    const char* objectType = pointLight != nullptr
+                                 ? "Point Light"
+                                 : directionalLight != nullptr
+                                       ? "Directional Light"
+                                       : "GameObject";
+
+    ImGui::Text("Name: %s", objectName);
+    ImGui::Text("Type: %s", objectType);
+
+    ImGui::SeparatorText("Transform");
+    glm::vec3 position = selectedGameObject_->position;
+    if (ImGui::DragFloat3("Position", &position.x, 0.1f)) {
+        if (isFiniteVector(position)) {
+            selectedGameObject_->position = position;
+            inspectorError_.clear();
+        } else {
+            inspectorError_ = "Transform values must be finite.";
+        }
+    }
+
+    glm::vec3 rotation = selectedGameObject_->rotation;
+    if (ImGui::DragFloat3("Rotation (degrees)", &rotation.x, 0.5f)) {
+        if (isFiniteVector(rotation)) {
+            selectedGameObject_->rotation = rotation;
+            inspectorError_.clear();
+        } else {
+            inspectorError_ = "Transform values must be finite.";
+        }
+    }
+
+    glm::vec3 scale = selectedGameObject_->scale;
+    if (ImGui::DragFloat3("Scale", &scale.x, 0.01f)) {
+        if (isFiniteVector(scale)) {
+            selectedGameObject_->scale = scale;
+            inspectorError_.clear();
+        } else {
+            inspectorError_ = "Transform values must be finite.";
+        }
+    }
+
+    if (pointLight != nullptr) {
+        ImGui::SeparatorText("Point Light");
+
+        glm::vec3 color = pointLight->color;
+        if (ImGui::ColorEdit3("Color", &color.x,
+                              ImGuiColorEditFlags_HDR |
+                                  ImGuiColorEditFlags_Float)) {
+            if (isFiniteNonnegativeVector(color)) {
+                pointLight->color = color;
+                inspectorError_.clear();
+            } else {
+                inspectorError_ =
+                    "Color components must be finite and nonnegative.";
+            }
+        }
+
+        float intensity = pointLight->intensity;
+        if (ImGui::DragFloat("Intensity", &intensity, 0.1f)) {
+            if (isFiniteNonnegative(intensity)) {
+                pointLight->intensity = intensity;
+                inspectorError_.clear();
+            } else {
+                inspectorError_ =
+                    "Intensity must be finite and nonnegative.";
+            }
+        }
+    }
+
+    if (directionalLight != nullptr) {
+        ImGui::SeparatorText("Directional Light");
+
+        glm::vec3 direction = directionalLight->direction;
+        if (ImGui::DragFloat3("Direction", &direction.x, 0.01f)) {
+            if (isValidDirectionalDirection(direction)) {
+                directionalLight->direction = direction;
+                inspectorError_.clear();
+            } else {
+                inspectorError_ =
+                    "Direction must be finite and nonzero.";
+            }
+        }
+
+        glm::vec3 color = directionalLight->color;
+        if (ImGui::ColorEdit3("Color", &color.x,
+                              ImGuiColorEditFlags_HDR |
+                                  ImGuiColorEditFlags_Float)) {
+            if (isFiniteNonnegativeVector(color)) {
+                directionalLight->color = color;
+                inspectorError_.clear();
+            } else {
+                inspectorError_ =
+                    "Color components must be finite and nonnegative.";
+            }
+        }
+
+        float intensity = directionalLight->intensity;
+        if (ImGui::DragFloat("Intensity", &intensity, 0.1f)) {
+            if (isFiniteNonnegative(intensity)) {
+                directionalLight->intensity = intensity;
+                inspectorError_.clear();
+            } else {
+                inspectorError_ =
+                    "Intensity must be finite and nonnegative.";
+            }
+        }
+
+        ImGui::TextWrapped(
+            "Directional-light position does not affect lighting; use "
+            "Direction.");
+    }
+
+    if (!inspectorError_.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "%s",
+                           inspectorError_.c_str());
+    }
+
+    ImGui::End();
 }
 
 void ImGuiLayer::finishFrame() {
@@ -271,6 +531,9 @@ bool ImGuiLayer::initialized() const noexcept {
 void ImGuiLayer::shutdown() noexcept {
     frameStarted_ = false;
     drawDataReady_ = false;
+    selectionScene_ = nullptr;
+    selectedGameObject_ = nullptr;
+    inspectorError_.clear();
 
     if (vulkanBackendInitialized_) {
         ImGui_ImplVulkan_Shutdown();
@@ -303,5 +566,7 @@ void ImGuiLayer::abandon() noexcept {
     msaaSamples_ = VK_SAMPLE_COUNT_1_BIT;
     minimumImageCount_ = 0;
     imageCount_ = 0;
-    showDemoWindow_ = false;
+    selectionScene_ = nullptr;
+    selectedGameObject_ = nullptr;
+    inspectorError_.clear();
 }

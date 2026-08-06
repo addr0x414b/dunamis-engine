@@ -4,8 +4,8 @@
 
 namespace {
 
-constexpr int windowWidth = 1920;
-constexpr int windowHeight = 1080;
+constexpr int windowWidth = 2560;
+constexpr int windowHeight = 1440;
 
 std::string sdlError(const std::string& message) {
     const char* error = SDL_GetError();

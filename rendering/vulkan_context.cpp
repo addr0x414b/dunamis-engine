@@ -3017,7 +3017,7 @@ Result VulkanContext::drawFrame(Scene* scene) {
         return Result::failure("Failed to begin Dear ImGui frame: " +
                                imguiResult.error());
     }
-    imguiLayer.drawTestWindow();
+    imguiLayer.drawEditor(scene);
     imguiLayer.finishFrame();
 
     Result recordResult = recordCommandBuffer(

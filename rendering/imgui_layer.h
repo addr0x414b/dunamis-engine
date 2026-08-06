@@ -2,11 +2,15 @@
 #define IMGUI_LAYER_H
 
 #include <cstdint>
+#include <string>
 
 #include <SDL3/SDL.h>
 #include <vulkan/vulkan.h>
 
 #include "../core/result.h"
+
+class Scene;
+class GameObject;
 
 class ImGuiLayer final {
 public:
@@ -27,7 +31,7 @@ public:
     void setInputEnabled(bool enabled) noexcept;
 
     [[nodiscard]] Result beginFrame();
-    void drawTestWindow();
+    void drawEditor(Scene* scene);
     void finishFrame();
     void recordDrawData(VkCommandBuffer commandBuffer);
 
@@ -42,6 +46,9 @@ public:
 
 private:
     [[nodiscard]] Result initializeVulkanBackend();
+    void synchronizeSelection(Scene* scene) noexcept;
+    void drawSceneHierarchy(Scene* scene);
+    void drawInspector(Scene* scene);
 
     VkInstance instance_ = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
@@ -58,7 +65,9 @@ private:
     bool vulkanBackendInitialized_ = false;
     bool frameStarted_ = false;
     bool drawDataReady_ = false;
-    bool showDemoWindow_ = false;
+    Scene* selectionScene_ = nullptr;
+    GameObject* selectedGameObject_ = nullptr;
+    std::string inspectorError_;
 };
 
 #endif
