@@ -1,5 +1,4 @@
 #include "level_1.h"
-
 #include <stdexcept>
 
 void Level1::init() {

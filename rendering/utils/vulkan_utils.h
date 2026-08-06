@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 
 #define GLM_FORCE_RADIANS
@@ -15,6 +16,30 @@
 #include <vulkan/vulkan.h>
 #include "../../scene/scene_limits.h"
 #include "../../third_party/stb/stb_image.h"
+
+struct StbiPixelDeleter {
+    void operator()(stbi_uc* pixels) const noexcept {
+        if (pixels) {
+            stbi_image_free(pixels);
+        }
+    }
+};
+
+using StbiPixelOwner = std::shared_ptr<stbi_uc>;
+
+inline StbiPixelOwner makeStbiPixelOwner(stbi_uc* pixels) {
+    return StbiPixelOwner(pixels, StbiPixelDeleter{});
+}
+
+inline void releaseStbiPixel(StbiPixelOwner& owner,
+                             stbi_uc*& pixels) noexcept {
+    if (owner) {
+        owner.reset();
+    } else if (pixels) {
+        stbi_image_free(pixels);
+    }
+    pixels = nullptr;
+}
 
 struct Vertex {
     glm::vec3 pos;
@@ -169,6 +194,9 @@ struct Material {
     int texWidth = 0;
     int texHeight = 0;
     int texChannels = 0;
+    // Raw pixel fields are views; the owner keeps decoded CPU pixels alive
+    // until Vulkan upload (or the final Material reference) releases them.
+    StbiPixelOwner pixelsOwner{};
     std::string normalMapPath{};
     uint32_t normalMapMipLevels = 0;
     VkImage normalMapImage = VK_NULL_HANDLE;
@@ -179,6 +207,8 @@ struct Material {
     int normalMapWidth = 0;
     int normalMapHeight = 0;
     int normalMapChannels = 0;
+    // See pixelsOwner above. This owner may be shared by mesh instances.
+    StbiPixelOwner normalMapPixelsOwner{};
     bool normalMapEnabled = false;
     std::string metallicRoughnessMapPath{};
     uint32_t metallicRoughnessMapMipLevels = 0;
@@ -190,6 +220,8 @@ struct Material {
     int metallicRoughnessMapWidth = 0;
     int metallicRoughnessMapHeight = 0;
     int metallicRoughnessMapChannels = 0;
+    // See pixelsOwner above. This owner may be shared by mesh instances.
+    StbiPixelOwner metallicRoughnessMapPixelsOwner{};
     bool hasMetallicRoughnessMap = false;
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
     float alphaCutoff = 0.5f;

@@ -37,6 +37,15 @@ bool hasDirectionalLightError(const Result& result) {
     return result.error().find("Directional light") != std::string::npos;
 }
 
+struct CountingPixelDeleter {
+    std::size_t* releaseCount = nullptr;
+
+    void operator()(stbi_uc* pixels) const noexcept {
+        ++*releaseCount;
+        delete[] pixels;
+    }
+};
+
 }  // namespace
 
 static_assert(std::is_same_v<
@@ -147,6 +156,21 @@ int main() {
                          defaultLight.position.y == 0.0f &&
                          defaultLight.position.z == 0.0f,
                      "Point lights do not default to the origin");
+
+    std::size_t pixelReleaseCount = 0;
+    Material firstSharedMaterial;
+    firstSharedMaterial.pixelsOwner = StbiPixelOwner(
+        new stbi_uc[4], CountingPixelDeleter{&pixelReleaseCount});
+    firstSharedMaterial.pixels = firstSharedMaterial.pixelsOwner.get();
+    Material secondSharedMaterial = firstSharedMaterial;
+    releaseStbiPixel(firstSharedMaterial.pixelsOwner,
+                     firstSharedMaterial.pixels);
+    passed &= expect(pixelReleaseCount == 0 && secondSharedMaterial.pixels != nullptr,
+                     "Releasing one shared pixel reference destroyed live pixels");
+    releaseStbiPixel(secondSharedMaterial.pixelsOwner,
+                     secondSharedMaterial.pixels);
+    passed &= expect(pixelReleaseCount == 1,
+                     "Shared pixel allocation was not released exactly once");
 
     const DirectionalLight defaultDirectionalLight;
     passed &= expect(defaultDirectionalLight.direction ==

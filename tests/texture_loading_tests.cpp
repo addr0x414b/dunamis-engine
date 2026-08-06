@@ -78,6 +78,42 @@ std::filesystem::path createMissingTextureModel(
     return directory / "model.gltf";
 }
 
+std::filesystem::path createSharedMaterialModel() {
+    const auto suffix =
+        std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto directory =
+        std::filesystem::temp_directory_path() /
+        ("dunamis-shared-material-" + std::to_string(suffix));
+    std::filesystem::create_directories(directory);
+
+    std::ofstream binary(directory / "mesh.bin", std::ios::binary);
+    const float positions[] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+                               0.0f, 1.0f, 0.0f};
+    const float texCoords[] = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f};
+    const unsigned short indices[] = {0, 1, 2};
+    binary.write(reinterpret_cast<const char*>(positions), sizeof(positions));
+    binary.write(reinterpret_cast<const char*>(texCoords), sizeof(texCoords));
+    binary.write(reinterpret_cast<const char*>(indices), sizeof(indices));
+
+    std::ofstream image(directory / "shared.ppm", std::ios::binary);
+    image << "P6\n1 1\n255\n";
+    const unsigned char pixel[] = {32, 96, 160};
+    image.write(reinterpret_cast<const char*>(pixel), sizeof(pixel));
+
+    std::ofstream model(directory / "model.gltf");
+    model << R"json({
+"asset":{"version":"2.0"},
+"buffers":[{"uri":"mesh.bin","byteLength":66}],
+"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":24},{"buffer":0,"byteOffset":60,"byteLength":6}],
+"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]},{"bufferView":1,"componentType":5126,"count":3,"type":"VEC2"},{"bufferView":2,"componentType":5123,"count":3,"type":"SCALAR"}],
+"images":[{"uri":"shared.ppm"}],"textures":[{"source":0},{"source":0},{"source":0}],
+"materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0},"metallicRoughnessTexture":{"index":2}},"normalTexture":{"index":1}}],
+"meshes":[{"primitives":[{"attributes":{"POSITION":0,"TEXCOORD_0":1},"indices":2,"material":0}]},{"primitives":[{"attributes":{"POSITION":0},"indices":2,"material":0}]}],
+"nodes":[{"mesh":0},{"mesh":1}],"scenes":[{"nodes":[0,1]}],"scene":0
+})json";
+    return directory / "model.gltf";
+}
+
 bool testFallbackSuccess(const std::filesystem::path& buildDirectory) {
     const auto modelPath = createMissingTextureModel();
     bool passed = true;
@@ -128,8 +164,6 @@ bool testFallbackSuccess(const std::filesystem::path& buildDirectory) {
                     instance.material.metallicRoughnessMapPixels[1] == 255 &&
                     instance.material.metallicRoughnessMapPixels[2] == 128,
                 "Combined metallic-roughness texture was not resolved");
-            stbi_image_free(instance.material.pixels);
-            stbi_image_free(instance.material.metallicRoughnessMapPixels);
         }
     }
     std::filesystem::remove_all(modelPath.parent_path());
@@ -157,8 +191,6 @@ bool testFactorValidation(const std::filesystem::path& buildDirectory) {
                     nearlyEqual(material.metallicFactor, 1.0f) &&
                     nearlyEqual(material.roughnessFactor, 0.0f),
                 "Invalid glTF factors were not bounded safely");
-            stbi_image_free(material.pixels);
-            stbi_image_free(material.metallicRoughnessMapPixels);
         }
     }
     std::filesystem::remove_all(modelPath.parent_path());
@@ -187,7 +219,55 @@ bool testOptionalMetallicRoughnessFailure(
                     nearlyEqual(material.metallicFactor, 0.35f) &&
                     nearlyEqual(material.roughnessFactor, 0.65f),
                 "Optional metallic-roughness failure did not preserve factors");
-            stbi_image_free(material.pixels);
+        }
+    }
+    std::filesystem::remove_all(modelPath.parent_path());
+    return passed;
+}
+
+bool testSharedMaterialReuse(const std::filesystem::path& buildDirectory) {
+    const auto modelPath = createSharedMaterialModel();
+    bool passed = true;
+    {
+        CurrentPathGuard guard(buildDirectory);
+        GameObject object;
+        object.modelPath = modelPath.c_str();
+        const Result result = object.loadModel();
+        passed &= expect(static_cast<bool>(result),
+                         "Shared-material fixture did not load");
+        passed &= expect(object.meshInstances().size() == 2,
+                         "Shared-material fixture did not produce two meshes");
+        if (result && object.meshInstances().size() == 2) {
+            const MeshInstance& firstInstance = object.meshInstances()[0];
+            const MeshInstance& secondInstance = object.meshInstances()[1];
+            const Material& first = firstInstance.material;
+            const Material& second = secondInstance.material;
+            passed &= expect(first.pixels != nullptr &&
+                                 first.pixels == second.pixels &&
+                                 first.pixelsOwner.use_count() == 2,
+                             "Meshes did not share one base-color allocation");
+            passed &= expect(first.hasMetallicRoughnessMap &&
+                                 second.hasMetallicRoughnessMap &&
+                                 first.metallicRoughnessMapPixels ==
+                                     second.metallicRoughnessMapPixels &&
+                                 first.metallicRoughnessMapPixelsOwner.use_count() ==
+                                     2,
+                             "Meshes did not share one metallic-roughness allocation");
+            const Material& tangentMaterial =
+                first.normalMapEnabled ? first : second;
+            passed &= expect(tangentMaterial.normalMapPixels != nullptr &&
+                                 tangentMaterial.pixels !=
+                                     tangentMaterial.normalMapPixels,
+                             "Texture usage did not produce a distinct normal decode");
+            passed &= expect(firstInstance.mesh.vertices.size() == 3 &&
+                                 secondInstance.mesh.vertices.size() == 3 &&
+                                 firstInstance.mesh.indices.size() == 3 &&
+                                 secondInstance.mesh.indices.size() == 3,
+                             "Shared-material meshes lost independent geometry");
+            const bool tangentStateDiffers =
+                first.normalMapEnabled != second.normalMapEnabled;
+            passed &= expect(tangentStateDiffers,
+                             "Normal-map enablement was not mesh-specific");
         }
     }
     std::filesystem::remove_all(modelPath.parent_path());
@@ -222,6 +302,7 @@ int main(int argc, char** argv) {
     passed &= testFallbackFailure(modelPath, noFallbackDirectory);
     passed &= testFactorValidation(argv[1]);
     passed &= testOptionalMetallicRoughnessFailure(argv[1]);
+    passed &= testSharedMaterialReuse(argv[1]);
     std::filesystem::remove_all(modelPath.parent_path());
     return passed ? 0 : 1;
 }

@@ -100,6 +100,21 @@ add_test(NAME texture_loading_fallbacks
         COMMAND TextureLoadingTests "${CMAKE_BINARY_DIR}")
 set_tests_properties(texture_loading_fallbacks PROPERTIES TIMEOUT 10)
 
+add_executable(ModelLoadingBenchmark model_loading_benchmark.cpp)
+target_include_directories(ModelLoadingBenchmark PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(ModelLoadingBenchmark PRIVATE
+        GameObject
+        VulkanUtils
+        assimp
+        glm
+        spdlog
+)
+
+add_executable(ModelLoadingCacheKeyTests model_loading_cache_key_tests.cpp)
+target_include_directories(ModelLoadingCacheKeyTests PRIVATE ${CMAKE_SOURCE_DIR})
+add_test(NAME model_loading_cache_keys
+        COMMAND ModelLoadingCacheKeyTests)
+
 add_executable(VulkanTexturePreflightTests vulkan_texture_preflight_tests.cpp)
 target_include_directories(VulkanTexturePreflightTests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(VulkanTexturePreflightTests PRIVATE

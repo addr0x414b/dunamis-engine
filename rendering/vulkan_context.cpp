@@ -1974,6 +1974,15 @@ Result VulkanContext::createTextureImages(
             if (!material.normalMapPixels) {
                 return Result::failure("Failed to allocate neutral normal map");
             }
+            try {
+                material.normalMapPixelsOwner =
+                    makeStbiPixelOwner(material.normalMapPixels);
+            } catch (...) {
+                stbi_image_free(material.normalMapPixels);
+                material.normalMapPixels = nullptr;
+                return Result::failure(
+                    "Failed to create neutral normal-map ownership");
+            }
             material.normalMapPixels[0] = 128;
             material.normalMapPixels[1] = 128;
             material.normalMapPixels[2] = 255;
@@ -1990,6 +1999,15 @@ Result VulkanContext::createTextureImages(
                 return Result::failure(
                     "Failed to allocate neutral metallic-roughness map");
             }
+            try {
+                material.metallicRoughnessMapPixelsOwner =
+                    makeStbiPixelOwner(material.metallicRoughnessMapPixels);
+            } catch (...) {
+                stbi_image_free(material.metallicRoughnessMapPixels);
+                material.metallicRoughnessMapPixels = nullptr;
+                return Result::failure(
+                    "Failed to create neutral metallic-roughness ownership");
+            }
             material.metallicRoughnessMapPixels[0] = 255;
             material.metallicRoughnessMapPixels[1] = 255;
             material.metallicRoughnessMapPixels[2] = 255;
@@ -2000,16 +2018,16 @@ Result VulkanContext::createTextureImages(
             material.metallicRoughnessMapMipLevels = 1;
         }
 
-        auto uploadTexture = [&](stbi_uc*& pixels, int width, int height,
+        auto uploadTexture = [&](StbiPixelOwner& pixelsOwner,
+                                 stbi_uc*& pixels, int width, int height,
                                  uint32_t mipLevels, VkFormat format,
                                  VkImage& image, VkDeviceMemory& memory,
                                  const char* label) -> Result {
             const VkDeviceSize imageSize =
                 static_cast<VkDeviceSize>(width) *
                 static_cast<VkDeviceSize>(height) * 4;
-            auto releasePixels = [&pixels]() {
-                stbi_image_free(pixels);
-                pixels = nullptr;
+            auto releasePixels = [&pixelsOwner, &pixels]() {
+                releaseStbiPixel(pixelsOwner, pixels);
             };
             ownedTemporaryBuffers.emplace_back();
             auto& deferredStaging = ownedTemporaryBuffers.back();
@@ -2062,20 +2080,20 @@ Result VulkanContext::createTextureImages(
             return generateMipmaps(image, format, width, height, mipLevels);
         };
 
-        Result result = uploadTexture(material.pixels, material.texWidth,
-                                      material.texHeight, material.mipLevels,
-                                      VK_FORMAT_R8G8B8A8_SRGB,
-                                      material.textureImage,
-                                      material.textureImageMemory, "texture image");
-        if (!result) return result;
-        result = uploadTexture(material.normalMapPixels, material.normalMapWidth,
-                               material.normalMapHeight,
-                               material.normalMapMipLevels,
-                               VK_FORMAT_R8G8B8A8_UNORM,
-                               material.normalMapImage,
-                               material.normalMapImageMemory, "normal-map image");
+        Result result = uploadTexture(
+            material.pixelsOwner, material.pixels, material.texWidth,
+            material.texHeight, material.mipLevels, VK_FORMAT_R8G8B8A8_SRGB,
+            material.textureImage, material.textureImageMemory, "texture image");
         if (!result) return result;
         result = uploadTexture(
+            material.normalMapPixelsOwner, material.normalMapPixels,
+            material.normalMapWidth, material.normalMapHeight,
+            material.normalMapMipLevels, VK_FORMAT_R8G8B8A8_UNORM,
+            material.normalMapImage, material.normalMapImageMemory,
+            "normal-map image");
+        if (!result) return result;
+        result = uploadTexture(
+            material.metallicRoughnessMapPixelsOwner,
             material.metallicRoughnessMapPixels,
             material.metallicRoughnessMapWidth,
             material.metallicRoughnessMapHeight,
