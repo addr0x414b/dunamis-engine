@@ -133,6 +133,7 @@ private:
         std::vector<OwnedSampler> samplers;
         std::vector<OwnedDescriptorSets> descriptorSets;
         std::vector<RenderData*> renderData;
+        std::vector<GameObject*> attachedGameObjects;
     };
 
     [[nodiscard]] Result validateSceneRenderStateIsEmpty(

@@ -74,6 +74,8 @@ target_include_directories(SceneInvariantTests PRIVATE
 target_link_libraries(SceneInvariantTests PRIVATE
         Scene
         GameObject
+        Level1
+        Player
         SDL3::SDL3
         Vulkan::Vulkan
         VulkanUtils
@@ -112,6 +114,18 @@ add_dependencies(TextureLoadingTests DunamisEngine)
 add_test(NAME texture_loading_fallbacks
         COMMAND TextureLoadingTests "${CMAKE_BINARY_DIR}")
 set_tests_properties(texture_loading_fallbacks PROPERTIES TIMEOUT 10)
+
+add_executable(GameObjectOwnershipTests game_object_ownership_tests.cpp)
+target_include_directories(GameObjectOwnershipTests PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_definitions(GameObjectOwnershipTests PRIVATE
+        DUNAMIS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(GameObjectOwnershipTests PRIVATE
+        GameObject
+        VulkanUtils
+        assimp
+        glm
+        spdlog)
+add_test(NAME game_object_ownership COMMAND GameObjectOwnershipTests)
 
 add_executable(ModelLoadingBenchmark model_loading_benchmark.cpp)
 target_include_directories(ModelLoadingBenchmark PRIVATE ${CMAKE_SOURCE_DIR})

@@ -180,6 +180,11 @@ Result VulkanContext::validateSceneRenderStateIsEmpty(
         if (!object) {
             continue;
         }
+        if (!object->renderTopologyMutable()) {
+            return Result::failure(
+                "Scene object " + std::to_string(objectIndex) +
+                " has render resources attached");
+        }
 
         for (size_t instanceIndex = 0;
              instanceIndex < object->meshInstances_.size();
@@ -280,7 +285,10 @@ Result VulkanContext::beginSceneResourceLoad(Scene* scene) {
         return result;
     }
     try {
-        sceneResourceOwnership_.try_emplace(scene);
+        auto [ownership, inserted] = sceneResourceOwnership_.try_emplace(scene);
+        (void)inserted;
+        ownership->second.attachedGameObjects.reserve(
+            scene->gameObjects().size());
     } catch (const std::exception& exception) {
         return Result::failure(
             "Failed to allocate scene resource ownership: " +
@@ -320,6 +328,21 @@ Result VulkanContext::commitSceneResourceLoad(Scene* scene) {
     resources.samplers = std::move(ownedSceneSamplers);
     resources.descriptorSets = std::move(ownedSceneDescriptorSets);
     resources.renderData = std::move(ownedRenderData);
+    for (const auto& object : scene->gameObjects()) {
+        if (!object) {
+            continue;
+        }
+        Result result = object->markRenderResourcesAttached();
+        if (!result) {
+            cleanupSceneResources(resources, false);
+            sceneResourceOwnership_.erase(ownership);
+            sceneResourceLoadTarget_ = nullptr;
+            return Result::failure(
+                "Failed to attach GameObject render topology: " +
+                result.error());
+        }
+        resources.attachedGameObjects.push_back(object.get());
+    }
     sceneResourceLoadTarget_ = nullptr;
     return Result::success();
 }
@@ -3794,6 +3817,12 @@ void VulkanContext::cleanupSceneResources(
         resources.samplers.clear();
         resources.descriptorSets.clear();
         resources.renderData.clear();
+        for (GameObject* object : resources.attachedGameObjects) {
+            if (object) {
+                object->markRenderResourcesDetached();
+            }
+        }
+        resources.attachedGameObjects.clear();
         return;
     }
 
@@ -3931,6 +3960,12 @@ void VulkanContext::cleanupSceneResources(
     resources.samplers.clear();
     resources.descriptorSets.clear();
     resources.renderData.clear();
+    for (GameObject* object : resources.attachedGameObjects) {
+        if (object) {
+            object->markRenderResourcesDetached();
+        }
+    }
+    resources.attachedGameObjects.clear();
 }
 
 bool VulkanContext::cleanup() noexcept {

@@ -171,7 +171,7 @@ struct hash<Vertex> {
 }  // namespace std
 
 struct Mesh {
-    const char* modelPath;
+    const char* modelPath = nullptr;
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     struct Bounds {

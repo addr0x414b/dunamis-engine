@@ -10,10 +10,31 @@
 
 class VulkanContextTestAccess {
 public:
+    [[nodiscard]] static Result beginSceneResourceLoad(
+        VulkanContext& context, Scene* scene) {
+        return context.beginSceneResourceLoad(scene);
+    }
+
+    [[nodiscard]] static Result commitSceneResourceLoad(
+        VulkanContext& context, Scene* scene) {
+        return context.commitSceneResourceLoad(scene);
+    }
+
+    [[nodiscard]] static Result cancelSceneResourceLoad(VulkanContext& context) {
+        return context.cancelSceneResourceLoad();
+    }
+
     [[nodiscard]] static Result createUniformBuffers(
         VulkanContext& context,
         const std::unique_ptr<GameObject>& gameObject) {
         return context.createUniformBuffers(gameObject);
+    }
+};
+
+class GameObjectTestAccess {
+public:
+    [[nodiscard]] static bool mutableTopology(const GameObject& object) {
+        return object.renderTopologyMutable();
     }
 };
 
@@ -53,46 +74,17 @@ int main(int argc, char** argv) {
     }
 
     {
-        EmptyScene dirtyScene;
         auto object = std::make_unique<GameObject>();
         MeshInstance dirtyInstance{};
         dirtyInstance.material.textureSampler = foreignSamplerHandle();
         const Result addMeshResult =
             object->addMeshInstance(std::move(dirtyInstance));
-        if (!addMeshResult) {
-            std::cerr << "Failed to build dirty test mesh: "
-                      << addMeshResult.error() << '\n';
+        if (addMeshResult ||
+            addMeshResult.error().find("material Vulkan state") ==
+                std::string::npos) {
+            std::cerr << "GameObject accepted pre-existing Vulkan state\n";
             return 1;
         }
-        const Result addResult = dirtyScene.addGameObject(std::move(object));
-        if (!addResult) {
-            std::cerr << "Failed to build dirty test scene: "
-                      << addResult.error() << '\n';
-            return 1;
-        }
-
-        VulkanContext context;
-        const Result dirtySceneResult =
-            context.init(platform.window(), &dirtyScene);
-        const VkSampler retainedSampler =
-            dirtyScene.gameObjects().front()
-                ->meshInstances().front()
-                .material.textureSampler;
-
-        const bool firstCleanup = context.cleanup();
-        const bool secondCleanup = context.cleanup();
-
-        if (dirtySceneResult ||
-            dirtySceneResult.error().find(
-                "already contains Vulkan render state") ==
-                std::string::npos ||
-            retainedSampler != foreignSamplerHandle() ||
-            !firstCleanup || !secondCleanup) {
-            std::cerr << "VulkanContext did not reject and preserve "
-                         "pre-existing scene resources\n";
-            return 1;
-        }
-
     }
 
     EmptyScene scene;
@@ -160,6 +152,13 @@ int main(int argc, char** argv) {
             return 1;
         }
 
+        const Result beginResult = VulkanContextTestAccess::beginSceneResourceLoad(
+            initializedContext, &resourceScene);
+        if (!beginResult) {
+            std::cerr << "Failed to begin tracked resource loading: "
+                      << beginResult.error() << '\n';
+            return 1;
+        }
         const Result bufferResult =
             VulkanContextTestAccess::createUniformBuffers(
                 initializedContext,
@@ -170,8 +169,39 @@ int main(int argc, char** argv) {
             return 1;
         }
 
+        const Result cancelResult =
+            VulkanContextTestAccess::cancelSceneResourceLoad(initializedContext);
+        if (!cancelResult || !GameObjectTestAccess::mutableTopology(
+                                 *resourceScene.gameObjects().front())) {
+            std::cerr << "Canceled resource loading left topology attached\n";
+            return 1;
+        }
+
+        const Result secondBeginResult =
+            VulkanContextTestAccess::beginSceneResourceLoad(initializedContext,
+                                                             &resourceScene);
+        if (!secondBeginResult) {
+            std::cerr << "Failed to restart tracked resource loading: "
+                      << secondBeginResult.error() << '\n';
+            return 1;
+        }
+        const Result secondBufferResult =
+            VulkanContextTestAccess::createUniformBuffers(
+                initializedContext, resourceScene.gameObjects().front());
+        const Result commitResult = secondBufferResult
+            ? VulkanContextTestAccess::commitSceneResourceLoad(
+                  initializedContext, &resourceScene)
+            : secondBufferResult;
+        if (!commitResult || GameObjectTestAccess::mutableTopology(
+                                 *resourceScene.gameObjects().front())) {
+            std::cerr << "Committed resource loading did not attach topology\n";
+            return 1;
+        }
+
         if (!initializedContext.cleanup() ||
-            !initializedContext.cleanup()) {
+            !initializedContext.cleanup() ||
+            !GameObjectTestAccess::mutableTopology(
+                *resourceScene.gameObjects().front())) {
             std::cerr << "Repeated full Vulkan cleanup did not complete\n";
             return 1;
         }

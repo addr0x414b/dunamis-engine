@@ -1,9 +1,12 @@
 #include "scene/scene.h"
 #include "scene/scene_manager.h"
+#include "game/level_1.h"
 #include "input/input_manager.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cmath>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <limits>
@@ -65,6 +68,42 @@ bool nearlyEqual(float actual, float expected) {
 
 bool hasDirectionalLightError(const Result& result) {
     return result.error().find("Directional light") != std::string::npos;
+}
+
+class CurrentPathGuard {
+public:
+    explicit CurrentPathGuard(const std::filesystem::path& path)
+        : original_(std::filesystem::current_path()) {
+        std::filesystem::current_path(path);
+    }
+
+    ~CurrentPathGuard() { std::filesystem::current_path(original_); }
+
+private:
+    std::filesystem::path original_;
+};
+
+bool runLevel1FailurePropagationTest() {
+    const auto missingAssetDirectory = std::filesystem::temp_directory_path() /
+        ("dunamis-level1-missing-assets-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(missingAssetDirectory);
+    Result result = Result::failure("Level1 initialization was not attempted");
+    bool initialized = true;
+    {
+        CurrentPathGuard guard(missingAssetDirectory);
+        SceneManager manager;
+        result = manager.initialize<Level1>(
+            "Level 1", std::make_shared<InputManager>());
+        initialized = manager.initialized();
+        manager.shutdown();
+    }
+    std::error_code error;
+    std::filesystem::remove_all(missingAssetDirectory, error);
+    return expect(!result && !initialized &&
+                      result.error().find("Failed to load Sponza") !=
+                          std::string::npos,
+                  "Level1 did not propagate a required model-load failure");
 }
 
 bool runAuthoringTransferTests() {
@@ -287,6 +326,7 @@ static_assert(alignof(MaterialPushConstants) % 4 == 0);
 
 int main() {
     bool passed = true;
+    passed &= runLevel1FailurePropagationTest();
     passed &= runAuthoringTransferTests();
     passed &= runSceneManagerTests();
 
@@ -609,14 +649,17 @@ int main() {
     passed &= expect(ordinaryObject->meshInstances().empty(),
                      "A new game object did not start without meshes");
     MeshInstance meshInstance{};
-    meshInstance.mesh.indices.push_back(42);
+    meshInstance.mesh.vertices = {
+        Vertex{{0.0f, 0.0f, 0.0f}}, Vertex{{1.0f, 0.0f, 0.0f}},
+        Vertex{{0.0f, 1.0f, 0.0f}}};
+    meshInstance.mesh.indices = {0, 1, 2};
     const Result meshResult = ordinaryObject->addMeshInstance(
         std::move(meshInstance));
     passed &= expect(static_cast<bool>(meshResult),
                      "An inactive game object rejected a mesh instance");
     passed &= expect(ordinaryObject->meshInstances().size() == 1 &&
                          ordinaryObject->meshInstances().front()
-                                 .mesh.indices.front() == 42,
+                                 .mesh.indices.front() == 0,
                      "The checked mesh API did not preserve one mesh");
     const Result ordinaryObjectResult =
         scene.addGameObject(std::move(ordinaryObject));

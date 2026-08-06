@@ -1,9 +1,6 @@
 #ifndef GAME_OBJECT_H
 #define GAME_OBJECT_H
 
-#include <assimp/postprocess.h>
-#include <assimp/scene.h>
-#include <assimp/Importer.hpp>
 #include <deque>
 #include <glm/glm.hpp>
 #include <string>
@@ -30,7 +27,7 @@ public:
     // texturePath is only used if the textures are not baked into the model file
     const char* texturePath = nullptr;
 
-    [[nodiscard]] Result addMeshInstance(MeshInstance meshInstance);
+    [[nodiscard]] Result addMeshInstance(MeshInstance&& meshInstance);
     [[nodiscard]] const std::vector<MeshInstance>&
     meshInstances() const noexcept;
 
@@ -41,9 +38,18 @@ public:
 private:
     friend class Scene;
     friend class VulkanContext;
+    friend class GameObjectTestAccess;
 
+    enum class RenderTopologyState {
+        Mutable,
+        ResourcesAttached,
+    };
 
-    Assimp::Importer importer;
+    [[nodiscard]] Result markRenderResourcesAttached();
+    void markRenderResourcesDetached() noexcept;
+    [[nodiscard]] bool renderTopologyMutable() const noexcept;
+
+    RenderTopologyState renderTopologyState_ = RenderTopologyState::Mutable;
     std::vector<MeshInstance> meshInstances_;
     std::deque<std::string> texturePathStorage_;
 };

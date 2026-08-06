@@ -4,6 +4,9 @@
 #include "../third_party/stb/stb_image.h"
 
 #include <assimp/GltfMaterial.h>
+#include <assimp/Importer.hpp>
+#include <assimp/postprocess.h>
+#include <assimp/scene.h>
 
 #include <algorithm>
 #include <charconv>
@@ -620,25 +623,114 @@ bool normalizeVector(const glm::vec3& input, glm::vec3& output) {
     return isFiniteVector(output);
 }
 
+Result validateIncomingMeshInstance(const MeshInstance& instance) {
+    const Mesh& mesh = instance.mesh;
+    const Material& material = instance.material;
+    const RenderData& renderData = instance.renderData;
+
+    if (mesh.vertexBuffer != VK_NULL_HANDLE ||
+        mesh.vertexBufferMemory != VK_NULL_HANDLE ||
+        mesh.indexBuffer != VK_NULL_HANDLE ||
+        mesh.indexBufferMemory != VK_NULL_HANDLE) {
+        return Result::failure("MeshInstance contains mesh Vulkan state");
+    }
+    if (material.textureImage != VK_NULL_HANDLE ||
+        material.textureImageMemory != VK_NULL_HANDLE ||
+        material.textureImageView != VK_NULL_HANDLE ||
+        material.textureSampler != VK_NULL_HANDLE ||
+        material.normalMapImage != VK_NULL_HANDLE ||
+        material.normalMapImageMemory != VK_NULL_HANDLE ||
+        material.normalMapImageView != VK_NULL_HANDLE ||
+        material.normalMapSampler != VK_NULL_HANDLE ||
+        material.metallicRoughnessMapImage != VK_NULL_HANDLE ||
+        material.metallicRoughnessMapImageMemory != VK_NULL_HANDLE ||
+        material.metallicRoughnessMapImageView != VK_NULL_HANDLE ||
+        material.metallicRoughnessMapSampler != VK_NULL_HANDLE) {
+        return Result::failure("MeshInstance contains material Vulkan state");
+    }
+    if (!renderData.uniformBuffers.empty() ||
+        !renderData.uniformBuffersMemory.empty() ||
+        !renderData.uniformBuffersMapped.empty() ||
+        !renderData.descriptorSets.empty()) {
+        return Result::failure("MeshInstance contains RenderData Vulkan state");
+    }
+
+    if (!mesh.indices.empty() && mesh.vertices.empty()) {
+        return Result::failure(
+            "MeshInstance indexed geometry has no vertices");
+    }
+    if (!mesh.indices.empty() && mesh.indices.size() % 3 != 0) {
+        return Result::failure(
+            "MeshInstance index count is not a complete triangle list");
+    }
+    for (const Vertex& vertex : mesh.vertices) {
+        if (!isFiniteVector(vertex.pos)) {
+            return Result::failure(
+                "MeshInstance contains a non-finite vertex position");
+        }
+    }
+    for (uint32_t index : mesh.indices) {
+        if (index >= mesh.vertices.size()) {
+            return Result::failure("MeshInstance contains an out-of-range index");
+        }
+    }
+
+    const auto ownerMatches = [](const StbiPixelOwner& owner,
+                                 const stbi_uc* pixels) {
+        return !owner || owner.get() == pixels;
+    };
+    if (!ownerMatches(material.pixelsOwner, material.pixels) ||
+        !ownerMatches(material.normalMapPixelsOwner,
+                      material.normalMapPixels) ||
+        !ownerMatches(material.metallicRoughnessMapPixelsOwner,
+                      material.metallicRoughnessMapPixels)) {
+        return Result::failure(
+            "MeshInstance material pixel ownership is inconsistent");
+    }
+    return Result::success();
+}
+
 }  // namespace
 
 Result GameObject::loadModel() {
     LoadModelProfile profile;
-    spdlog::info("Loading game object model from path {}...", modelPath);
+    if (!renderTopologyMutable()) {
+        return Result::failure(
+            "Cannot modify GameObject mesh topology while render resources are attached");
+    }
+    if (!meshInstances_.empty()) {
+        return Result::failure(
+            "GameObject already contains mesh instances; repeated model loading is not supported");
+    }
 
     if (modelPath == nullptr) {
         spdlog::error("Model path is null. Cannot load model.");
         return Result::failure("Model path is null");
     }
+    spdlog::info("Loading game object model from path {}...", modelPath);
 
-    const auto assimpReadStart = LoadModelProfile::Clock::now();
-    const aiScene* scene =
-        importer.ReadFile(modelPath, aiProcess_Triangulate | aiProcess_FlipUVs |
-                                    aiProcess_GenSmoothNormals |
-                                    aiProcess_CalcTangentSpace);
-    profile.assimpReadTime = LoadModelProfile::Clock::now() - assimpReadStart;
+    Assimp::Importer importer;
+    const aiScene* scene = nullptr;
+    try {
+        const auto assimpReadStart = LoadModelProfile::Clock::now();
+        scene = importer.ReadFile(modelPath, aiProcess_Triangulate |
+                                                 aiProcess_FlipUVs |
+                                                 aiProcess_GenSmoothNormals |
+                                                 aiProcess_CalcTangentSpace);
+        profile.assimpReadTime =
+            LoadModelProfile::Clock::now() - assimpReadStart;
+    } catch (const std::exception& exception) {
+        return Result::failure("Failed to load model " +
+                               std::string(modelPath) + ": " +
+                               exception.what());
+    } catch (...) {
+        return Result::failure("Failed to load model " +
+                               std::string(modelPath) +
+                               ": unknown Assimp error");
+    }
     if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE ||
-        !scene->mRootNode) {
+        !scene->mRootNode || scene->mNumMeshes == 0 || !scene->mMeshes ||
+        scene->mNumMaterials == 0 || !scene->mMaterials) {
         return Result::failure(
             "Failed to load model file " + std::string(modelPath) + ": " +
             (importer.GetErrorString() ? importer.GetErrorString()
@@ -662,6 +754,16 @@ Result GameObject::loadModel() {
             if (!mesh || mesh->mMaterialIndex >= scene->mNumMaterials) {
                 return Result::failure(
                     "Model contains an invalid mesh material index");
+            }
+            if (mesh->mNumVertices == 0 || !mesh->mVertices) {
+                return Result::failure("Mesh " +
+                                       std::string(mesh->mName.C_Str()) +
+                                       " has no vertices");
+            }
+            if (mesh->mNumFaces == 0 || !mesh->mFaces) {
+                return Result::failure("Mesh " +
+                                       std::string(mesh->mName.C_Str()) +
+                                       " has no faces");
             }
             aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
             if (!material) {
@@ -724,13 +826,28 @@ Result GameObject::loadModel() {
                 PhaseTimer phaseTimer(profile.geometryConversionTime);
                 for (unsigned int f = 0; f < mesh->mNumFaces; ++f) {
                     const aiFace& face = mesh->mFaces[f];
+                    if (face.mNumIndices != 3 || !face.mIndices) {
+                        return Result::failure(
+                            "Mesh " + std::string(mesh->mName.C_Str()) +
+                            " does not contain triangle-list faces");
+                    }
                     for (unsigned int j = 0; j < face.mNumIndices; ++j) {
                         ++profile.totalFaceIndexCount;
                         const unsigned int index = face.mIndices[j];
+                        if (index >= mesh->mNumVertices) {
+                            return Result::failure(
+                                "Mesh " + std::string(mesh->mName.C_Str()) +
+                                " contains an out-of-range index");
+                        }
                         Vertex vertex{};
                         vertex.pos = {mesh->mVertices[index].x,
                                       mesh->mVertices[index].y,
                                       mesh->mVertices[index].z};
+                        if (!isFiniteVector(vertex.pos)) {
+                            return Result::failure(
+                                "Mesh " + std::string(mesh->mName.C_Str()) +
+                                " contains a non-finite vertex position");
+                        }
                         vertex.texCoord = hasTextureCoordinates
                             ? glm::vec2{mesh->mTextureCoords[0][index].x,
                                         mesh->mTextureCoords[0][index].y}
@@ -787,6 +904,11 @@ Result GameObject::loadModel() {
             }
             profile.totalUniqueVertices += instance.mesh.vertices.size();
             calculateMeshBounds(instance.mesh);
+            if (!instance.mesh.bounds.valid) {
+                return Result::failure("Mesh " +
+                                       std::string(mesh->mName.C_Str()) +
+                                       " has invalid bounds");
+            }
 
             if (instance.material.normalMapPixels) {
                 if (meshHasUsableTangents) {
@@ -827,16 +949,12 @@ Result GameObject::loadModel() {
         const std::size_t originalTexturePathCount =
             texturePathStorage_.size();
         try {
-            meshInstances_.reserve(meshInstances_.size() + pendingMeshes.size());
             for (std::size_t i = 0; i < pendingMeshes.size(); ++i) {
                 texturePathStorage_.push_back(std::move(pendingTexturePaths[i]));
                 pendingMeshes[i].material.texturePath =
                     texturePathStorage_.back().c_str();
             }
-            meshInstances_.insert(
-                meshInstances_.end(),
-                std::make_move_iterator(pendingMeshes.begin()),
-                std::make_move_iterator(pendingMeshes.end()));
+            meshInstances_.swap(pendingMeshes);
         } catch (const std::exception& exception) {
             texturePathStorage_.resize(originalTexturePathCount);
             return Result::failure("Failed to commit meshes from model " +
@@ -907,7 +1025,16 @@ Result GameObject::loadModel() {
     }
 }
 
-Result GameObject::addMeshInstance(MeshInstance meshInstance) {
+Result GameObject::addMeshInstance(MeshInstance&& meshInstance) {
+    if (!renderTopologyMutable()) {
+        return Result::failure(
+            "Cannot modify GameObject mesh topology while render resources are attached");
+    }
+    const Result validationResult = validateIncomingMeshInstance(meshInstance);
+    if (!validationResult) {
+        return Result::failure("Cannot add MeshInstance: " +
+                               validationResult.error());
+    }
     try {
         calculateMeshBounds(meshInstance.mesh);
         meshInstances_.push_back(std::move(meshInstance));
@@ -923,4 +1050,20 @@ Result GameObject::addMeshInstance(MeshInstance meshInstance) {
 
 const std::vector<MeshInstance>& GameObject::meshInstances() const noexcept {
     return meshInstances_;
+}
+
+Result GameObject::markRenderResourcesAttached() {
+    if (!renderTopologyMutable()) {
+        return Result::failure("GameObject render resources are already attached");
+    }
+    renderTopologyState_ = RenderTopologyState::ResourcesAttached;
+    return Result::success();
+}
+
+void GameObject::markRenderResourcesDetached() noexcept {
+    renderTopologyState_ = RenderTopologyState::Mutable;
+}
+
+bool GameObject::renderTopologyMutable() const noexcept {
+    return renderTopologyState_ == RenderTopologyState::Mutable;
 }

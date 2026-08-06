@@ -2,6 +2,16 @@
 
 #include <stdexcept>
 
+namespace {
+
+void requireSuccess(Result result, const std::string& context) {
+    if (!result) {
+        throw std::runtime_error(context + ": " + result.error());
+    }
+}
+
+}  // namespace
+
 void Level1::init() {
 
     spdlog::info("Initializing scene {}...", name);
@@ -35,8 +45,8 @@ void Level1::init() {
     test3->name = "Sponza";
     test3->scale = glm::vec3(1.0f, 1.0f, 1.0f);
     test3->modelPath = "game/assets/models/glTF-Sample-Assets/Models/Sponza/glTF/Sponza.gltf";
-    (void)test3->loadModel();
-    (void)addGameObject(std::move(test3));
+    requireSuccess(test3->loadModel(), "Failed to load Sponza");
+    requireSuccess(addGameObject(std::move(test3)), "Failed to add Sponza");
 
     /*auto test4 = std::make_unique<PointLight>();
     test4->name = "GLTF test";
@@ -53,8 +63,8 @@ void Level1::init() {
     test4->position = glm::vec3(50.0f, 20.0f, 100.0f);
     test4->modelPath = "game/assets/models/Avocado.glb";
     //test4->intensity = 100.0f;
-    (void)test4->loadModel();
-    (void)addGameObject(std::move(test4));
+    requireSuccess(test4->loadModel(), "Failed to load Directional Light Avocado");
+    requireSuccess(addGameObject(std::move(test4)), "Failed to add Directional Light");
 
     auto test5 = std::make_unique<PointLight>();
     test5->name = "Point Light";
@@ -62,8 +72,8 @@ void Level1::init() {
     test5->position = glm::vec3(250.0f, 20.0f, 100.0f);
     test5->modelPath = "game/assets/models/Avocado.glb";
     test5->intensity = 100.0f;
-    (void)test5->loadModel();
-    (void)addGameObject(std::move(test5));
+    requireSuccess(test5->loadModel(), "Failed to load Point Light Avocado");
+    requireSuccess(addGameObject(std::move(test5)), "Failed to add Point Light");
 
     /*
     auto test4 = std::make_unique<GameObject>();
