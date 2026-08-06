@@ -3,6 +3,13 @@ project(DunamisEngine)
 
 set(CMAKE_CXX_STANDARD 17)
 
+# GLM headers are included by public engine headers, so these definitions must
+# be present for every first-party translation unit before it parses GLM.
+add_compile_definitions(
+        GLM_FORCE_DEPTH_ZERO_TO_ONE
+        GLM_ENABLE_EXPERIMENTAL
+)
+
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/dependencies.cmake)
 
 add_subdirectory(core)

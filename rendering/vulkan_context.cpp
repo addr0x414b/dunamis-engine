@@ -1,8 +1,10 @@
 #include "vulkan_context.h"
 
 #include "editor_picking.h"
+#include "renderer_configuration.h"
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <cstdlib>
 #include <exception>
@@ -604,7 +606,6 @@ Result VulkanContext::createInstance() {
             return Result::failure(
                 "Validation layers were requested but are not available");
         }
-        spdlog::info("Validation layers are enabled and supported");
     }
 
     VkApplicationInfo appInfo{};
@@ -629,14 +630,16 @@ Result VulkanContext::createInstance() {
 
     VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo{};
     if (enableValidationLayers) {
-
-        createInfo.enabledLayerCount = 0;
+        createInfo.enabledLayerCount =
+            static_cast<uint32_t>(validationLayers.size());
+        createInfo.ppEnabledLayerNames = validationLayers.data();
 
         populateDebugMessengerCreateInfo(debugCreateInfo);
         createInfo.pNext =
             (VkDebugUtilsMessengerCreateInfoEXT*)&debugCreateInfo;
     } else {
         createInfo.enabledLayerCount = 0;
+        createInfo.ppEnabledLayerNames = nullptr;
         createInfo.pNext = nullptr;
     }
 
@@ -647,6 +650,9 @@ Result VulkanContext::createInstance() {
         return vkFailure("vkCreateInstance", createResult);
     }
 
+    if (enableValidationLayers) {
+        spdlog::info("Vulkan validation layers are enabled");
+    }
     spdlog::info("Successfully created Vulkan instance");
     return Result::success();
 }
@@ -712,8 +718,25 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL
 debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
               VkDebugUtilsMessageTypeFlagsEXT messageType,
               const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
-              void* pUserData) {
-    spdlog::warn("Validation layer: {}", pCallbackData->pMessage);
+              void* pUserData) noexcept {
+    (void)messageType;
+    (void)pUserData;
+    const char* message = pCallbackData && pCallbackData->pMessage
+                              ? pCallbackData->pMessage
+                              : "Validation callback supplied no message";
+    try {
+        if (messageSeverity &
+            VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
+            spdlog::error("Validation layer: {}", message);
+        } else if (messageSeverity &
+                   VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
+            spdlog::warn("Validation layer: {}", message);
+        } else {
+            spdlog::debug("Validation layer: {}", message);
+        }
+    } catch (...) {
+        std::fputs("Vulkan validation callback logging failed\n", stderr);
+    }
     return VK_FALSE;
 }
 
@@ -722,7 +745,6 @@ void VulkanContext::populateDebugMessengerCreateInfo(
     createInfo = {};
     createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
     createInfo.messageSeverity =
-        VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
         VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
         VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
     createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
@@ -805,6 +827,9 @@ Result VulkanContext::pickPhysicalDevice() {
         return vkFailure("vkEnumeratePhysicalDevices(data)", result);
     }
     spdlog::info("Checking GPU suitability...");
+    sampleRateShadingSupported = false;
+    sampleRateShadingEnabled = false;
+    msaaSamples = VK_SAMPLE_COUNT_1_BIT;
     for (const auto& candidate : devices) {
         bool suitable = false;
         Result suitabilityResult = isDeviceSuitable(candidate, suitable);
@@ -814,7 +839,14 @@ Result VulkanContext::pickPhysicalDevice() {
         }
         if (suitable) {
             physicalDevice = candidate;
-            msaaSamples = getMaxUsableSampleCount();
+            VkPhysicalDeviceFeatures supportedFeatures{};
+            vkGetPhysicalDeviceFeatures(physicalDevice, &supportedFeatures);
+            sampleRateShadingSupported =
+                supportedFeatures.sampleRateShading == VK_TRUE;
+            msaaSamples = getCappedUsableSampleCount();
+            sampleRateShadingEnabled =
+                renderer_configuration::shouldEnableSampleRateShading(
+                    sampleRateShadingSupported, msaaSamples);
             break;
         }
     }
@@ -823,6 +855,12 @@ Result VulkanContext::pickPhysicalDevice() {
         return Result::failure("Failed to find a suitable GPU");
     }
     spdlog::info("Successfully selected physical device");
+    spdlog::info("Sample-rate shading supported: {}",
+                 sampleRateShadingSupported ? "yes" : "no");
+    spdlog::info("Sample-rate shading enabled: {}",
+                 sampleRateShadingEnabled ? "yes" : "no");
+    spdlog::info("Selected MSAA sample count: {}",
+                 renderer_configuration::sampleCountName(msaaSamples));
     return Result::success();
 }
 
@@ -855,6 +893,11 @@ Result VulkanContext::isDeviceSuitable(VkPhysicalDevice candidate,
 
     VkPhysicalDeviceFeatures supportedFeatures{};
     vkGetPhysicalDeviceFeatures(candidate, &supportedFeatures);
+    if (supportedFeatures.samplerAnisotropy != VK_TRUE) {
+        spdlog::warn(
+            "Rejecting physical device because sampler anisotropy is not "
+            "supported");
+    }
 
     suitable = indices.isComplete() && extensionsSupported &&
                swapchainAdequate && supportedFeatures.samplerAnisotropy;
@@ -978,33 +1021,14 @@ Result VulkanContext::querySwapchainSupport(
     return Result::success();
 }
 
-VkSampleCountFlagBits VulkanContext::getMaxUsableSampleCount() const {
+VkSampleCountFlagBits VulkanContext::getCappedUsableSampleCount() const {
     VkPhysicalDeviceProperties physicalDeviceProperties{};
     vkGetPhysicalDeviceProperties(physicalDevice, &physicalDeviceProperties);
 
     VkSampleCountFlags counts =
         physicalDeviceProperties.limits.framebufferColorSampleCounts &
         physicalDeviceProperties.limits.framebufferDepthSampleCounts;
-    if (counts & VK_SAMPLE_COUNT_64_BIT) {
-        return VK_SAMPLE_COUNT_64_BIT;
-    }
-    if (counts & VK_SAMPLE_COUNT_32_BIT) {
-        return VK_SAMPLE_COUNT_32_BIT;
-    }
-    if (counts & VK_SAMPLE_COUNT_16_BIT) {
-        return VK_SAMPLE_COUNT_16_BIT;
-    }
-    if (counts & VK_SAMPLE_COUNT_8_BIT) {
-        return VK_SAMPLE_COUNT_8_BIT;
-    }
-    if (counts & VK_SAMPLE_COUNT_4_BIT) {
-        return VK_SAMPLE_COUNT_4_BIT;
-    }
-    if (counts & VK_SAMPLE_COUNT_2_BIT) {
-        return VK_SAMPLE_COUNT_2_BIT;
-    }
-
-    return VK_SAMPLE_COUNT_1_BIT;
+    return renderer_configuration::selectMsaaSampleCount(counts);
 }
 
 Result VulkanContext::createLogicalDevice() {
@@ -1035,7 +1059,8 @@ Result VulkanContext::createLogicalDevice() {
 
     VkPhysicalDeviceFeatures deviceFeatures{};
     deviceFeatures.samplerAnisotropy = VK_TRUE;
-    deviceFeatures.sampleRateShading = VK_TRUE;
+    deviceFeatures.sampleRateShading =
+        sampleRateShadingEnabled ? VK_TRUE : VK_FALSE;
 
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -1050,12 +1075,8 @@ Result VulkanContext::createLogicalDevice() {
         static_cast<uint32_t>(deviceExtensions.size());
     createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
-    if (enableValidationLayers) {
-        createInfo.enabledLayerCount =
-            static_cast<uint32_t>(validationLayers.size());
-    } else {
-        createInfo.enabledLayerCount = 0;
-    }
+    createInfo.enabledLayerCount = 0;
+    createInfo.ppEnabledLayerNames = nullptr;
 
     const VkResult createResult =
         vkCreateDevice(physicalDevice, &createInfo, nullptr, &device);
@@ -1468,48 +1489,103 @@ Result VulkanContext::createLightsUBO() {
         return Result::failure("Vulkan Context is not initialized");
     }
 
+    if (std::any_of(lightsDescriptorSets.begin(),
+                    lightsDescriptorSets.end(),
+                    [](VkDescriptorSet descriptorSet) {
+                        return descriptorSet != VK_NULL_HANDLE;
+                    })) {
+        return Result::failure("Lights resources are already initialized");
+    }
+
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+        Result result = createBuffer(
+            sizeof(LightsUBO), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            lightsBuffers[i], lightsBufferMemory[i]);
+        if (!result) {
+            destroyLightsUBOs();
+            return addContext(
+                "Failed to create lights uniform buffer for frame " +
+                    std::to_string(i),
+                result);
+        }
+
+        const VkResult mapResult = vkMapMemory(
+            device, lightsBufferMemory[i], 0, sizeof(LightsUBO), 0,
+            &lightsBufferMapped[i]);
+        if (mapResult != VK_SUCCESS) {
+            lightsBufferMapped[i] = nullptr;
+            destroyLightsUBOs();
+            return addContext(
+                "Failed to map lights uniform buffer for frame " +
+                    std::to_string(i),
+                vkFailure("vkMapMemory(lights buffer)", mapResult));
+        }
+    }
+
+    std::array<VkDescriptorSetLayout, MAX_FRAMES_IN_FLIGHT> layouts{};
+    layouts.fill(lightsDescriptorSetLayout);
     VkDescriptorSetAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     allocInfo.descriptorPool = descriptorPool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &lightsDescriptorSetLayout;
+    allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+    allocInfo.pSetLayouts = layouts.data();
 
     const VkResult result = vkAllocateDescriptorSets(
-        device, &allocInfo, &lightsDescriptorSet);
+        device, &allocInfo, lightsDescriptorSets.data());
     if (result != VK_SUCCESS) {
-        lightsDescriptorSet = VK_NULL_HANDLE;
+        lightsDescriptorSets.fill(VK_NULL_HANDLE);
+        destroyLightsUBOs();
         return vkFailure("vkAllocateDescriptorSets(lights)", result);
     }
 
-    spdlog::info("Successfully allocated lights descriptor set");
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+        VkDescriptorBufferInfo bufferInfo{};
+        bufferInfo.buffer = lightsBuffers[i];
+        bufferInfo.offset = 0;
+        bufferInfo.range = sizeof(LightsUBO);
+
+        VkWriteDescriptorSet descriptorWrite{};
+        descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrite.dstSet = lightsDescriptorSets[i];
+        descriptorWrite.dstBinding = 0;
+        descriptorWrite.dstArrayElement = 0;
+        descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrite.descriptorCount = 1;
+        descriptorWrite.pBufferInfo = &bufferInfo;
+        vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, nullptr);
+    }
+
+    spdlog::info("Successfully created per-frame lights resources");
     return Result::success();
 }
 
-Result VulkanContext::updateLightsDescriptorSet() {
-    const VkResult result = vkDeviceWaitIdle(device);
-    if (waitEstablishedCompletion(result)) {
-        hasSubmittedWork = false;
-        singleTimeSubmissionMayBePending = false;
+void VulkanContext::destroyLightsUBOs() noexcept {
+    if (device == VK_NULL_HANDLE) {
+        lightsDescriptorSets.fill(VK_NULL_HANDLE);
+        lightsBuffers.fill(VK_NULL_HANDLE);
+        lightsBufferMemory.fill(VK_NULL_HANDLE);
+        lightsBufferMapped.fill(nullptr);
+        return;
     }
-    if (result != VK_SUCCESS) {
-        return vkFailure("vkDeviceWaitIdle", result);
+
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+        if (lightsBufferMapped[i] != nullptr &&
+            lightsBufferMemory[i] != VK_NULL_HANDLE) {
+            vkUnmapMemory(device, lightsBufferMemory[i]);
+        }
+        lightsBufferMapped[i] = nullptr;
+        if (lightsBuffers[i] != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device, lightsBuffers[i], nullptr);
+            lightsBuffers[i] = VK_NULL_HANDLE;
+        }
+        if (lightsBufferMemory[i] != VK_NULL_HANDLE) {
+            vkFreeMemory(device, lightsBufferMemory[i], nullptr);
+            lightsBufferMemory[i] = VK_NULL_HANDLE;
+        }
     }
-    VkDescriptorBufferInfo bufferInfo{};
-    bufferInfo.buffer = lightsBuffer;
-    bufferInfo.offset = 0;
-    bufferInfo.range = sizeof(LightsUBO);
-
-    VkWriteDescriptorSet descriptorWrite{};
-    descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrite.dstSet = lightsDescriptorSet;
-    descriptorWrite.dstBinding = 0;
-    descriptorWrite.dstArrayElement = 0;
-    descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    descriptorWrite.descriptorCount = 1;
-    descriptorWrite.pBufferInfo = &bufferInfo;
-
-    vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, nullptr);
-    return Result::success();
+    lightsDescriptorSets.fill(VK_NULL_HANDLE);
 }
 
 Result VulkanContext::createGraphicsPipeline() {
@@ -1592,8 +1668,10 @@ Result VulkanContext::createGraphicsPipeline() {
     VkPipelineMultisampleStateCreateInfo multisampling{};
     multisampling.sType =
         VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling.sampleShadingEnable = VK_TRUE;
-    multisampling.minSampleShading = .2f;
+    multisampling.sampleShadingEnable =
+        sampleRateShadingEnabled ? VK_TRUE : VK_FALSE;
+    multisampling.minSampleShading =
+        sampleRateShadingEnabled ? 0.2f : 0.0f;
     multisampling.rasterizationSamples = msaaSamples;
 
     VkPipelineColorBlendAttachmentState colorBlendAttachment{};
@@ -1628,16 +1706,6 @@ Result VulkanContext::createGraphicsPipeline() {
         deviceProperties.limits.maxPushConstantsSize) {
         return Result::failure(
             "Material push constants exceed the device push-constant limit");
-    }
-
-    VkDeviceSize bufferSize = sizeof(LightsUBO);
-
-    result = createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                          lightsBuffer, lightsBufferMemory);
-    if (!result) {
-        return addContext("Failed to create lights uniform buffer", result);
     }
 
     VkDescriptorSetLayout setLayouts[] = {descriptorSetLayout,
@@ -1799,8 +1867,10 @@ Result VulkanContext::createSelectionOutlinePipeline() {
 
     VkPipelineMultisampleStateCreateInfo multisampling{};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling.sampleShadingEnable = VK_TRUE;
-    multisampling.minSampleShading = .2f;
+    multisampling.sampleShadingEnable =
+        sampleRateShadingEnabled ? VK_TRUE : VK_FALSE;
+    multisampling.minSampleShading =
+        sampleRateShadingEnabled ? 0.2f : 0.0f;
     multisampling.rasterizationSamples = msaaSamples;
 
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
@@ -2512,39 +2582,47 @@ Result VulkanContext::createTextureSamplers(
         }
         auto createSampler = [&](VkSampler& sampler, uint32_t mipLevels,
                                  const char* label) -> Result {
+            float maxLod = 0.0f;
+            Result mipResult =
+                renderer_configuration::samplerMaxLod(mipLevels, maxLod);
+            if (!mipResult) {
+                return addContext(std::string("Invalid mip count for ") +
+                                      label + " sampler",
+                                  mipResult);
+            }
             const size_t ownershipIndex = ownedSceneSamplers.size();
             ownedSceneSamplers.push_back({&sampler});
             VkSamplerCreateInfo samplerInfo{};
-        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        samplerInfo.magFilter = VK_FILTER_LINEAR;
-        samplerInfo.minFilter = VK_FILTER_LINEAR;
-        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        samplerInfo.anisotropyEnable = VK_TRUE;
+            samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            samplerInfo.magFilter = VK_FILTER_LINEAR;
+            samplerInfo.minFilter = VK_FILTER_LINEAR;
+            samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            samplerInfo.anisotropyEnable = VK_TRUE;
 
-        VkPhysicalDeviceProperties properties{};
-        vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+            VkPhysicalDeviceProperties properties{};
+            vkGetPhysicalDeviceProperties(physicalDevice, &properties);
 
-        samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
-        samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-        samplerInfo.unnormalizedCoordinates = VK_FALSE;
-        samplerInfo.compareEnable = VK_FALSE;
-        samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-        samplerInfo.mipLodBias = 0.0f;
-        samplerInfo.minLod = 0.0f;
-        samplerInfo.maxLod = static_cast<float>(mipLevels / 2);
+            samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
+            samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+            samplerInfo.unnormalizedCoordinates = VK_FALSE;
+            samplerInfo.compareEnable = VK_FALSE;
+            samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+            samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            samplerInfo.mipLodBias = 0.0f;
+            samplerInfo.minLod = 0.0f;
+            samplerInfo.maxLod = maxLod;
 
-        const VkResult result = vkCreateSampler(
-            device, &samplerInfo, nullptr, &sampler);
-        if (result != VK_SUCCESS) {
-            sampler = VK_NULL_HANDLE;
-            return vkFailure(std::string("vkCreateSampler(") + label + ")",
-                             result);
-        }
-        ownedSceneSamplers[ownershipIndex].sampler = sampler;
-        return Result::success();
+            const VkResult result = vkCreateSampler(
+                device, &samplerInfo, nullptr, &sampler);
+            if (result != VK_SUCCESS) {
+                sampler = VK_NULL_HANDLE;
+                return vkFailure(
+                    std::string("vkCreateSampler(") + label + ")", result);
+            }
+            ownedSceneSamplers[ownershipIndex].sampler = sampler;
+            return Result::success();
         };
 
         Result result = createSampler(instance.material.textureSampler,
@@ -2772,31 +2850,27 @@ Result VulkanContext::createDescriptorPool(uint32_t numOfObjects) {
         return Result::failure("Vulkan Context is not initialized");
     }
 
-    // Game Object uniform buffer, image sampler, and point light uniform buffer
-    std::array<VkDescriptorPoolSize, 3> poolSizes{};
+    std::array<VkDescriptorPoolSize, 2> poolSizes{};
 
-    // Per Game Object
+    // Per-object UBOs plus one lighting UBO for each frame in flight.
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount =
-        static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT);
+        static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT) +
+        MAX_FRAMES_IN_FLIGHT;
 
     // Texture samplers 
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount =
         static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT * 3);
 
-    // Point light UB
-    poolSizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    // Will need to be the number of lights
-    poolSizes[2].descriptorCount = 2;
-
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
-    // +1 for point light ub
-    poolInfo.maxSets = static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT) + 2;
+    poolInfo.maxSets =
+        static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT) +
+        MAX_FRAMES_IN_FLIGHT;
 
     const VkResult result = vkCreateDescriptorPool(
         device, &poolInfo, nullptr, &descriptorPool);
@@ -3118,7 +3192,6 @@ Result VulkanContext::createCommandBuffers() {
 
 Result VulkanContext::createSyncObjects() {
     imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-    renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
     inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
 
     VkSemaphoreCreateInfo semaphoreInfo{};
@@ -3140,16 +3213,6 @@ Result VulkanContext::createSyncObjects() {
                 vkFailure("vkCreateSemaphore", result));
         }
 
-        result = vkCreateSemaphore(device, &semaphoreInfo, nullptr,
-                                   &renderFinishedSemaphores[i]);
-        if (result != VK_SUCCESS) {
-            renderFinishedSemaphores[i] = VK_NULL_HANDLE;
-            return addContext(
-                "Failed to create render-finished semaphore for frame " +
-                    std::to_string(i),
-                vkFailure("vkCreateSemaphore", result));
-        }
-
         result = vkCreateFence(device, &fenceInfo, nullptr,
                                &inFlightFences[i]);
         if (result != VK_SUCCESS) {
@@ -3160,8 +3223,46 @@ Result VulkanContext::createSyncObjects() {
                 vkFailure("vkCreateFence", result));
         }
     }
+    Result result = createRenderFinishedSemaphores();
+    if (!result) {
+        return result;
+    }
     spdlog::info("Successfully created synchronization objects");
     return Result::success();
+}
+
+Result VulkanContext::createRenderFinishedSemaphores() {
+    destroyRenderFinishedSemaphores();
+    renderFinishedSemaphores.resize(swapchainImages.size(), VK_NULL_HANDLE);
+
+    VkSemaphoreCreateInfo semaphoreInfo{};
+    semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    for (size_t i = 0; i < renderFinishedSemaphores.size(); ++i) {
+        const VkResult result = vkCreateSemaphore(
+            device, &semaphoreInfo, nullptr,
+            &renderFinishedSemaphores[i]);
+        if (result != VK_SUCCESS) {
+            renderFinishedSemaphores[i] = VK_NULL_HANDLE;
+            destroyRenderFinishedSemaphores();
+            return addContext(
+                "Failed to create render-finished semaphore for swapchain "
+                "image " + std::to_string(i),
+                vkFailure("vkCreateSemaphore", result));
+        }
+    }
+    return Result::success();
+}
+
+void VulkanContext::destroyRenderFinishedSemaphores() noexcept {
+    if (device != VK_NULL_HANDLE) {
+        for (VkSemaphore& semaphore : renderFinishedSemaphores) {
+            if (semaphore != VK_NULL_HANDLE) {
+                vkDestroySemaphore(device, semaphore, nullptr);
+                semaphore = VK_NULL_HANDLE;
+            }
+        }
+    }
+    renderFinishedSemaphores.clear();
 }
 
 void VulkanContext::cleanupSwapchain() noexcept {
@@ -3221,19 +3322,56 @@ void VulkanContext::cleanupSwapchain() noexcept {
 void VulkanContext::updateUniformBuffer(
     uint32_t currentImage,
     const std::unique_ptr<GameObject>& gameObject, const glm::mat4& view,
-    const glm::mat4& projection, glm::vec3 camFront) {
+    const glm::mat4& projection, const glm::vec3& cameraPosition) {
     for (auto& instance : gameObject->meshInstances_) {
-        UniformBufferObject ubo{};
-
-        ubo.model = editor_picking::makeModelMatrix(
-            gameObject->position, gameObject->rotation, gameObject->scale);
-        ubo.view = view;
-        ubo.proj = projection;
-
-        ubo.cameraPosition = camFront;
+        const UniformBufferObject ubo = makeUniformBufferObject(
+            editor_picking::makeModelMatrix(gameObject->position,
+                                             gameObject->rotation,
+                                             gameObject->scale),
+            view, projection, cameraPosition);
         memcpy(instance.renderData.uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 
     }
+}
+
+Result VulkanContext::updateLightsUniformBuffer(Scene* scene) {
+    LightsUBO lightsUbo{};
+    const glm::vec3& ambientColor = scene->ambientColor();
+    lightsUbo.ambientColorIntensity =
+        glm::vec4(ambientColor, scene->ambientIntensity());
+    lightsUbo.numLights =
+        static_cast<std::int32_t>(scene->pointLightCount());
+    for (std::size_t i = 0; i < scene->pointLightCount(); ++i) {
+        const PointLight& light = scene->pointLightAt(i);
+        lightsUbo.lights[i].position = light.position;
+        lightsUbo.lights[i].color = light.color;
+        lightsUbo.lights[i].intensity = light.intensity;
+    }
+    lightsUbo.directionalLight.directionEnabled = glm::vec4(0.0f);
+    lightsUbo.directionalLight.colorIntensity = glm::vec4(0.0f);
+
+    const DirectionalLight* directionalLight = scene->directionalLight();
+    if (directionalLight != nullptr) {
+        glm::vec3 normalizedDirection;
+        Result directionalResult = normalizeDirectionalLightDirection(
+            *directionalLight, normalizedDirection);
+        if (!directionalResult) {
+            return directionalResult;
+        }
+
+        lightsUbo.directionalLight.directionEnabled = glm::vec4(
+            normalizedDirection, 1.0f);
+        lightsUbo.directionalLight.colorIntensity = glm::vec4(
+            directionalLight->color, directionalLight->intensity);
+    }
+
+    if (lightsBufferMapped[currentFrame] == nullptr) {
+        return Result::failure(
+            "Current-frame lights uniform buffer is not mapped");
+    }
+    memcpy(lightsBufferMapped[currentFrame], &lightsUbo,
+           sizeof(LightsUBO));
+    return Result::success();
 }
 
 Result VulkanContext::initializeImGui() {
@@ -3312,6 +3450,11 @@ Result VulkanContext::drawFrame(Scene* scene, const Camera& renderCamera,
     } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
         return vkFailure("vkAcquireNextImageKHR", result);
     }
+    if (imageIndex >= renderFinishedSemaphores.size()) {
+        return Result::failure(
+            "Acquired swapchain image has no render-finished semaphore");
+    }
+    VkSemaphore renderFinished = renderFinishedSemaphores[imageIndex];
 
     result = vkResetFences(device, 1, &inFlightFences[currentFrame]);
     if (result != VK_SUCCESS) {
@@ -3339,18 +3482,21 @@ Result VulkanContext::drawFrame(Scene* scene, const Camera& renderCamera,
     imguiLayer.drawEditor(scene, view, projection, runState);
     imguiLayer.finishFrame();
 
+    for (const auto& obj : scene->gameObjects()) {
+        updateUniformBuffer(currentFrame, obj, view, projection,
+                            renderCamera.position);
+    }
+
+    Result lightsResult = updateLightsUniformBuffer(scene);
+    if (!lightsResult) {
+        return lightsResult;
+    }
+
     Result recordResult = recordCommandBuffer(
         commandBuffers[currentFrame], imageIndex, scene, runState);
     if (!recordResult) {
         return recordResult;
     }
-
-
-    for (const auto& obj : scene->gameObjects()) {
-        updateUniformBuffer(currentFrame, obj, view, projection,
-                            renderCamera.front);
-    }
-
 
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -3365,7 +3511,7 @@ Result VulkanContext::drawFrame(Scene* scene, const Camera& renderCamera,
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBuffers[currentFrame];
 
-    VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]};
+    VkSemaphore signalSemaphores[] = {renderFinished};
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
@@ -3441,56 +3587,12 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
     renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
     renderPassInfo.pClearValues = clearValues.data();
 
-    LightsUBO lightsUbo{};
-    const glm::vec3& ambientColor = scene->ambientColor();
-    lightsUbo.ambientColorIntensity =
-        glm::vec4(ambientColor, scene->ambientIntensity());
-    lightsUbo.numLights =
-        static_cast<std::int32_t>(scene->pointLightCount());
-    for (std::size_t i = 0; i < scene->pointLightCount(); ++i) {
-        const PointLight& light = scene->pointLightAt(i);
-        lightsUbo.lights[i].position = light.position;
-        lightsUbo.lights[i].color = light.color;
-        lightsUbo.lights[i].intensity = light.intensity;
-    }
-    lightsUbo.directionalLight.directionEnabled = glm::vec4(0.0f);
-    lightsUbo.directionalLight.colorIntensity = glm::vec4(0.0f);
-
-    const DirectionalLight* directionalLight = scene->directionalLight();
-    if (directionalLight != nullptr) {
-        glm::vec3 normalizedDirection;
-        Result directionalResult = normalizeDirectionalLightDirection(
-            *directionalLight, normalizedDirection);
-        if (!directionalResult) {
-            return directionalResult;
-        }
-
-        lightsUbo.directionalLight.directionEnabled = glm::vec4(
-            normalizedDirection, 1.0f);
-        lightsUbo.directionalLight.colorIntensity = glm::vec4(
-            directionalLight->color, directionalLight->intensity);
-    }
-
-    void* data = nullptr;
-    result = vkMapMemory(device, lightsBufferMemory, 0, sizeof(LightsUBO), 0,
-                         &data);
-    if (result != VK_SUCCESS) {
-        return vkFailure("vkMapMemory(lights buffer)", result);
-    }
-    memcpy(data, &lightsUbo, sizeof(LightsUBO));
-    vkUnmapMemory(device, lightsBufferMemory);
-
-    Result descriptorResult = updateLightsDescriptorSet();
-    if (!descriptorResult) {
-        return descriptorResult;
-    }
-
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo,
                          VK_SUBPASS_CONTENTS_INLINE);
 
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    pipelineLayout, 1, 1,
-                                    &lightsDescriptorSet, 0, nullptr);
+                            pipelineLayout, 1, 1,
+                            &lightsDescriptorSets[currentFrame], 0, nullptr);
 
     VkViewport viewport{};
     viewport.x = 0.0f;
@@ -3622,29 +3724,40 @@ Result VulkanContext::recreateSwapchain() {
     }
     // Clean up the swap chain and recreate it with the image views and frame
     // buffers
+    destroyRenderFinishedSemaphores();
     cleanupSwapchain();
     Result result = createSwapchain();
     if (!result) {
         cleanupSwapchain();
         return addContext("Failed to recreate swapchain", result);
     }
+    result = createRenderFinishedSemaphores();
+    if (!result) {
+        cleanupSwapchain();
+        return addContext(
+            "Failed to recreate render-finished semaphores", result);
+    }
     result = createImageViews();
     if (!result) {
+        destroyRenderFinishedSemaphores();
         cleanupSwapchain();
         return addContext("Failed to recreate swapchain image views", result);
     }
     result = createColorResources();
     if (!result) {
+        destroyRenderFinishedSemaphores();
         cleanupSwapchain();
         return addContext("Failed to recreate color resources", result);
     }
     result = createDepthResources();
     if (!result) {
+        destroyRenderFinishedSemaphores();
         cleanupSwapchain();
         return addContext("Failed to recreate depth resources", result);
     }
     result = createFramebuffers();
     if (!result) {
+        destroyRenderFinishedSemaphores();
         cleanupSwapchain();
         return addContext("Failed to recreate framebuffers", result);
     }
@@ -3855,11 +3968,12 @@ bool VulkanContext::cleanup() noexcept {
         imguiLayer.shutdown();
 
         cleanupSwapchain();
+        destroyRenderFinishedSemaphores();
 
         if (descriptorPool != VK_NULL_HANDLE) {
             vkDestroyDescriptorPool(device, descriptorPool, nullptr);
             descriptorPool = VK_NULL_HANDLE;
-            lightsDescriptorSet = VK_NULL_HANDLE;
+            lightsDescriptorSets.fill(VK_NULL_HANDLE);
         }
 
         cleanupTrackedSceneResources();
@@ -3870,14 +3984,7 @@ bool VulkanContext::cleanup() noexcept {
         sceneResourceOwnership_.clear();
         sceneResourceLoadTarget_ = nullptr;
 
-        if (lightsBuffer != VK_NULL_HANDLE) {
-            vkDestroyBuffer(device, lightsBuffer, nullptr);
-            lightsBuffer = VK_NULL_HANDLE;
-        }
-        if (lightsBufferMemory != VK_NULL_HANDLE) {
-            vkFreeMemory(device, lightsBufferMemory, nullptr);
-            lightsBufferMemory = VK_NULL_HANDLE;
-        }
+        destroyLightsUBOs();
 
         if (graphicsPipeline != VK_NULL_HANDLE) {
             vkDestroyPipeline(device, graphicsPipeline, nullptr);
@@ -3915,11 +4022,6 @@ bool VulkanContext::cleanup() noexcept {
             renderPass = VK_NULL_HANDLE;
         }
 
-        for (VkSemaphore semaphore : renderFinishedSemaphores) {
-            if (semaphore != VK_NULL_HANDLE) {
-                vkDestroySemaphore(device, semaphore, nullptr);
-            }
-        }
         for (VkSemaphore semaphore : imageAvailableSemaphores) {
             if (semaphore != VK_NULL_HANDLE) {
                 vkDestroySemaphore(device, semaphore, nullptr);
@@ -3930,7 +4032,6 @@ bool VulkanContext::cleanup() noexcept {
                 vkDestroyFence(device, fence, nullptr);
             }
         }
-        renderFinishedSemaphores.clear();
         imageAvailableSemaphores.clear();
         inFlightFences.clear();
         commandBuffers.clear();
@@ -3980,9 +4081,10 @@ bool VulkanContext::cleanup() noexcept {
     debugMessenger = VK_NULL_HANDLE;
     surface = VK_NULL_HANDLE;
     descriptorPool = VK_NULL_HANDLE;
-    lightsDescriptorSet = VK_NULL_HANDLE;
-    lightsBuffer = VK_NULL_HANDLE;
-    lightsBufferMemory = VK_NULL_HANDLE;
+    lightsDescriptorSets.fill(VK_NULL_HANDLE);
+    lightsBuffers.fill(VK_NULL_HANDLE);
+    lightsBufferMemory.fill(VK_NULL_HANDLE);
+    lightsBufferMapped.fill(nullptr);
     descriptorSetLayout = VK_NULL_HANDLE;
     lightsDescriptorSetLayout = VK_NULL_HANDLE;
     graphicsPipeline = VK_NULL_HANDLE;

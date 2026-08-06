@@ -8,7 +8,6 @@ void Player::init() {
     auto c = std::make_unique<Camera>();
     c->position.z = 300.0f;
     camera = std::move(c);
-
 }
 
 void Player::start(std::shared_ptr<InputManager> input) {

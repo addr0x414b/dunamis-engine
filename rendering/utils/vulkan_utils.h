@@ -9,9 +9,6 @@
 #include <memory>
 #include <string>
 
-#define GLM_FORCE_RADIANS
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#define GLM_ENABLE_EXPERIMENTAL
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/hash.hpp>
@@ -104,6 +101,13 @@ struct UniformBufferObject {
     glm::mat4 proj;
     glm::vec3 cameraPosition;
 };
+
+inline UniformBufferObject makeUniformBufferObject(
+    const glm::mat4& model, const glm::mat4& view,
+    const glm::mat4& projection,
+    const glm::vec3& cameraPosition) noexcept {
+    return {model, view, projection, cameraPosition};
+}
 
 struct LightData {
     glm::vec3 position;

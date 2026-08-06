@@ -148,7 +148,7 @@ private:
                              const std::unique_ptr<GameObject>& gameObject,
                              const glm::mat4& view,
                              const glm::mat4& projection,
-                             glm::vec3 camFront);
+                             const glm::vec3& cameraPosition);
     [[nodiscard]] Result recreateSwapchain();
     [[nodiscard]] Result recordCommandBuffer(VkCommandBuffer commandBuffer,
                                              uint32_t imageIndex,
@@ -181,7 +181,7 @@ private:
         VkPhysicalDevice candidate, bool& supported) const;
     [[nodiscard]] Result querySwapchainSupport(
         VkPhysicalDevice candidate, SwapchainSupportDetails& details) const;
-    [[nodiscard]] VkSampleCountFlagBits getMaxUsableSampleCount() const;
+    [[nodiscard]] VkSampleCountFlagBits getCappedUsableSampleCount() const;
 
     [[nodiscard]] Result createLogicalDevice();
     [[nodiscard]] Result createSwapchain();
@@ -209,7 +209,8 @@ private:
 
     [[nodiscard]] Result createDescriptorSetLayout();
     [[nodiscard]] Result createLightsDescriptorSetLayout();
-    [[nodiscard]] Result updateLightsDescriptorSet();
+    [[nodiscard]] Result updateLightsUniformBuffer(Scene* scene);
+    void destroyLightsUBOs() noexcept;
 
     [[nodiscard]] Result createGraphicsPipeline();
     [[nodiscard]] Result createSelectionOutlinePipeline();
@@ -257,6 +258,8 @@ private:
 
     [[nodiscard]] Result createCommandBuffers();
     [[nodiscard]] Result createSyncObjects();
+    [[nodiscard]] Result createRenderFinishedSemaphores();
+    void destroyRenderFinishedSemaphores() noexcept;
     [[nodiscard]] Result initializeImGui();
 
     SDL_Window* window = nullptr;
@@ -271,6 +274,8 @@ private:
     VkSurfaceKHR surface = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
     VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
+    bool sampleRateShadingSupported = false;
+    bool sampleRateShadingEnabled = false;
 
     VkDevice device = VK_NULL_HANDLE;
     std::optional<uint32_t> graphicsQueueFamily;
@@ -288,9 +293,12 @@ private:
     VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout lightsDescriptorSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
-    VkDescriptorSet lightsDescriptorSet = VK_NULL_HANDLE;
-    VkBuffer lightsBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory lightsBufferMemory = VK_NULL_HANDLE;
+    std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT>
+        lightsDescriptorSets{};
+    std::array<VkBuffer, MAX_FRAMES_IN_FLIGHT> lightsBuffers{};
+    std::array<VkDeviceMemory, MAX_FRAMES_IN_FLIGHT>
+        lightsBufferMemory{};
+    std::array<void*, MAX_FRAMES_IN_FLIGHT> lightsBufferMapped{};
 
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkPipeline graphicsPipeline = VK_NULL_HANDLE;

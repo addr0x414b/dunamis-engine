@@ -143,3 +143,12 @@ target_link_libraries(VulkanTexturePreflightTests PRIVATE
 )
 add_test(NAME vulkan_texture_preflight
         COMMAND VulkanTexturePreflightTests)
+
+add_executable(RendererConfigurationTests renderer_configuration_tests.cpp)
+target_include_directories(RendererConfigurationTests PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(RendererConfigurationTests PRIVATE
+        VulkanUtils
+        Vulkan::Vulkan
+        glm
+)
+add_test(NAME renderer_configuration COMMAND RendererConfigurationTests)
