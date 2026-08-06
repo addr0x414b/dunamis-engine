@@ -398,6 +398,9 @@ Result VulkanContext::init(SDL_Window* w, Scene* scene) {
         result = initializeStep(createGraphicsPipeline(),
                                 "Graphics-pipeline creation");
         if (!result) return result;
+        result = initializeStep(createSelectionOutlinePipeline(),
+                                "Selection-outline-pipeline creation");
+        if (!result) return result;
         result = initializeStep(createCommandPool(), "Command-pool creation");
         if (!result) return result;
         result = initializeStep(createColorResources(),
@@ -1563,6 +1566,168 @@ Result VulkanContext::createGraphicsPipeline() {
     }
 
     spdlog::info("Successfully created graphics pipelines");
+    return Result::success();
+}
+
+Result VulkanContext::createSelectionOutlinePipeline() {
+    constexpr const char* vertexShaderPath =
+        "rendering/shaders/selection_outline.vert.spv";
+    constexpr const char* fragmentShaderPath =
+        "rendering/shaders/selection_outline.frag.spv";
+
+    std::vector<char> vertexShaderCode;
+    Result result = readFile(vertexShaderPath, vertexShaderCode);
+    if (!result) {
+        return addContext("Failed to read selection outline vertex shader", result);
+    }
+    ScopedShaderModule vertexShaderModule(device);
+    result = createShaderModule(vertexShaderCode, vertexShaderModule.module);
+    if (!result) {
+        return addContext("Failed to create selection outline vertex shader module",
+                          result);
+    }
+
+    std::vector<char> fragmentShaderCode;
+    result = readFile(fragmentShaderPath, fragmentShaderCode);
+    if (!result) {
+        return addContext("Failed to read selection outline fragment shader", result);
+    }
+    ScopedShaderModule fragmentShaderModule(device);
+    result = createShaderModule(fragmentShaderCode, fragmentShaderModule.module);
+    if (!result) {
+        return addContext("Failed to create selection outline fragment shader module",
+                          result);
+    }
+
+    VkPipelineShaderStageCreateInfo vertexStage{};
+    vertexStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertexStage.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertexStage.module = vertexShaderModule.module;
+    vertexStage.pName = "main";
+
+    VkPipelineShaderStageCreateInfo fragmentStage{};
+    fragmentStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    fragmentStage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fragmentStage.module = fragmentShaderModule.module;
+    fragmentStage.pName = "main";
+    const VkPipelineShaderStageCreateInfo shaderStages[] = {vertexStage,
+                                                             fragmentStage};
+
+    const auto bindingDescription = Vertex::getBindingDescription();
+    const auto attributeDescriptions = Vertex::getAttributeDescriptions();
+    VkPipelineVertexInputStateCreateInfo vertexInput{};
+    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInput.vertexBindingDescriptionCount = 1;
+    vertexInput.pVertexBindingDescriptions = &bindingDescription;
+    vertexInput.vertexAttributeDescriptionCount =
+        static_cast<uint32_t>(attributeDescriptions.size());
+    vertexInput.pVertexAttributeDescriptions = attributeDescriptions.data();
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.cullMode = VK_CULL_MODE_FRONT_BIT;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_FALSE;
+    rasterizer.lineWidth = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.sampleShadingEnable = VK_TRUE;
+    multisampling.minSampleShading = .2f;
+    multisampling.rasterizationSamples = msaaSamples;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_FALSE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.stencilTestEnable = VK_FALSE;
+
+    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+        VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
+        VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachment.blendEnable = VK_FALSE;
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.logicOpEnable = VK_FALSE;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+
+    const VkDynamicState dynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT,
+                                              VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = 2;
+    dynamicState.pDynamicStates = dynamicStates;
+
+    VkPhysicalDeviceProperties deviceProperties{};
+    vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
+    if (sizeof(OutlinePushConstants) >
+        deviceProperties.limits.maxPushConstantsSize) {
+        return Result::failure(
+            "Selection outline push constants exceed the device limit");
+    }
+
+    VkPushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT |
+        VK_SHADER_STAGE_FRAGMENT_BIT;
+    pushConstantRange.size = sizeof(OutlinePushConstants);
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+
+    VkResult createResult = vkCreatePipelineLayout(
+        device, &pipelineLayoutInfo, nullptr, &selectionOutlinePipelineLayout);
+    if (createResult != VK_SUCCESS) {
+        selectionOutlinePipelineLayout = VK_NULL_HANDLE;
+        return vkFailure("vkCreatePipelineLayout(selection outline)", createResult);
+    }
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = selectionOutlinePipelineLayout;
+    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.subpass = 0;
+
+    createResult = vkCreateGraphicsPipelines(
+        device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr,
+        &selectionOutlinePipeline);
+    if (createResult != VK_SUCCESS) {
+        selectionOutlinePipeline = VK_NULL_HANDLE;
+        vkDestroyPipelineLayout(device, selectionOutlinePipelineLayout, nullptr);
+        selectionOutlinePipelineLayout = VK_NULL_HANDLE;
+        return vkFailure("vkCreateGraphicsPipelines(selection outline)",
+                         createResult);
+    }
+
+    spdlog::info("Successfully created selection outline pipeline");
     return Result::success();
 }
 
@@ -3226,6 +3391,40 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
 
     }
 
+    const GameObject* selectedObject =
+        imguiLayer.selectedGameObjectForScene(scene);
+    if (selectedObject != nullptr && !selectedObject->meshInstances_.empty() &&
+        swapchainExtent.width > 0 && swapchainExtent.height > 0) {
+        const OutlinePushConstants outlinePushConstants{
+            glm::vec4(1.0f, 0.55f, 0.05f, 1.0f),
+            glm::vec4(3.0f, static_cast<float>(swapchainExtent.width),
+                      static_cast<float>(swapchainExtent.height), 0.0f)};
+
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          selectionOutlinePipeline);
+        vkCmdPushConstants(commandBuffer, selectionOutlinePipelineLayout,
+                           VK_SHADER_STAGE_VERTEX_BIT |
+                               VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(OutlinePushConstants),
+                           &outlinePushConstants);
+
+        for (const auto& instance : selectedObject->meshInstances_) {
+            VkBuffer vertexBuffers[] = {instance.mesh.vertexBuffer};
+            VkDeviceSize offsets[] = {0};
+            vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers,
+                                   offsets);
+            vkCmdBindIndexBuffer(commandBuffer, instance.mesh.indexBuffer, 0,
+                                 VK_INDEX_TYPE_UINT32);
+            vkCmdBindDescriptorSets(
+                commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                selectionOutlinePipelineLayout, 0, 1,
+                &instance.renderData.descriptorSets[currentFrame], 0, nullptr);
+            vkCmdDrawIndexed(commandBuffer,
+                             static_cast<uint32_t>(instance.mesh.indices.size()),
+                             1, 0, 0, 0);
+        }
+    }
+
     imguiLayer.recordDrawData(commandBuffer);
 
     vkCmdEndRenderPass(commandBuffer);
@@ -3500,6 +3699,15 @@ bool VulkanContext::cleanup() noexcept {
             vkDestroyPipeline(device, doubleSidedGraphicsPipeline, nullptr);
             doubleSidedGraphicsPipeline = VK_NULL_HANDLE;
         }
+        if (selectionOutlinePipeline != VK_NULL_HANDLE) {
+            vkDestroyPipeline(device, selectionOutlinePipeline, nullptr);
+            selectionOutlinePipeline = VK_NULL_HANDLE;
+        }
+        if (selectionOutlinePipelineLayout != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(device, selectionOutlinePipelineLayout,
+                                    nullptr);
+            selectionOutlinePipelineLayout = VK_NULL_HANDLE;
+        }
         if (pipelineLayout != VK_NULL_HANDLE) {
             vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
             pipelineLayout = VK_NULL_HANDLE;
@@ -3585,6 +3793,8 @@ bool VulkanContext::cleanup() noexcept {
     lightsDescriptorSetLayout = VK_NULL_HANDLE;
     graphicsPipeline = VK_NULL_HANDLE;
     doubleSidedGraphicsPipeline = VK_NULL_HANDLE;
+    selectionOutlinePipeline = VK_NULL_HANDLE;
+    selectionOutlinePipelineLayout = VK_NULL_HANDLE;
     pipelineLayout = VK_NULL_HANDLE;
     renderPass = VK_NULL_HANDLE;
     commandPool = VK_NULL_HANDLE;

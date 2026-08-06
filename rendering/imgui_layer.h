@@ -34,6 +34,8 @@ public:
     void drawEditor(Scene* scene);
     void finishFrame();
     void recordDrawData(VkCommandBuffer commandBuffer);
+    [[nodiscard]] const GameObject*
+    selectedGameObjectForScene(const Scene* scene) const noexcept;
 
     [[nodiscard]] Result onSwapchainRecreated(
         VkRenderPass renderPass, VkSampleCountFlagBits msaaSamples,
@@ -46,6 +48,7 @@ public:
 
 private:
     [[nodiscard]] Result initializeVulkanBackend();
+    void clearSelection() noexcept;
     void synchronizeSelection(Scene* scene) noexcept;
     void drawSceneHierarchy(Scene* scene);
     void drawInspector(Scene* scene);

@@ -261,17 +261,35 @@ void ImGuiLayer::drawEditor(Scene* scene) {
     }
 }
 
+const GameObject* ImGuiLayer::selectedGameObjectForScene(
+    const Scene* scene) const noexcept {
+    if (scene == nullptr || scene != selectionScene_ ||
+        selectedGameObject_ == nullptr) {
+        return nullptr;
+    }
+
+    for (const auto& object : scene->gameObjects()) {
+        if (object.get() == selectedGameObject_) {
+            return selectedGameObject_;
+        }
+    }
+    return nullptr;
+}
+
+void ImGuiLayer::clearSelection() noexcept {
+    selectedGameObject_ = nullptr;
+    inspectorError_.clear();
+}
+
 void ImGuiLayer::synchronizeSelection(Scene* scene) noexcept {
     if (scene != selectionScene_) {
         selectionScene_ = scene;
-        selectedGameObject_ = nullptr;
-        inspectorError_.clear();
+        clearSelection();
     }
 
     if (scene == nullptr) {
         selectionScene_ = nullptr;
-        selectedGameObject_ = nullptr;
-        inspectorError_.clear();
+        clearSelection();
         return;
     }
 
@@ -288,8 +306,7 @@ void ImGuiLayer::synchronizeSelection(Scene* scene) noexcept {
     }
 
     if (!selectedObjectIsPresent) {
-        selectedGameObject_ = nullptr;
-        inspectorError_.clear();
+        clearSelection();
     }
 }
 
@@ -323,6 +340,12 @@ void ImGuiLayer::drawSceneHierarchy(Scene* scene) {
 
     if (!hasObject) {
         ImGui::TextUnformatted("No GameObjects in the active scene.");
+    }
+
+    const ImVec2 available = ImGui::GetContentRegionAvail();
+    if (available.x > 0.0f && available.y > 0.0f &&
+        ImGui::InvisibleButton("##SceneHierarchyBlankSpace", available)) {
+        clearSelection();
     }
 
     ImGui::End();

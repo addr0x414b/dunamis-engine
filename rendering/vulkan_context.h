@@ -187,6 +187,7 @@ private:
     [[nodiscard]] Result updateLightsDescriptorSet();
 
     [[nodiscard]] Result createGraphicsPipeline();
+    [[nodiscard]] Result createSelectionOutlinePipeline();
     [[nodiscard]] Result readFile(const std::string& filename,
                                   std::vector<char>& contents) const;
     [[nodiscard]] Result createShaderModule(const std::vector<char>& code,
@@ -269,6 +270,8 @@ private:
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkPipeline graphicsPipeline = VK_NULL_HANDLE;
     VkPipeline doubleSidedGraphicsPipeline = VK_NULL_HANDLE;
+    VkPipelineLayout selectionOutlinePipelineLayout = VK_NULL_HANDLE;
+    VkPipeline selectionOutlinePipeline = VK_NULL_HANDLE;
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
     VkCommandPool commandPool = VK_NULL_HANDLE;
 

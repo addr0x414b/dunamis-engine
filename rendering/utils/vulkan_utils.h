@@ -239,6 +239,14 @@ struct MaterialPushConstants {
     std::int32_t metallicRoughnessMapEnabled = 0;
 };
 
+struct OutlinePushConstants {
+    glm::vec4 color;
+    glm::vec4 parameters;
+};
+
+static_assert(sizeof(OutlinePushConstants) == 32,
+              "OutlinePushConstants must match the outline shader layout");
+
 static_assert(sizeof(float) == 4 && sizeof(std::int32_t) == 4,
               "MaterialPushConstants requires four-byte scalar types");
 static_assert(sizeof(MaterialPushConstants) == 40,
