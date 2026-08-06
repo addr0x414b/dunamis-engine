@@ -53,6 +53,11 @@ void Level1::init() {
     test4->scale = glm::vec3(200.0f, 200.0f, 200.0f);
     test4->position = glm::vec3(50.0f, 20.0f, 100.0f);
     test4->modelPath = "game/assets/models/Avocado.glb";
+    test4->shadow.focus = glm::vec3(0.0f);
+    test4->shadow.halfExtent = 500.0f;
+    test4->shadow.lightDistance = 500.0f;
+    test4->shadow.nearPlane = 1.0f;
+    test4->shadow.farPlane = 1000.0f;
     test4->intensity = 100.0f;
     (void)test4->loadModel();
     (void)addGameObject(std::move(test4));*/

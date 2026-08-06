@@ -569,14 +569,23 @@ Result VulkanContext::init(SDL_Window* w, Scene* scene) {
         if (!result) return result;
         result = initializeStep(createRenderPass(), "Render-pass creation");
         if (!result) return result;
+        result = initializeStep(createDirectionalShadowRenderPass(),
+                                "Directional-shadow render-pass creation");
+        if (!result) return result;
         result = initializeStep(createDescriptorSetLayout(),
                                 "Descriptor-set-layout creation");
         if (!result) return result;
         result = initializeStep(createLightsDescriptorSetLayout(),
                                 "Lights descriptor-set-layout creation");
         if (!result) return result;
+        result = initializeStep(createDirectionalShadowDescriptorSetLayout(),
+                                "Directional-shadow descriptor-set-layout creation");
+        if (!result) return result;
         result = initializeStep(createGraphicsPipeline(),
                                 "Graphics-pipeline creation");
+        if (!result) return result;
+        result = initializeStep(createDirectionalShadowPipelines(),
+                                "Directional-shadow pipeline creation");
         if (!result) return result;
         result = initializeStep(createSelectionOutlinePipeline(),
                                 "Selection-outline-pipeline creation");
@@ -1408,6 +1417,67 @@ Result VulkanContext::findDepthFormat(VkFormat& format) const {
         VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT, format);
 }
 
+Result VulkanContext::findDirectionalShadowDepthFormat(VkFormat& format) const {
+    return findSupportedFormat(
+        {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D16_UNORM,
+         VK_FORMAT_D32_SFLOAT_S8_UINT}, VK_IMAGE_TILING_OPTIMAL,
+        VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT |
+            VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT,
+        format);
+}
+
+Result VulkanContext::createDirectionalShadowRenderPass() {
+    Result formatResult = findDirectionalShadowDepthFormat(
+        directionalShadowDepthFormat);
+    if (!formatResult) {
+        return addContext("Failed to find a sampleable directional-shadow depth format",
+                          formatResult);
+    }
+
+    VkAttachmentDescription depthAttachment{};
+    depthAttachment.format = directionalShadowDepthFormat;
+    depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+    VkAttachmentReference depthReference{};
+    depthReference.attachment = 0;
+    depthReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.pDepthStencilAttachment = &depthReference;
+
+    VkSubpassDependency dependency{};
+    dependency.srcSubpass = 0;
+    dependency.dstSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                              VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    dependency.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dependency.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    VkRenderPassCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    info.attachmentCount = 1;
+    info.pAttachments = &depthAttachment;
+    info.subpassCount = 1;
+    info.pSubpasses = &subpass;
+    info.dependencyCount = 1;
+    info.pDependencies = &dependency;
+    const VkResult result = vkCreateRenderPass(device, &info, nullptr,
+                                                &directionalShadowRenderPass);
+    if (result != VK_SUCCESS) {
+        directionalShadowRenderPass = VK_NULL_HANDLE;
+        directionalShadowDepthFormat = VK_FORMAT_UNDEFINED;
+        return vkFailure("vkCreateRenderPass(directional shadow)", result);
+    }
+    return Result::success();
+}
+
 Result VulkanContext::findSupportedFormat(
     const std::vector<VkFormat>& candidates, VkImageTiling tiling,
     VkFormatFeatureFlags features, VkFormat& format) const {
@@ -1504,6 +1574,32 @@ Result VulkanContext::createLightsDescriptorSetLayout() {
         return vkFailure("vkCreateDescriptorSetLayout(lights)", result);
     }
     spdlog::info("Successfully created lights descriptor set layout");
+    return Result::success();
+}
+
+Result VulkanContext::createDirectionalShadowDescriptorSetLayout() {
+    VkDescriptorSetLayoutBinding transform{};
+    transform.binding = 0;
+    transform.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    transform.descriptorCount = 1;
+    transform.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    VkDescriptorSetLayoutBinding depth{};
+    depth.binding = 1;
+    depth.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    depth.descriptorCount = 1;
+    depth.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    const std::array<VkDescriptorSetLayoutBinding, 2> bindings = {
+        transform, depth};
+    VkDescriptorSetLayoutCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    info.bindingCount = static_cast<uint32_t>(bindings.size());
+    info.pBindings = bindings.data();
+    const VkResult result = vkCreateDescriptorSetLayout(
+        device, &info, nullptr, &directionalShadowDescriptorSetLayout);
+    if (result != VK_SUCCESS) {
+        directionalShadowDescriptorSetLayout = VK_NULL_HANDLE;
+        return vkFailure("vkCreateDescriptorSetLayout(directional shadow)", result);
+    }
     return Result::success();
 }
 
@@ -1609,6 +1705,174 @@ void VulkanContext::destroyLightsUBOs() noexcept {
         }
     }
     lightsDescriptorSets.fill(VK_NULL_HANDLE);
+}
+
+Result VulkanContext::createDirectionalShadowResources() {
+    if (!initialized || descriptorPool == VK_NULL_HANDLE) {
+        return Result::failure(
+            "Directional-shadow resources require an initialized descriptor pool");
+    }
+    if (directionalShadowSampler != VK_NULL_HANDLE) {
+        return Result::failure("Directional-shadow resources are already initialized");
+    }
+
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_NEAREST;
+    samplerInfo.minFilter = VK_FILTER_NEAREST;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    samplerInfo.mipLodBias = 0.0f;
+    samplerInfo.anisotropyEnable = VK_FALSE;
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+    samplerInfo.minLod = 0.0f;
+    samplerInfo.maxLod = 0.0f;
+    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    VkResult result = vkCreateSampler(device, &samplerInfo, nullptr,
+                                      &directionalShadowSampler);
+    if (result != VK_SUCCESS) {
+        directionalShadowSampler = VK_NULL_HANDLE;
+        return vkFailure("vkCreateSampler(directional shadow)", result);
+    }
+
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+        auto& frame = directionalShadowFrames[i];
+        Result createResult = createImage(
+            directional_shadow::mapResolution, directional_shadow::mapResolution,
+            1, VK_SAMPLE_COUNT_1_BIT, directionalShadowDepthFormat,
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, frame.depthImage,
+            frame.depthImageMemory);
+        if (!createResult) {
+            destroyDirectionalShadowResources();
+            return addContext("Failed to create directional-shadow depth image for frame " +
+                                  std::to_string(i), createResult);
+        }
+        createResult = createImageView(frame.depthImage, directionalShadowDepthFormat,
+                                       VK_IMAGE_ASPECT_DEPTH_BIT, 1,
+                                       frame.depthImageView);
+        if (!createResult) {
+            destroyDirectionalShadowResources();
+            return addContext("Failed to create directional-shadow depth view for frame " +
+                                  std::to_string(i), createResult);
+        }
+        VkFramebufferCreateInfo framebufferInfo{};
+        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebufferInfo.renderPass = directionalShadowRenderPass;
+        framebufferInfo.attachmentCount = 1;
+        framebufferInfo.pAttachments = &frame.depthImageView;
+        framebufferInfo.width = directional_shadow::mapResolution;
+        framebufferInfo.height = directional_shadow::mapResolution;
+        framebufferInfo.layers = 1;
+        result = vkCreateFramebuffer(device, &framebufferInfo, nullptr,
+                                     &frame.framebuffer);
+        if (result != VK_SUCCESS) {
+            destroyDirectionalShadowResources();
+            return vkFailure("vkCreateFramebuffer(directional shadow)", result);
+        }
+        createResult = createBuffer(sizeof(DirectionalShadowUBO),
+                                    VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                    frame.transformBuffer,
+                                    frame.transformBufferMemory);
+        if (!createResult) {
+            destroyDirectionalShadowResources();
+            return addContext("Failed to create directional-shadow UBO for frame " +
+                                  std::to_string(i), createResult);
+        }
+        result = vkMapMemory(device, frame.transformBufferMemory, 0,
+                             sizeof(DirectionalShadowUBO), 0,
+                             &frame.transformBufferMapped);
+        if (result != VK_SUCCESS) {
+            frame.transformBufferMapped = nullptr;
+            destroyDirectionalShadowResources();
+            return vkFailure("vkMapMemory(directional shadow UBO)", result);
+        }
+    }
+
+    std::array<VkDescriptorSetLayout, MAX_FRAMES_IN_FLIGHT> layouts{};
+    layouts.fill(directionalShadowDescriptorSetLayout);
+    VkDescriptorSetAllocateInfo allocateInfo{};
+    allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocateInfo.descriptorPool = descriptorPool;
+    allocateInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+    allocateInfo.pSetLayouts = layouts.data();
+    std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> sets{};
+    result = vkAllocateDescriptorSets(device, &allocateInfo, sets.data());
+    if (result != VK_SUCCESS) {
+        destroyDirectionalShadowResources();
+        return vkFailure("vkAllocateDescriptorSets(directional shadow)", result);
+    }
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+        auto& frame = directionalShadowFrames[i];
+        frame.descriptorSet = sets[i];
+        VkDescriptorBufferInfo bufferInfo{frame.transformBuffer, 0,
+                                          sizeof(DirectionalShadowUBO)};
+        VkDescriptorImageInfo imageInfo{};
+        imageInfo.sampler = directionalShadowSampler;
+        imageInfo.imageView = frame.depthImageView;
+        imageInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        std::array<VkWriteDescriptorSet, 2> writes{};
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = frame.descriptorSet;
+        writes[0].dstBinding = 0;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[0].descriptorCount = 1;
+        writes[0].pBufferInfo = &bufferInfo;
+        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet = frame.descriptorSet;
+        writes[1].dstBinding = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[1].descriptorCount = 1;
+        writes[1].pImageInfo = &imageInfo;
+        vkUpdateDescriptorSets(device, static_cast<uint32_t>(writes.size()),
+                               writes.data(), 0, nullptr);
+    }
+    return Result::success();
+}
+
+void VulkanContext::destroyDirectionalShadowResources() noexcept {
+    if (device != VK_NULL_HANDLE) {
+        for (auto& frame : directionalShadowFrames) {
+            if (frame.framebuffer != VK_NULL_HANDLE) {
+                vkDestroyFramebuffer(device, frame.framebuffer, nullptr);
+            }
+            if (frame.transformBufferMapped != nullptr &&
+                frame.transformBufferMemory != VK_NULL_HANDLE) {
+                vkUnmapMemory(device, frame.transformBufferMemory);
+            }
+            if (frame.transformBuffer != VK_NULL_HANDLE) {
+                vkDestroyBuffer(device, frame.transformBuffer, nullptr);
+            }
+            if (frame.transformBufferMemory != VK_NULL_HANDLE) {
+                vkFreeMemory(device, frame.transformBufferMemory, nullptr);
+            }
+            if (frame.depthImageView != VK_NULL_HANDLE) {
+                vkDestroyImageView(device, frame.depthImageView, nullptr);
+            }
+            if (frame.depthImage != VK_NULL_HANDLE) {
+                vkDestroyImage(device, frame.depthImage, nullptr);
+            }
+            if (frame.depthImageMemory != VK_NULL_HANDLE) {
+                vkFreeMemory(device, frame.depthImageMemory, nullptr);
+            }
+            frame = {};
+        }
+        if (directionalShadowSampler != VK_NULL_HANDLE) {
+            vkDestroySampler(device, directionalShadowSampler, nullptr);
+        }
+    } else {
+        directionalShadowFrames = {};
+    }
+    directionalShadowSampler = VK_NULL_HANDLE;
+    directionalShadowDepthFormat = VK_FORMAT_UNDEFINED;
 }
 
 Result VulkanContext::createGraphicsPipeline() {
@@ -1732,7 +1996,7 @@ Result VulkanContext::createGraphicsPipeline() {
     }
 
     VkDescriptorSetLayout setLayouts[] = {descriptorSetLayout,
-        lightsDescriptorSetLayout};
+        lightsDescriptorSetLayout, directionalShadowDescriptorSetLayout};
     VkPushConstantRange materialPushConstantRange{};
     materialPushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     materialPushConstantRange.offset = 0;
@@ -1740,9 +2004,7 @@ Result VulkanContext::createGraphicsPipeline() {
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    //pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.setLayoutCount = 2;
-    //pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
+    pipelineLayoutInfo.setLayoutCount = 3;
     pipelineLayoutInfo.pSetLayouts = setLayouts;
     pipelineLayoutInfo.pushConstantRangeCount = 1;
     pipelineLayoutInfo.pPushConstantRanges = &materialPushConstantRange;
@@ -1812,6 +2074,127 @@ Result VulkanContext::createGraphicsPipeline() {
     }
 
     spdlog::info("Successfully created graphics pipelines");
+    return Result::success();
+}
+
+Result VulkanContext::createDirectionalShadowPipelines() {
+    std::vector<char> vertexShaderCode;
+    Result result = readFile("rendering/shaders/directional_shadow.vert.spv",
+                             vertexShaderCode);
+    if (!result) return addContext("Failed to read directional-shadow vertex shader", result);
+    ScopedShaderModule vertexShader(device);
+    result = createShaderModule(vertexShaderCode, vertexShader.module);
+    if (!result) return addContext("Failed to create directional-shadow vertex shader module", result);
+    std::vector<char> fragmentShaderCode;
+    result = readFile("rendering/shaders/directional_shadow.frag.spv",
+                      fragmentShaderCode);
+    if (!result) return addContext("Failed to read directional-shadow fragment shader", result);
+    ScopedShaderModule fragmentShader(device);
+    result = createShaderModule(fragmentShaderCode, fragmentShader.module);
+    if (!result) return addContext("Failed to create directional-shadow fragment shader module", result);
+
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vertexShader.module;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = fragmentShader.module;
+    stages[1].pName = "main";
+
+    const VkVertexInputBindingDescription binding = Vertex::getBindingDescription();
+    std::array<VkVertexInputAttributeDescription, 2> attributes{};
+    attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, pos)};
+    attributes[1] = {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, texCoord)};
+    VkPipelineVertexInputStateCreateInfo vertexInput{};
+    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInput.vertexBindingDescriptionCount = 1;
+    vertexInput.pVertexBindingDescriptions = &binding;
+    vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributes.size());
+    vertexInput.pVertexAttributeDescriptions = attributes.data();
+    VkPipelineInputAssemblyStateCreateInfo assembly{};
+    assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkPipelineViewportStateCreateInfo viewport{};
+    viewport.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewport.viewportCount = 1;
+    viewport.scissorCount = 1;
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_TRUE;
+    VkPipelineMultisampleStateCreateInfo multisample{};
+    multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineDepthStencilStateCreateInfo depth{};
+    depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depth.depthTestEnable = VK_TRUE;
+    depth.depthWriteEnable = VK_TRUE;
+    depth.depthCompareOp = VK_COMPARE_OP_LESS;
+    VkPipelineColorBlendStateCreateInfo blend{};
+    blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    blend.logicOpEnable = VK_FALSE;
+    blend.attachmentCount = 0;
+    std::array<VkDynamicState, 3> dynamicStates = {
+        VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
+        VK_DYNAMIC_STATE_DEPTH_BIAS};
+    VkPipelineDynamicStateCreateInfo dynamic{};
+    dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamic.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+    dynamic.pDynamicStates = dynamicStates.data();
+
+    VkDescriptorSetLayout layouts[] = {descriptorSetLayout,
+                                        directionalShadowDescriptorSetLayout};
+    VkPushConstantRange push{};
+    push.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    push.size = sizeof(MaterialPushConstants);
+    VkPipelineLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layoutInfo.setLayoutCount = 2;
+    layoutInfo.pSetLayouts = layouts;
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges = &push;
+    VkResult createResult = vkCreatePipelineLayout(device, &layoutInfo, nullptr,
+                                                    &directionalShadowPipelineLayout);
+    if (createResult != VK_SUCCESS) {
+        directionalShadowPipelineLayout = VK_NULL_HANDLE;
+        return vkFailure("vkCreatePipelineLayout(directional shadow)", createResult);
+    }
+
+    VkGraphicsPipelineCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    info.stageCount = 2;
+    info.pStages = stages;
+    info.pVertexInputState = &vertexInput;
+    info.pInputAssemblyState = &assembly;
+    info.pViewportState = &viewport;
+    info.pRasterizationState = &rasterizer;
+    info.pMultisampleState = &multisample;
+    info.pDepthStencilState = &depth;
+    info.pColorBlendState = &blend;
+    info.pDynamicState = &dynamic;
+    info.layout = directionalShadowPipelineLayout;
+    info.renderPass = directionalShadowRenderPass;
+    createResult = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info,
+                                             nullptr, &directionalShadowPipeline);
+    if (createResult != VK_SUCCESS) {
+        directionalShadowPipeline = VK_NULL_HANDLE;
+        return vkFailure("vkCreateGraphicsPipelines(directional shadow)", createResult);
+    }
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
+    createResult = vkCreateGraphicsPipelines(
+        device, VK_NULL_HANDLE, 1, &info, nullptr,
+        &directionalShadowDoubleSidedPipeline);
+    if (createResult != VK_SUCCESS) {
+        directionalShadowDoubleSidedPipeline = VK_NULL_HANDLE;
+        vkDestroyPipeline(device, directionalShadowPipeline, nullptr);
+        directionalShadowPipeline = VK_NULL_HANDLE;
+        return vkFailure("vkCreateGraphicsPipelines(directional shadow double-sided)", createResult);
+    }
     return Result::success();
 }
 
@@ -2875,16 +3258,20 @@ Result VulkanContext::createDescriptorPool(uint32_t numOfObjects) {
 
     std::array<VkDescriptorPoolSize, 2> poolSizes{};
 
-    // Per-object UBOs plus one lighting UBO for each frame in flight.
+    const directional_shadow::DescriptorPoolRequirements shadowPool =
+        directional_shadow::descriptorPoolRequirements(MAX_FRAMES_IN_FLIGHT);
+
+    // Per-object UBOs plus lighting and directional-shadow UBOs per frame.
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount =
         static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT) +
-        MAX_FRAMES_IN_FLIGHT;
+        MAX_FRAMES_IN_FLIGHT + shadowPool.uniformBuffers;
 
     // Texture samplers 
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount =
-        static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT * 3);
+        static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT * 3) +
+        shadowPool.combinedImageSamplers;
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -2893,7 +3280,7 @@ Result VulkanContext::createDescriptorPool(uint32_t numOfObjects) {
     poolInfo.pPoolSizes = poolSizes.data();
     poolInfo.maxSets =
         static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT) +
-        MAX_FRAMES_IN_FLIGHT;
+        MAX_FRAMES_IN_FLIGHT + shadowPool.descriptorSets;
 
     const VkResult result = vkCreateDescriptorPool(
         device, &poolInfo, nullptr, &descriptorPool);
@@ -3397,6 +3784,24 @@ Result VulkanContext::updateLightsUniformBuffer(Scene* scene) {
     return Result::success();
 }
 
+Result VulkanContext::updateDirectionalShadowUniformBuffer(Scene* scene) {
+    if (!directional_shadow::shouldRender(scene->directionalLight())) {
+        return Result::success();
+    }
+    auto& frame = directionalShadowFrames[currentFrame];
+    if (frame.transformBufferMapped == nullptr) {
+        return Result::failure(
+            "Current-frame directional-shadow uniform buffer is not mapped");
+    }
+    directional_shadow::LightMatrices matrices;
+    Result result = directional_shadow::calculateLightMatrices(
+        *scene->directionalLight(), matrices);
+    if (!result) return result;
+    const DirectionalShadowUBO ubo{matrices.viewProjection};
+    memcpy(frame.transformBufferMapped, &ubo, sizeof(ubo));
+    return Result::success();
+}
+
 Result VulkanContext::initializeImGui() {
     if (!graphicsQueueFamily.has_value()) {
         return Result::failure(
@@ -3515,6 +3920,11 @@ Result VulkanContext::drawFrame(Scene* scene, const Camera& renderCamera,
         return lightsResult;
     }
 
+    Result shadowResult = updateDirectionalShadowUniformBuffer(scene);
+    if (!shadowResult) {
+        return shadowResult;
+    }
+
     Result recordResult = recordCommandBuffer(
         commandBuffers[currentFrame], imageIndex, scene, runState);
     if (!recordResult) {
@@ -3593,6 +4003,83 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
         return vkFailure("vkBeginCommandBuffer", result);
     }
 
+    if (directional_shadow::shouldRender(scene->directionalLight())) {
+        const auto& shadowFrame = directionalShadowFrames[currentFrame];
+        if (shadowFrame.framebuffer == VK_NULL_HANDLE ||
+            shadowFrame.descriptorSet == VK_NULL_HANDLE) {
+            return Result::failure("Current-frame directional-shadow resources are unavailable");
+        }
+        VkRenderPassBeginInfo shadowPassInfo{};
+        shadowPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        shadowPassInfo.renderPass = directionalShadowRenderPass;
+        shadowPassInfo.framebuffer = shadowFrame.framebuffer;
+        shadowPassInfo.renderArea.offset = {0, 0};
+        shadowPassInfo.renderArea.extent = {directional_shadow::mapResolution,
+                                           directional_shadow::mapResolution};
+        VkClearValue shadowClear{};
+        shadowClear.depthStencil = {1.0f, 0};
+        shadowPassInfo.clearValueCount = 1;
+        shadowPassInfo.pClearValues = &shadowClear;
+        vkCmdBeginRenderPass(commandBuffer, &shadowPassInfo,
+                             VK_SUBPASS_CONTENTS_INLINE);
+        VkViewport shadowViewport{};
+        shadowViewport.width = static_cast<float>(directional_shadow::mapResolution);
+        shadowViewport.height = static_cast<float>(directional_shadow::mapResolution);
+        shadowViewport.minDepth = 0.0f;
+        shadowViewport.maxDepth = 1.0f;
+        vkCmdSetViewport(commandBuffer, 0, 1, &shadowViewport);
+        VkRect2D shadowScissor{};
+        shadowScissor.extent = {directional_shadow::mapResolution,
+                                directional_shadow::mapResolution};
+        vkCmdSetScissor(commandBuffer, 0, 1, &shadowScissor);
+        vkCmdSetDepthBias(commandBuffer, directional_shadow::depthBiasConstantFactor,
+                          directional_shadow::depthBiasClamp,
+                          directional_shadow::depthBiasSlopeFactor);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                directionalShadowPipelineLayout, 1, 1,
+                                &shadowFrame.descriptorSet, 0, nullptr);
+        VkPipeline boundShadowPipeline = VK_NULL_HANDLE;
+        for (const auto& obj : scene->gameObjects()) {
+            for (const auto& instance : obj->meshInstances_) {
+                if (instance.material.alphaMode == MaterialAlphaMode::Blend) {
+                    continue;
+                }
+                const VkPipeline pipeline = instance.material.doubleSided
+                    ? directionalShadowDoubleSidedPipeline
+                    : directionalShadowPipeline;
+                if (pipeline != boundShadowPipeline) {
+                    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                      pipeline);
+                    boundShadowPipeline = pipeline;
+                }
+                VkBuffer vertexBuffer[] = {instance.mesh.vertexBuffer};
+                VkDeviceSize offset[] = {0};
+                vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffer, offset);
+                vkCmdBindIndexBuffer(commandBuffer, instance.mesh.indexBuffer, 0,
+                                     VK_INDEX_TYPE_UINT32);
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                        directionalShadowPipelineLayout, 0, 1,
+                                        &instance.renderData.descriptorSets[currentFrame],
+                                        0, nullptr);
+                const MaterialPushConstants materialPushConstants{
+                    instance.material.baseColorFactor, instance.material.metallicFactor,
+                    instance.material.roughnessFactor,
+                    static_cast<std::int32_t>(instance.material.alphaMode),
+                    instance.material.alphaCutoff,
+                    instance.material.normalMapEnabled ? 1 : 0,
+                    instance.material.hasMetallicRoughnessMap ? 1 : 0};
+                vkCmdPushConstants(commandBuffer, directionalShadowPipelineLayout,
+                                   VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                   sizeof(MaterialPushConstants),
+                                   &materialPushConstants);
+                vkCmdDrawIndexed(commandBuffer,
+                                 static_cast<uint32_t>(instance.mesh.indices.size()),
+                                 1, 0, 0, 0);
+            }
+        }
+        vkCmdEndRenderPass(commandBuffer);
+    }
+
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     renderPassInfo.renderPass = renderPass;
@@ -3616,6 +4103,10 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             pipelineLayout, 1, 1,
                             &lightsDescriptorSets[currentFrame], 0, nullptr);
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            pipelineLayout, 2, 1,
+                            &directionalShadowFrames[currentFrame].descriptorSet,
+                            0, nullptr);
 
     VkViewport viewport{};
     viewport.x = 0.0f;
@@ -4005,6 +4496,8 @@ bool VulkanContext::cleanup() noexcept {
         cleanupSwapchain();
         destroyRenderFinishedSemaphores();
 
+        destroyDirectionalShadowResources();
+
         if (descriptorPool != VK_NULL_HANDLE) {
             vkDestroyDescriptorPool(device, descriptorPool, nullptr);
             descriptorPool = VK_NULL_HANDLE;
@@ -4029,6 +4522,15 @@ bool VulkanContext::cleanup() noexcept {
             vkDestroyPipeline(device, doubleSidedGraphicsPipeline, nullptr);
             doubleSidedGraphicsPipeline = VK_NULL_HANDLE;
         }
+        if (directionalShadowPipeline != VK_NULL_HANDLE) {
+            vkDestroyPipeline(device, directionalShadowPipeline, nullptr);
+            directionalShadowPipeline = VK_NULL_HANDLE;
+        }
+        if (directionalShadowDoubleSidedPipeline != VK_NULL_HANDLE) {
+            vkDestroyPipeline(device, directionalShadowDoubleSidedPipeline,
+                              nullptr);
+            directionalShadowDoubleSidedPipeline = VK_NULL_HANDLE;
+        }
         if (selectionOutlinePipeline != VK_NULL_HANDLE) {
             vkDestroyPipeline(device, selectionOutlinePipeline, nullptr);
             selectionOutlinePipeline = VK_NULL_HANDLE;
@@ -4042,6 +4544,11 @@ bool VulkanContext::cleanup() noexcept {
             vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
             pipelineLayout = VK_NULL_HANDLE;
         }
+        if (directionalShadowPipelineLayout != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(device, directionalShadowPipelineLayout,
+                                    nullptr);
+            directionalShadowPipelineLayout = VK_NULL_HANDLE;
+        }
         if (descriptorSetLayout != VK_NULL_HANDLE) {
             vkDestroyDescriptorSetLayout(device, descriptorSetLayout,
                                          nullptr);
@@ -4052,9 +4559,19 @@ bool VulkanContext::cleanup() noexcept {
                 device, lightsDescriptorSetLayout, nullptr);
             lightsDescriptorSetLayout = VK_NULL_HANDLE;
         }
+        if (directionalShadowDescriptorSetLayout != VK_NULL_HANDLE) {
+            vkDestroyDescriptorSetLayout(device,
+                                         directionalShadowDescriptorSetLayout,
+                                         nullptr);
+            directionalShadowDescriptorSetLayout = VK_NULL_HANDLE;
+        }
         if (renderPass != VK_NULL_HANDLE) {
             vkDestroyRenderPass(device, renderPass, nullptr);
             renderPass = VK_NULL_HANDLE;
+        }
+        if (directionalShadowRenderPass != VK_NULL_HANDLE) {
+            vkDestroyRenderPass(device, directionalShadowRenderPass, nullptr);
+            directionalShadowRenderPass = VK_NULL_HANDLE;
         }
 
         for (VkSemaphore semaphore : imageAvailableSemaphores) {
@@ -4093,6 +4610,7 @@ bool VulkanContext::cleanup() noexcept {
         }
         sceneResourceOwnership_.clear();
         sceneResourceLoadTarget_ = nullptr;
+        destroyDirectionalShadowResources();
     }
 
     graphicsQueue = VK_NULL_HANDLE;
@@ -4120,14 +4638,22 @@ bool VulkanContext::cleanup() noexcept {
     lightsBuffers.fill(VK_NULL_HANDLE);
     lightsBufferMemory.fill(VK_NULL_HANDLE);
     lightsBufferMapped.fill(nullptr);
+    directionalShadowFrames = {};
+    directionalShadowSampler = VK_NULL_HANDLE;
+    directionalShadowDepthFormat = VK_FORMAT_UNDEFINED;
     descriptorSetLayout = VK_NULL_HANDLE;
     lightsDescriptorSetLayout = VK_NULL_HANDLE;
+    directionalShadowDescriptorSetLayout = VK_NULL_HANDLE;
     graphicsPipeline = VK_NULL_HANDLE;
     doubleSidedGraphicsPipeline = VK_NULL_HANDLE;
+    directionalShadowPipeline = VK_NULL_HANDLE;
+    directionalShadowDoubleSidedPipeline = VK_NULL_HANDLE;
     selectionOutlinePipeline = VK_NULL_HANDLE;
     selectionOutlinePipelineLayout = VK_NULL_HANDLE;
     pipelineLayout = VK_NULL_HANDLE;
+    directionalShadowPipelineLayout = VK_NULL_HANDLE;
     renderPass = VK_NULL_HANDLE;
+    directionalShadowRenderPass = VK_NULL_HANDLE;
     commandPool = VK_NULL_HANDLE;
     colorImage = VK_NULL_HANDLE;
     colorImageView = VK_NULL_HANDLE;

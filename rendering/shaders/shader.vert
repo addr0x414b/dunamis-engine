@@ -1,11 +1,15 @@
 #version 450
 
-layout(binding = 0) uniform UniformBufferObject {
+layout(set = 0, binding = 0) uniform UniformBufferObject {
     mat4 model;
     mat4 view;
     mat4 proj;
     vec3 cameraPosition;
 } ubo;
+
+layout(std140, set = 2, binding = 0) uniform DirectionalShadowUBO {
+    mat4 lightViewProjection;
+} directionalShadow;
 
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inColor;
@@ -19,6 +23,7 @@ layout(location = 3) out vec3 cameraPos;
 layout(location = 4) out vec3 fragPos;
 layout(location = 5) out vec3 fragNormal;
 layout(location = 6) out vec4 fragTangent;
+layout(location = 7) out vec4 directionalShadowClipPosition;
 
 void main() {
     gl_Position = ubo.proj * ubo.view * ubo.model * vec4(inPosition, 1.0);
@@ -35,4 +40,6 @@ void main() {
     }
     fragNormal = normal;
     fragTangent = vec4(tangent, inTangent.w);
+    directionalShadowClipPosition = directionalShadow.lightViewProjection *
+                                    ubo.model * vec4(inPosition, 1.0);
 }

@@ -71,6 +71,11 @@ Result VisualServer::initGameObjects() {
         return result;
     }
 
+    result = vulkanContext.createDirectionalShadowResources();
+    if (!result) {
+        return result;
+    }
+
     result = vulkanContext.createLightsUBO();
     if (!result) {
         return result;

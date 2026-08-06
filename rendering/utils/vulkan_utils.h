@@ -109,6 +109,15 @@ inline UniformBufferObject makeUniformBufferObject(
     return {model, view, projection, cameraPosition};
 }
 
+struct alignas(16) DirectionalShadowUBO {
+    glm::mat4 lightViewProjection{1.0f};
+};
+
+static_assert(alignof(DirectionalShadowUBO) == 16,
+              "DirectionalShadowUBO must be 16-byte aligned");
+static_assert(sizeof(DirectionalShadowUBO) == sizeof(glm::mat4),
+              "DirectionalShadowUBO must contain exactly one matrix");
+
 struct LightData {
     glm::vec3 position;
     float padding;

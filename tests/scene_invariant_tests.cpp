@@ -151,6 +151,11 @@ bool runAuthoringTransferTests() {
     editingDirectional->direction = {1.0f, -2.0f, 3.0f};
     editingDirectional->color = {0.7f, 0.8f, 0.9f};
     editingDirectional->intensity = 12.0f;
+    editingDirectional->shadow.focus = {4.0f, 5.0f, 6.0f};
+    editingDirectional->shadow.halfExtent = 123.0f;
+    editingDirectional->shadow.lightDistance = 234.0f;
+    editingDirectional->shadow.nearPlane = 2.0f;
+    editingDirectional->shadow.farPlane = 456.0f;
     auto runtimeDirectional = std::make_unique<DirectionalLight>();
     DirectionalLight* runtimeDirectionalPointer = runtimeDirectional.get();
     passed &= expect(static_cast<bool>(editing.addGameObject(
@@ -193,7 +198,13 @@ bool runAuthoringTransferTests() {
                              editingDirectionalPointer->direction &&
                          runtimeDirectionalPointer->color ==
                              editingDirectionalPointer->color &&
-                         runtimeDirectionalPointer->intensity == 12.0f,
+                         runtimeDirectionalPointer->intensity == 12.0f &&
+                         runtimeDirectionalPointer->shadow.focus ==
+                             editingDirectionalPointer->shadow.focus &&
+                         runtimeDirectionalPointer->shadow.halfExtent == 123.0f &&
+                         runtimeDirectionalPointer->shadow.lightDistance == 234.0f &&
+                         runtimeDirectionalPointer->shadow.nearPlane == 2.0f &&
+                         runtimeDirectionalPointer->shadow.farPlane == 456.0f,
                      "Directional-light authoring state was not transferred");
     passed &= expect(runtimeCameraPointer->front == editingCameraPointer->front &&
                          runtimeCameraPointer->up == editingCameraPointer->up,

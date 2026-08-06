@@ -36,6 +36,15 @@ Result validateDirectionalLightState(const DirectionalLight& light) {
             "Directional light direction must have nonzero length");
     }
 
+    const DirectionalShadowSettings& shadow = light.shadow;
+    if (!isFiniteVector(shadow.focus) || !std::isfinite(shadow.halfExtent) ||
+        !std::isfinite(shadow.lightDistance) || !std::isfinite(shadow.nearPlane) ||
+        !std::isfinite(shadow.farPlane) || shadow.halfExtent <= 0.0f ||
+        shadow.lightDistance <= 0.0f || shadow.nearPlane < 0.0f ||
+        shadow.farPlane <= shadow.nearPlane) {
+        return Result::failure("Directional shadow settings must be finite and valid");
+    }
+
     if (!isFiniteVector(light.color) || light.color.r < 0.0f ||
         light.color.g < 0.0f || light.color.b < 0.0f) {
         return Result::failure(
@@ -243,6 +252,7 @@ Result Scene::copyAuthoringStateTo(Scene& runtimeScene) const {
             runtimeDirectionalLight.color = editorDirectionalLight->color;
             runtimeDirectionalLight.intensity =
                 editorDirectionalLight->intensity;
+            runtimeDirectionalLight.shadow = editorDirectionalLight->shadow;
         }
 
         if (const auto* editorCamera =

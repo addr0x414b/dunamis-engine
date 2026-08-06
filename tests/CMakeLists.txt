@@ -166,3 +166,9 @@ target_link_libraries(RendererConfigurationTests PRIVATE
         glm
 )
 add_test(NAME renderer_configuration COMMAND RendererConfigurationTests)
+
+add_executable(DirectionalShadowTests directional_shadow_tests.cpp)
+target_include_directories(DirectionalShadowTests PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(DirectionalShadowTests PRIVATE
+        DirectionalShadow EditorPicking Scene GameObject VulkanUtils glm)
+add_test(NAME directional_shadow_math COMMAND DirectionalShadowTests)

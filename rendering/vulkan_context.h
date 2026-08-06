@@ -20,6 +20,7 @@
 #include "../scene/game_object.h"
 #include "../scene/scene.h"
 #include "imgui_layer.h"
+#include "directional_shadow.h"
 #include "utils/vulkan_utils.h"
 
 #ifdef NDEBUG
@@ -79,6 +80,7 @@ private:
     [[nodiscard]] Result createDescriptorSets(
         const std::unique_ptr<GameObject>& gameObject);
     [[nodiscard]] Result createLightsUBO();
+    [[nodiscard]] Result createDirectionalShadowResources();
     [[nodiscard]] Result beginSceneResourceLoad(Scene* scene);
     [[nodiscard]] Result commitSceneResourceLoad(Scene* scene);
     [[nodiscard]] Result cancelSceneResourceLoad();
@@ -203,17 +205,23 @@ private:
                                          OwnedImageView* ownership = nullptr);
 
     [[nodiscard]] Result createRenderPass();
+    [[nodiscard]] Result createDirectionalShadowRenderPass();
     [[nodiscard]] Result findDepthFormat(VkFormat& format) const;
     [[nodiscard]] Result findSupportedFormat(
         const std::vector<VkFormat>& candidates, VkImageTiling tiling,
         VkFormatFeatureFlags features, VkFormat& format) const;
+    [[nodiscard]] Result findDirectionalShadowDepthFormat(VkFormat& format) const;
 
     [[nodiscard]] Result createDescriptorSetLayout();
     [[nodiscard]] Result createLightsDescriptorSetLayout();
+    [[nodiscard]] Result createDirectionalShadowDescriptorSetLayout();
     [[nodiscard]] Result updateLightsUniformBuffer(Scene* scene);
+    [[nodiscard]] Result updateDirectionalShadowUniformBuffer(Scene* scene);
     void destroyLightsUBOs() noexcept;
+    void destroyDirectionalShadowResources() noexcept;
 
     [[nodiscard]] Result createGraphicsPipeline();
+    [[nodiscard]] Result createDirectionalShadowPipelines();
     [[nodiscard]] Result createSelectionOutlinePipeline();
     [[nodiscard]] Result readFile(const std::string& filename,
                                   std::vector<char>& contents) const;
@@ -293,6 +301,7 @@ private:
     VkRenderPass renderPass = VK_NULL_HANDLE;
     VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout lightsDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout directionalShadowDescriptorSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
     std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT>
         lightsDescriptorSets{};
@@ -301,9 +310,28 @@ private:
         lightsBufferMemory{};
     std::array<void*, MAX_FRAMES_IN_FLIGHT> lightsBufferMapped{};
 
+    struct DirectionalShadowFrameResources {
+        VkImage depthImage = VK_NULL_HANDLE;
+        VkDeviceMemory depthImageMemory = VK_NULL_HANDLE;
+        VkImageView depthImageView = VK_NULL_HANDLE;
+        VkFramebuffer framebuffer = VK_NULL_HANDLE;
+        VkBuffer transformBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory transformBufferMemory = VK_NULL_HANDLE;
+        void* transformBufferMapped = nullptr;
+        VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+    };
+    std::array<DirectionalShadowFrameResources, MAX_FRAMES_IN_FLIGHT>
+        directionalShadowFrames{};
+    VkFormat directionalShadowDepthFormat = VK_FORMAT_UNDEFINED;
+    VkSampler directionalShadowSampler = VK_NULL_HANDLE;
+
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkPipeline graphicsPipeline = VK_NULL_HANDLE;
     VkPipeline doubleSidedGraphicsPipeline = VK_NULL_HANDLE;
+    VkRenderPass directionalShadowRenderPass = VK_NULL_HANDLE;
+    VkPipelineLayout directionalShadowPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline directionalShadowPipeline = VK_NULL_HANDLE;
+    VkPipeline directionalShadowDoubleSidedPipeline = VK_NULL_HANDLE;
     VkPipelineLayout selectionOutlinePipelineLayout = VK_NULL_HANDLE;
     VkPipeline selectionOutlinePipeline = VK_NULL_HANDLE;
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;

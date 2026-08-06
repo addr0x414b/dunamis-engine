@@ -7,10 +7,12 @@ layout(location = 3) in vec3 cameraPos;
 layout(location = 4) in vec3 fragPos;
 layout(location = 5) in vec3 fragNormal;
 layout(location = 6) in vec4 fragTangent;
+layout(location = 7) in vec4 directionalShadowClipPosition;
 
 layout(set = 0, binding = 1) uniform sampler2D baseColorSampler;
 layout(set = 0, binding = 2) uniform sampler2D normalSampler;
 layout(set = 0, binding = 3) uniform sampler2D metallicRoughnessSampler;
+layout(set = 2, binding = 1) uniform sampler2D directionalShadowMap;
 
 struct LightData {
     vec3 position;
@@ -47,6 +49,7 @@ layout(push_constant) uniform MaterialPushConstants {
 const int MASK_MODE = 1;
 const float PI = 3.14159265359;
 const float EPSILON = 0.0001;
+const float DIRECTIONAL_SHADOW_RECEIVER_BIAS = 0.00005;
 
 vec3 safeNormalize(vec3 value) {
     float lengthSquared = dot(value, value);
@@ -123,6 +126,34 @@ vec3 calculateCookTorranceDirectLighting(
     return (kD * albedo / PI + specular) * radiance * NdotL;
 }
 
+float calculateDirectionalShadowVisibility(vec3 normal, vec3 lightDirection) {
+    if (!(abs(directionalShadowClipPosition.w) > EPSILON)) {
+        return 1.0;
+    }
+    vec3 ndc = directionalShadowClipPosition.xyz /
+               directionalShadowClipPosition.w;
+    vec3 shadowCoordinates = vec3(ndc.xy * 0.5 + 0.5, ndc.z);
+    if (shadowCoordinates.x < 0.0 || shadowCoordinates.x > 1.0 ||
+        shadowCoordinates.y < 0.0 || shadowCoordinates.y > 1.0 ||
+        shadowCoordinates.z < 0.0 || shadowCoordinates.z > 1.0) {
+        return 1.0;
+    }
+    float receiverBias = max(DIRECTIONAL_SHADOW_RECEIVER_BIAS *
+                                 (1.0 - max(dot(normal, lightDirection), 0.0)),
+                             DIRECTIONAL_SHADOW_RECEIVER_BIAS * 0.25);
+    vec2 texelSize = 1.0 / vec2(textureSize(directionalShadowMap, 0));
+    float visibility = 0.0;
+    for (int x = -1; x <= 1; ++x) {
+        for (int y = -1; y <= 1; ++y) {
+            float storedDepth = texture(directionalShadowMap,
+                shadowCoordinates.xy + vec2(x, y) * texelSize).r;
+            visibility += shadowCoordinates.z - receiverBias > storedDepth
+                ? 0.0 : 1.0;
+        }
+    }
+    return visibility / 9.0;
+}
+
 void main() {
     vec4 baseColor = texture(baseColorSampler, fragTexCoord) *
                      materialBaseColorFactor;
@@ -194,7 +225,9 @@ void main() {
         if (dot(lightDirection, lightDirection) > EPSILON) {
             vec3 radiance = directionalLight.colorIntensity.rgb *
                             directionalLight.colorIntensity.a;
-            finalColor += calculateCookTorranceDirectLighting(
+            float shadowVisibility = calculateDirectionalShadowVisibility(
+                normal, lightDirection);
+            finalColor += shadowVisibility * calculateCookTorranceDirectLighting(
                 normal, viewDirection, lightDirection, radiance, albedo,
                 metallic, roughness, F0);
         }
