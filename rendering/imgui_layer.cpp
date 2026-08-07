@@ -573,7 +573,7 @@ void ImGuiLayer::drawEditor(Scene* scene, const glm::mat4& view,
     }
 
     if (scene != nullptr) {
-        const bool disabled = runState == SceneRunState::Playing;
+        const bool disabled = !editorToolsEnabled(runState);
         drawSceneHierarchy(scene, disabled);
         updateSceneInteractionAreaHovered();
         processGizmoShortcuts(scene, runState);
@@ -594,10 +594,13 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
     const float availableWidth = ImGui::GetContentRegionAvail().x;
     const float playButtonWidth =
         ImGui::CalcTextSize("Play").x + 2.0f * style.FramePadding.x;
+    const float simulateButtonWidth =
+        ImGui::CalcTextSize("Simulate").x + 2.0f * style.FramePadding.x;
     const float stopButtonWidth =
         ImGui::CalcTextSize("Stop").x + 2.0f * style.FramePadding.x;
     const float buttonGroupWidth =
-        playButtonWidth + style.ItemSpacing.x + stopButtonWidth;
+        playButtonWidth + simulateButtonWidth + stopButtonWidth +
+        2.0f * style.ItemSpacing.x;
     const float remainingWidth = availableWidth - buttonGroupWidth;
     const float groupOffset =
         remainingWidth > 0.0f ? remainingWidth * 0.5f : 0.0f;
@@ -612,7 +615,15 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
     ImGui::EndDisabled();
 
     ImGui::SameLine();
-    ImGui::BeginDisabled(editing);
+    ImGui::BeginDisabled(!editing);
+    if (ImGui::Button("Simulate", ImVec2(simulateButtonWidth, 0.0f)) &&
+        pendingEditorCommand_ == EditorCommand::None) {
+        pendingEditorCommand_ = EditorCommand::Simulate;
+    }
+    ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!runtimeSceneRunning(runState));
     if (ImGui::Button("Stop", ImVec2(stopButtonWidth, 0.0f)) &&
         pendingEditorCommand_ == EditorCommand::None) {
         pendingEditorCommand_ = EditorCommand::Stop;
@@ -752,7 +763,7 @@ void ImGuiLayer::drawSceneHierarchy(Scene* scene, bool disabled) {
 
 void ImGuiLayer::processGizmoShortcuts(Scene* scene,
                                        SceneRunState runState) noexcept {
-    if (runState != SceneRunState::Editing || !inputEnabled_ ||
+    if (!editorToolsEnabled(runState) || !inputEnabled_ ||
         selectedGameObjectForScene(scene) == nullptr ||
         ImGui::GetIO().WantTextInput || ImGui::IsAnyItemActive() ||
         ImGuizmo::IsUsing()) {
@@ -771,7 +782,7 @@ void ImGuiLayer::processGizmoShortcuts(Scene* scene,
 void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
                                     const glm::mat4& projection,
                                     SceneRunState runState) {
-    if (runState != SceneRunState::Editing ||
+    if (!editorToolsEnabled(runState) ||
         !sceneInteractionRect_.valid) {
         gizmoDragActive_ = false;
         return;
@@ -886,7 +897,7 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
 void ImGuiLayer::drawCameraVisualizations(
     Scene* scene, const glm::mat4& editorView, const glm::mat4& projection,
     SceneRunState runState) {
-    if (runState != SceneRunState::Editing || scene == nullptr ||
+    if (!editorToolsEnabled(runState) || scene == nullptr ||
         !sceneInteractionRect_.valid ||
         !std::isfinite(sceneInteractionRect_.x) ||
         !std::isfinite(sceneInteractionRect_.y) ||
@@ -1019,7 +1030,7 @@ void ImGuiLayer::drawCameraVisualization(
 void ImGuiLayer::processWorldSelection(Scene* scene, const glm::mat4& view,
                                        const glm::mat4& projection,
                                        SceneRunState runState) {
-    if (runState != SceneRunState::Editing || !inputEnabled_ ||
+    if (!editorToolsEnabled(runState) || !inputEnabled_ ||
         !sceneInteractionRect_.valid || !sceneInteractionAreaHovered_ ||
         gizmoDragActive_ || ImGuizmo::IsOver() || ImGuizmo::IsUsing() ||
         ImGui::IsMouseDown(ImGuiMouseButton_Right) ||

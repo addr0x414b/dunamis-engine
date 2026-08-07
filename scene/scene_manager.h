@@ -50,7 +50,7 @@ public:
     [[nodiscard]] Result returnToEditingScene();
     [[nodiscard]] Result destroyRuntimeScene();
 
-    [[nodiscard]] bool isPlayingScene() const noexcept;
+    [[nodiscard]] bool isRuntimeSceneActive() const noexcept;
     [[nodiscard]] bool initialized() const noexcept;
     void shutdown() noexcept;
 

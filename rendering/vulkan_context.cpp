@@ -4856,7 +4856,7 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
 
     const GameObject* selectedObject =
         imguiLayer.selectedGameObjectForScene(scene);
-    if (runState == SceneRunState::Editing && selectedObject != nullptr &&
+    if (editorToolsEnabled(runState) && selectedObject != nullptr &&
         !selectedObject->meshInstances_.empty() &&
         swapchainExtent.width > 0 && swapchainExtent.height > 0) {
         const OutlinePushConstants outlinePushConstants{

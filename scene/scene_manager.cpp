@@ -111,7 +111,7 @@ Result SceneManager::returnToEditingScene() {
         return Result::failure("Editing scene is unavailable");
     }
     if (!runtimeScene_ || activeScene_ != runtimeScene_.get()) {
-        return Result::failure("Scene Manager is not playing a runtime scene");
+        return Result::failure("Scene Manager has no active runtime scene");
     }
     activeScene_ = editingScene_.get();
     return Result::success();
@@ -147,7 +147,7 @@ const Scene* SceneManager::activeScene() const noexcept {
     return activeScene_;
 }
 
-bool SceneManager::isPlayingScene() const noexcept {
+bool SceneManager::isRuntimeSceneActive() const noexcept {
     return runtimeScene_ && activeScene_ == runtimeScene_.get();
 }
 

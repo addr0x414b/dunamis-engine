@@ -60,6 +60,10 @@ void Player::start(std::shared_ptr<InputManager> input) {
         return;
     }
 
+    if (!input->gameplayInputEnabled()) {
+        return;
+    }
+
     const Result result = input->requestGameplayMouseCapture();
     if (!result) {
         spdlog::error("Player failed to capture gameplay mouse: {}",

@@ -360,6 +360,7 @@ bool runSceneManagerTests() {
     Scene* editing = manager.editingScene();
     GameObject* editingObject = editing->gameObjects().front().get();
     passed &= expect(manager.activeScene() == editing &&
+                         !manager.isRuntimeSceneActive() &&
                          ManagedScene::constructionCount == 1 &&
                          ManagedObject::liveCount == 1,
                      "Scene Manager did not retain one editing scene");
@@ -377,7 +378,9 @@ bool runSceneManagerTests() {
                      "Prepared runtime scene ownership is incorrect");
     passed &= expect(manager.commitRuntimeScene() &&
                          manager.activeScene() == firstRuntime &&
+                         manager.isRuntimeSceneActive() &&
                          manager.returnToEditingScene() &&
+                         !manager.isRuntimeSceneActive() &&
                          manager.destroyRuntimeScene(),
                      "Scene Manager could not complete a runtime lifecycle");
     passed &= expect(manager.editingScene() == editing &&
@@ -481,6 +484,31 @@ bool runPlayerCameraInitializationTests() {
             glm::length(glm::cross(rotatedCameraPlayer.camera->front,
                                    rotatedCameraPlayer.camera->up)) > 1.0e-4f,
         "Editor-rotated Camera up contaminated the runtime Player basis");
+
+    auto editorInput = std::make_shared<InputManager>();
+    Player simulatedPlayer;
+    simulatedPlayer.init();
+    simulatedPlayer.camera->front = {0.3f, 0.2f, -0.9f};
+    simulatedPlayer.camera->up = playerWorldUp;
+    simulatedPlayer.start(editorInput);
+    passed &= expect(!editorInput->gameplayInputEnabled() &&
+                         editorInput->inputMode() ==
+                             InputMode::EditorInteractive &&
+                         std::isfinite(PlayerTestAccess::yaw(simulatedPlayer)) &&
+                         std::isfinite(PlayerTestAccess::pitch(simulatedPlayer)),
+                     "Player startup captured gameplay input during editor ownership");
+
+    simulatedPlayer.position = {4.0f, 5.0f, 6.0f};
+    simulatedPlayer.camera->position = {4.0f, 5.0f, 6.0f};
+    SDL_Event moveEvent{};
+    moveEvent.type = SDL_EVENT_KEY_DOWN;
+    moveEvent.key.key = SDLK_W;
+    editorInput->handleEvent(moveEvent);
+    simulatedPlayer.update(editorInput);
+    passed &= expect(simulatedPlayer.position == glm::vec3(4.0f, 5.0f, 6.0f) &&
+                         simulatedPlayer.camera->position ==
+                             glm::vec3(4.0f, 5.0f, 6.0f),
+                     "Player moved while gameplay input was editor-owned");
 
     return passed;
 }

@@ -122,8 +122,7 @@ Result Dunamis::run() {
                 const bool togglesGameplayMouse =
                     e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat &&
                     (e.key.key == SDLK_LALT || e.key.key == SDLK_RALT);
-                if (togglesGameplayMouse &&
-                    runState == SceneRunState::Playing) {
+                if (togglesGameplayMouse && usesGameplayCamera(runState)) {
                     Result toggleResult =
                         inputManager->toggleGameplayMouseRelease();
                     if (!toggleResult) {
@@ -135,7 +134,7 @@ Result Dunamis::run() {
                     continue;
                 }
 
-                if (runState == SceneRunState::Editing &&
+                if (editorToolsEnabled(runState) &&
                     e.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
                     e.button.button == SDL_BUTTON_RIGHT &&
                     inputManager->inputMode() ==
@@ -152,7 +151,7 @@ Result Dunamis::run() {
                     continue;
                 }
 
-                if (runState == SceneRunState::Editing &&
+                if (editorToolsEnabled(runState) &&
                     e.type == SDL_EVENT_MOUSE_BUTTON_UP &&
                     e.button.button == SDL_BUTTON_RIGHT &&
                     inputManager->inputMode() ==
@@ -172,14 +171,15 @@ Result Dunamis::run() {
                 break;
             }
 
-            if (runState == SceneRunState::Editing) {
+            if (editorToolsEnabled(runState)) {
                 editorCameraController.update(*inputManager);
-            } else {
+            }
+            if (runtimeSceneRunning(runState)) {
                 Scene* runtimeScene = sceneManager_.runtimeScene();
                 if (!runtimeScene ||
                     sceneManager_.activeScene() != runtimeScene) {
                     return Result::failure(
-                        "Playing requires an active runtime scene");
+                        "Runtime execution requires an active runtime scene");
                 }
                 runtimeScene->update();
             }
@@ -197,9 +197,11 @@ Result Dunamis::run() {
             const EditorCommand command =
                 visualServer.consumeEditorCommand();
             if (command == EditorCommand::Play) {
-                result = beginPlay();
+                result = beginRuntimeSession(SceneRunState::Playing);
+            } else if (command == EditorCommand::Simulate) {
+                result = beginRuntimeSession(SceneRunState::Simulating);
             } else if (command == EditorCommand::Stop) {
-                result = stopPlay();
+                result = stopRuntimeSession();
             }
             if (!result) {
                 return Result::failure(
@@ -219,13 +221,18 @@ Result Dunamis::run() {
     return Result::success();
 }
 
-Result Dunamis::beginPlay() {
+Result Dunamis::beginRuntimeSession(SceneRunState targetState) {
     if (runState != SceneRunState::Editing) {
-        return Result::failure("Play can begin only while editing");
+        return Result::failure(
+            "A runtime session can begin only while editing");
+    }
+    if (!runtimeSceneRunning(targetState)) {
+        return Result::failure("Invalid runtime session target state");
     }
 
     visualServer.clearEditorSelection();
-    const auto rollbackBeginPlay = [this](const std::string& error) {
+    const auto rollbackRuntimeSession = [this](const std::string& error) {
+        runState = SceneRunState::Editing;
         Scene* runtimeScene = sceneManager_.runtimeScene();
         if (runtimeScene && visualServer.renderScene() == runtimeScene) {
             const Result switchResult = visualServer.switchScene(
@@ -237,7 +244,7 @@ Result Dunamis::beginPlay() {
                     switchResult.error());
             }
         }
-        if (sceneManager_.isPlayingScene()) {
+        if (sceneManager_.isRuntimeSceneActive()) {
             const Result sceneResult = sceneManager_.returnToEditingScene();
             if (!sceneResult) {
                 synchronizeImGuiInput();
@@ -269,55 +276,62 @@ Result Dunamis::beginPlay() {
 
     Result result = sceneManager_.prepareRuntimeScene();
     if (!result) {
-        return rollbackBeginPlay(
+        return rollbackRuntimeSession(
             "Failed to prepare runtime scene: " + result.error());
     }
 
     Scene* runtimeScene = sceneManager_.runtimeScene();
     result = visualServer.loadSceneResources(runtimeScene);
     if (!result) {
-        return rollbackBeginPlay(
+        return rollbackRuntimeSession(
             "Failed to prepare runtime rendering: " + result.error());
     }
 
-    result = inputManager->beginGameplaySession();
+    if (targetState == SceneRunState::Playing) {
+        result = inputManager->beginGameplaySession();
+    } else {
+        result = inputManager->enterEditorInteractive();
+    }
     if (!result) {
-        return rollbackBeginPlay("Failed to enter gameplay input: " +
-                                 result.error());
+        return rollbackRuntimeSession(
+            std::string(targetState == SceneRunState::Playing
+                            ? "Failed to enter gameplay input: "
+                            : "Failed to enter editor input for simulation: ") +
+            result.error());
     }
 
     synchronizeImGuiInput();
     result = visualServer.switchScene(runtimeScene);
     if (!result) {
-        return rollbackBeginPlay(
+        return rollbackRuntimeSession(
             "Failed to switch rendering to the runtime scene: " +
             result.error());
     }
 
     result = sceneManager_.commitRuntimeScene();
     if (!result) {
-        return rollbackBeginPlay(
+        return rollbackRuntimeSession(
             "Failed to commit the runtime scene: " + result.error());
     }
 
     try {
         runtimeScene->start();
     } catch (const std::exception& exception) {
-        return rollbackBeginPlay("Failed to start runtime scene: " +
-                                 std::string(exception.what()));
+        return rollbackRuntimeSession("Failed to start runtime scene: " +
+                                      std::string(exception.what()));
     } catch (...) {
-        return rollbackBeginPlay(
+        return rollbackRuntimeSession(
             "Failed to start runtime scene with an unknown error");
     }
 
-    runState = SceneRunState::Playing;
+    runState = targetState;
     synchronizeImGuiInput();
     return Result::success();
 }
 
-Result Dunamis::stopPlay() {
-    if (runState != SceneRunState::Playing) {
-        return Result::failure("Play can stop only while playing");
+Result Dunamis::stopRuntimeSession() {
+    if (!runtimeSceneRunning(runState)) {
+        return Result::failure("A runtime session can stop only while running");
     }
 
     Result result = inputManager->enterEditorInteractive();
@@ -371,7 +385,7 @@ Result Dunamis::stopPlay() {
 }
 
 const Camera& Dunamis::renderCamera() const noexcept {
-    if (runState == SceneRunState::Playing) {
+    if (usesGameplayCamera(runState)) {
         if (const Scene* runtimeScene = sceneManager_.runtimeScene()) {
             if (const Camera* camera = runtimeScene->activeCamera()) {
                 return *camera;

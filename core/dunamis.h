@@ -25,8 +25,8 @@ public:
     [[nodiscard]] bool shutdown() noexcept;
 
 private:
-    [[nodiscard]] Result beginPlay();
-    [[nodiscard]] Result stopPlay();
+    [[nodiscard]] Result beginRuntimeSession(SceneRunState targetState);
+    [[nodiscard]] Result stopRuntimeSession();
     [[nodiscard]] const Camera& renderCamera() const noexcept;
     void synchronizeImGuiInput() noexcept;
 
