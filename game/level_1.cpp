@@ -136,7 +136,9 @@ void Level1::update() {
     for (const auto& obj : gameObjects()) {
         obj->update();
         if (obj->name == "Point Light") {
-            obj->position.z += 0.1f;
+            obj->rotation.x += 0.5f;
+            obj->rotation.y += 0.5f;
+
         }
     }
     player.update(inputManager);

@@ -3,6 +3,8 @@ project(DunamisEngine)
 
 set(CMAKE_CXX_STANDARD 17)
 
+find_package(Threads REQUIRED)
+
 # GLM headers are included by public engine headers, so these definitions must
 # be present for every first-party translation unit before it parses GLM.
 add_compile_definitions(

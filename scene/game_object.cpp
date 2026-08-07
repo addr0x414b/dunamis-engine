@@ -9,10 +9,12 @@
 #include <assimp/scene.h>
 
 #include <algorithm>
+#include <atomic>
 #include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <exception>
 #include <filesystem>
 #include <iterator>
 #include <limits>
@@ -20,6 +22,7 @@
 #include <mutex>
 #include <optional>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -146,6 +149,7 @@ struct LoadModelProfile {
     Clock::duration sourceLoadingTime{};
     Clock::duration geometryConversionTime{};
     Clock::duration materialPropertyExtractionTime{};
+    Clock::duration textureDecodeWallTime{};
     Clock::duration baseColorDecodeTime{};
     Clock::duration normalMapDecodeTime{};
     Clock::duration metallicRoughnessDecodeTime{};
@@ -154,6 +158,11 @@ struct LoadModelProfile {
     std::size_t totalUniqueVertices = 0;
     std::size_t materialPreparations = 0;
     std::size_t fallbackTextureDecodeCount = 0;
+    std::size_t decodeWorkers = 0;
+    std::size_t decodeJobs = 0;
+    std::size_t decodeSuccesses = 0;
+    std::size_t decodeFailures = 0;
+    std::size_t maxConcurrentDecodes = 0;
     std::size_t totalDecodedRgbaBytes = 0;
     std::size_t copiedMeshes = 0;
     std::size_t copiedVertices = 0;
@@ -375,83 +384,160 @@ LoadModelProfile::Clock::duration& textureDecodeTime(
     return profile.baseColorDecodeTime;
 }
 
-TextureCacheEntry decodeTexture(const TextureSource& source,
-                                TextureUsage usage, bool fallback,
-                                TextureCache& cache,
-                                LoadModelProfile& profile) {
-    TextureCacheKey key{source.sourceIdentity, usage};
-    const auto cached = cache.find(key);
-    if (cached != cache.end()) {
-        return cached->second;
-    }
+struct TextureDecodeJob {
+    TextureCacheKey key;
+    TextureSource source;
+    bool fallback = false;
+};
 
-    PhaseTimer phaseTimer(textureDecodeTime(profile, usage));
-    const bool fromMemory = source.isEmbedded();
-    recordDecodeCall(profile, usage, fromMemory, fallback);
-
+struct TextureDecodeJobResult {
     TextureCacheEntry entry;
-    int width = 0;
-    int height = 0;
-    int channels = 0;
-    stbi_uc* decodedPixels = nullptr;
-    if (fromMemory) {
-        const aiTexture* texture = source.embeddedTexture;
-        decodedPixels = stbi_load_from_memory(
-            reinterpret_cast<const unsigned char*>(texture->pcData),
-            static_cast<int>(texture->mWidth), &width, &height, &channels,
-            STBI_rgb_alpha);
+    LoadModelProfile::Clock::duration cpuTime{};
+    bool fromMemory = false;
+    bool fallback = false;
+};
+
+TextureDecodeJobResult decodeTextureJob(const TextureDecodeJob& job) noexcept {
+    TextureDecodeJobResult result;
+    result.fromMemory = job.source.isEmbedded();
+    result.fallback = job.fallback;
+    const auto start = LoadModelProfile::Clock::now();
+    try {
+        if (!job.source.valid) {
+            result.entry.error = job.source.invalidReason;
+        } else {
+            int width = 0;
+            int height = 0;
+            int channels = 0;
+            stbi_uc* decodedPixels = nullptr;
+            if (result.fromMemory) {
+                const aiTexture* texture = job.source.embeddedTexture;
+                decodedPixels = stbi_load_from_memory(
+                    reinterpret_cast<const unsigned char*>(texture->pcData),
+                    static_cast<int>(texture->mWidth), &width, &height,
+                    &channels, STBI_rgb_alpha);
+            } else {
+                decodedPixels = stbi_load(job.source.externalPath.string().c_str(),
+                                          &width, &height, &channels,
+                                          STBI_rgb_alpha);
+            }
+            if (!decodedPixels) {
+                result.entry.error =
+                    (result.fromMemory ? "stbi_load_from_memory failed for "
+                                       : "stbi_load failed for ") +
+                    job.source.displayPath + ": " + stbFailureReason();
+            } else {
+                StbiPixelOwner pixelOwner = makeStbiPixelOwner(decodedPixels);
+                uint32_t mipLevels = 0;
+                const Result mipResult =
+                    calculateMipLevels(width, height, mipLevels);
+                if (!mipResult) {
+                    result.entry.error = "Invalid texture dimensions for " +
+                                         job.source.displayPath + ": " +
+                                         mipResult.error();
+                } else {
+                    result.entry.image = std::make_shared<DecodedImage>();
+                    result.entry.image->pixels = std::move(pixelOwner);
+                    result.entry.image->width = width;
+                    result.entry.image->height = height;
+                    result.entry.image->channels = channels;
+                    result.entry.image->mipLevels = mipLevels;
+                }
+            }
+        }
+    } catch (const std::exception& exception) {
+        result.entry.error = "Texture decode failed for " +
+                             job.source.displayPath + ": " + exception.what();
+    } catch (...) {
+        result.entry.error = "Texture decode failed for " +
+                             job.source.displayPath + ": unknown error";
+    }
+    result.cpuTime = LoadModelProfile::Clock::now() - start;
+    return result;
+}
+
+class ThreadJoiner {
+public:
+    explicit ThreadJoiner(std::vector<std::thread>& threads) : threads_(threads) {}
+    ~ThreadJoiner() {
+        for (std::thread& thread : threads_) {
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
+    }
+
+private:
+    std::vector<std::thread>& threads_;
+};
+
+Result decodeTextureJobs(const std::vector<TextureDecodeJob>& jobs,
+                         std::vector<TextureDecodeJobResult>& results,
+                         LoadModelProfile& profile) {
+    if (jobs.empty()) {
+        return Result::success();
+    }
+
+    const unsigned int hardware = std::thread::hardware_concurrency();
+    const std::size_t availableWorkers = hardware == 0 ? 1 : hardware;
+    const std::size_t workerCount = std::min(
+        jobs.size(), std::min<std::size_t>(4, availableWorkers));
+    results.resize(jobs.size());
+    std::atomic<std::size_t> nextJob{0};
+    std::atomic<std::size_t> activeWorkers{0};
+    std::atomic<std::size_t> maxActiveWorkers{0};
+    std::vector<std::thread> workers;
+    workers.reserve(workerCount);
+    const auto wallStart = LoadModelProfile::Clock::now();
+    {
+        ThreadJoiner joiner(workers);
+        try {
+            for (std::size_t worker = 0; worker < workerCount; ++worker) {
+                workers.emplace_back([&] {
+                    for (;;) {
+                        const std::size_t jobIndex = nextJob.fetch_add(1);
+                        if (jobIndex >= jobs.size()) {
+                            return;
+                        }
+                        const std::size_t active = activeWorkers.fetch_add(1) + 1;
+                        std::size_t observed = maxActiveWorkers.load();
+                        while (observed < active &&
+                               !maxActiveWorkers.compare_exchange_weak(
+                                   observed, active)) {
+                        }
+                        results[jobIndex] = decodeTextureJob(jobs[jobIndex]);
+                        activeWorkers.fetch_sub(1);
+                    }
+                });
+            }
+        } catch (const std::exception& exception) {
+            return Result::failure("Failed to create texture decoder worker: " +
+                                   std::string(exception.what()));
+        } catch (...) {
+            return Result::failure(
+                "Failed to create texture decoder worker: unknown error");
+        }
+    }
+    profile.textureDecodeWallTime += LoadModelProfile::Clock::now() - wallStart;
+    profile.decodeWorkers = workerCount;
+    profile.maxConcurrentDecodes = maxActiveWorkers.load();
+    return Result::success();
+}
+
+void gatherDecodeResult(const TextureDecodeJob& job,
+                        TextureDecodeJobResult result, TextureCache& cache,
+                        LoadModelProfile& profile) {
+    recordDecodeCall(profile, job.key.usage, result.fromMemory, result.fallback);
+    textureDecodeTime(profile, job.key.usage) += result.cpuTime;
+    ++profile.decodeJobs;
+    if (result.entry.succeeded()) {
+        ++profile.decodeSuccesses;
+        recordDecodedImage(profile, job.key.usage, result.entry.image->width,
+                           result.entry.image->height);
     } else {
-        decodedPixels = stbi_load(source.externalPath.string().c_str(), &width,
-                                  &height, &channels, STBI_rgb_alpha);
+        ++profile.decodeFailures;
     }
-
-    if (!decodedPixels) {
-        entry.error = (fromMemory ? "stbi_load_from_memory failed for "
-                                  : "stbi_load failed for ") +
-                      source.displayPath + ": " + stbFailureReason();
-        const auto inserted = cache.emplace(std::move(key), entry);
-        return inserted.first->second;
-    }
-
-    StbiPixelOwner pixelOwner = makeStbiPixelOwner(decodedPixels);
-    uint32_t mipLevels = 0;
-    const Result mipResult = calculateMipLevels(width, height, mipLevels);
-    if (!mipResult) {
-        entry.error = "Invalid texture dimensions for " + source.displayPath +
-                      ": " + mipResult.error();
-        const auto inserted = cache.emplace(std::move(key), entry);
-        return inserted.first->second;
-    }
-
-    entry.image = std::make_shared<DecodedImage>();
-    entry.image->pixels = std::move(pixelOwner);
-    entry.image->width = width;
-    entry.image->height = height;
-    entry.image->channels = channels;
-    entry.image->mipLevels = mipLevels;
-    recordDecodedImage(profile, usage, width, height);
-    const auto inserted = cache.emplace(std::move(key), entry);
-    return inserted.first->second;
-}
-
-TextureCacheEntry loadFileTexture(const TextureSource& source,
-                                  TextureCache& cache,
-                                  LoadModelProfile& profile, bool fallback) {
-    return decodeTexture(source, TextureUsage::BaseColor, fallback, cache,
-                         profile);
-}
-
-TextureCacheEntry loadNormalMapFileTexture(const TextureSource& source,
-                                           TextureCache& cache,
-                                           LoadModelProfile& profile) {
-    return decodeTexture(source, TextureUsage::Normal, false, cache, profile);
-}
-
-TextureCacheEntry loadMetallicRoughnessFileTexture(
-    const TextureSource& source, TextureCache& cache,
-    LoadModelProfile& profile) {
-    return decodeTexture(source, TextureUsage::MetallicRoughness, false, cache,
-                         profile);
+    cache.emplace(job.key, std::move(result.entry));
 }
 
 void assignBaseColorImage(Material& material,
@@ -497,7 +583,7 @@ void assignMetallicRoughnessImage(Material& material,
 float sanitizeMaterialFactor(float value, float fallback);
 glm::vec4 sanitizeBaseColorFactor(const aiColor4D& color);
 
-struct ImportedMaterialTemplate {
+struct PendingImportedMaterial {
     Material material{};
     std::string texturePath;
     std::string baseColorIntendedSourceIdentity;
@@ -506,16 +592,41 @@ struct ImportedMaterialTemplate {
     std::string metallicRoughnessSourceIdentity;
     std::string normalMapError;
     std::string metallicRoughnessError;
-    bool prepared = false;
+    std::string firstMeshName;
+    unsigned int materialIndex = 0;
+    TextureSource baseColorSource;
+    TextureSource normalMapSource;
+    TextureSource metallicRoughnessSource;
+    bool hasNormalMapSource = false;
+    bool hasMetallicRoughnessSource = false;
+    bool baseFallbackAllowed = false;
+    bool noBaseTextureSpecified = false;
+    bool blendWarning = false;
+    bool discovered = false;
 };
 
-Result prepareImportedMaterial(
+void addDecodeJob(const TextureSource& source, TextureUsage usage,
+                  bool fallback, std::vector<TextureDecodeJob>& jobs,
+                  std::unordered_set<TextureCacheKey, TextureCacheKeyHash>& keys) {
+    if (!source.valid) {
+        return;
+    }
+    TextureCacheKey key{source.sourceIdentity, usage};
+    if (keys.insert(key).second) {
+        jobs.push_back({std::move(key), source, fallback});
+    }
+}
+
+Result discoverImportedMaterial(
     const aiScene* scene, aiMaterial* importedMaterial,
     unsigned int materialIndex, const char* modelPath,
     const char* fallbackTexturePathOverride, const char* firstMeshName,
-    std::vector<bool>& warnedBlendMaterials, TextureCache& textureCache,
-    LoadModelProfile& profile, ImportedMaterialTemplate& output) {
+    LoadModelProfile& profile, PendingImportedMaterial& output,
+    std::vector<TextureDecodeJob>& jobs,
+    std::unordered_set<TextureCacheKey, TextureCacheKeyHash>& keys) {
     ++profile.materialPreparations;
+    output.materialIndex = materialIndex;
+    output.firstMeshName = firstMeshName;
 
     {
         PhaseTimer phaseTimer(profile.materialPropertyExtractionTime);
@@ -534,14 +645,7 @@ Result prepareImportedMaterial(
                 }
             } else if (importedAlphaMode == "BLEND") {
                 output.material.alphaMode = MaterialAlphaMode::Blend;
-                if (!warnedBlendMaterials[materialIndex]) {
-                    spdlog::warn(
-                        "Material {} uses BLEND alpha mode; blended "
-                        "transparency is not implemented and will render as "
-                        "opaque",
-                        firstMeshName);
-                    warnedBlendMaterials[materialIndex] = true;
-                }
+                output.blendWarning = true;
             }
         }
 
@@ -572,129 +676,158 @@ Result prepareImportedMaterial(
     }
 
     const TextureSource fallbackSource = makeFallbackTextureSource();
-    const auto decodeBaseColor = [&](const TextureSource& source) {
-        if (!source.valid) {
-            return TextureCacheEntry{nullptr, source.invalidReason};
-        }
-        return loadFileTexture(source, textureCache, profile, false);
-    };
-
-    const auto loadBaseWithFallback = [&](const TextureSource& intendedSource,
-                                          bool allowFallback,
-                                          bool noTextureSpecified) -> Result {
+    const auto setBaseSource = [&](TextureSource source, bool allowFallback,
+                                   bool noTextureSpecified) {
         recordTextureSource(profile, TextureUsage::BaseColor,
-                            intendedSource.sourceIdentity);
+                            source.sourceIdentity);
         output.baseColorIntendedSourceIdentity =
-            intendedSource.sourceIdentity;
-        const TextureCacheEntry intended =
-            intendedSource.sourceIdentity == fallbackSource.sourceIdentity
-                ? loadFileTexture(intendedSource, textureCache, profile, true)
-                : decodeBaseColor(intendedSource);
-        if (intended.succeeded()) {
-            assignBaseColorImage(output.material, intended);
-            output.texturePath = intendedSource.displayPath;
-            output.baseColorSourceIdentity = intendedSource.sourceIdentity;
-            return Result::success();
-        }
-
-        if (!allowFallback) {
-            if (noTextureSpecified) {
-                return Result::failure(
-                    "No texture was specified for " +
-                    std::string(firstMeshName) + "; fallback texture " +
-                    std::string(fallbackTexturePath) + ": " + intended.error);
-            }
-            return Result::failure(intended.error);
-        }
-
-        spdlog::error("Failed to load intended texture {}: {}",
-                      intendedSource.displayPath, intended.error);
-        recordTextureSource(profile, TextureUsage::BaseColor,
-                            fallbackSource.sourceIdentity);
-        const TextureCacheEntry fallback =
-            loadFileTexture(fallbackSource, textureCache, profile, true);
-        if (!fallback.succeeded()) {
-            return Result::failure(
-                "Failed to load intended texture " +
-                intendedSource.displayPath + " (" + firstMeshName +
-                ") and fallback texture " + std::string(fallbackTexturePath) +
-                ": " + fallback.error);
-        }
-
-        assignBaseColorImage(output.material, fallback);
-        output.texturePath = fallbackSource.displayPath;
-        output.baseColorSourceIdentity = fallbackSource.sourceIdentity;
-        spdlog::warn("Using fallback texture {} for {}",
-                     fallbackTexturePath, firstMeshName);
-        return Result::success();
+            source.sourceIdentity;
+        output.baseColorSource = std::move(source);
+        output.baseFallbackAllowed = allowFallback;
+        output.noBaseTextureSpecified = noTextureSpecified;
+        addDecodeJob(output.baseColorSource, TextureUsage::BaseColor,
+                     output.baseColorSource.sourceIdentity ==
+                         fallbackSource.sourceIdentity,
+                     jobs, keys);
     };
 
     aiString textureReference;
     if (importedMaterial->GetTexture(aiTextureType_BASE_COLOR, 0,
                                      &textureReference) == AI_SUCCESS) {
-        const TextureSource source = resolveTextureSource(
-            scene, modelPath, textureReference.C_Str());
-        const Result baseResult = loadBaseWithFallback(source, true, false);
-        if (!baseResult) {
-            return baseResult;
-        }
+        setBaseSource(resolveTextureSource(
+                          scene, modelPath, textureReference.C_Str()),
+                      true, false);
     } else if (fallbackTexturePathOverride != nullptr) {
-        const TextureSource source =
-            makeExplicitTextureSource(fallbackTexturePathOverride);
-        const Result baseResult = loadBaseWithFallback(source, true, false);
-        if (!baseResult) {
-            return baseResult;
-        }
+        setBaseSource(makeExplicitTextureSource(fallbackTexturePathOverride),
+                      true, false);
     } else {
-        const Result baseResult =
-            loadBaseWithFallback(fallbackSource, false, true);
-        if (!baseResult) {
-            return baseResult;
-        }
+        setBaseSource(fallbackSource, false, true);
     }
 
     aiString normalMapReference;
     if (importedMaterial->GetTexture(aiTextureType_NORMALS, 0,
                                      &normalMapReference) == AI_SUCCESS) {
-        const TextureSource source = resolveTextureSource(
+        output.normalMapSource = resolveTextureSource(
             scene, modelPath, normalMapReference.C_Str());
         recordTextureSource(profile, TextureUsage::Normal,
-                            source.sourceIdentity);
-        output.material.normalMapPath = source.displayPath;
-        output.normalMapSourceIdentity = source.sourceIdentity;
-        const TextureCacheEntry normalMap =
-            source.valid
-                ? loadNormalMapFileTexture(source, textureCache, profile)
-                : TextureCacheEntry{nullptr, source.invalidReason};
-        if (normalMap.succeeded()) {
-            assignNormalMapImage(output.material, normalMap);
-        } else {
-            output.normalMapError = normalMap.error;
-        }
+                            output.normalMapSource.sourceIdentity);
+        output.material.normalMapPath = output.normalMapSource.displayPath;
+        output.normalMapSourceIdentity = output.normalMapSource.sourceIdentity;
+        output.hasNormalMapSource = true;
+        addDecodeJob(output.normalMapSource, TextureUsage::Normal, false, jobs,
+                     keys);
     }
 
     aiString metallicRoughnessMapReference;
     if (importedMaterial->GetTexture(
             AI_MATKEY_GLTF_PBRMETALLICROUGHNESS_METALLICROUGHNESS_TEXTURE,
             &metallicRoughnessMapReference) == AI_SUCCESS) {
-        const TextureSource source = resolveTextureSource(
+        output.metallicRoughnessSource = resolveTextureSource(
             scene, modelPath, metallicRoughnessMapReference.C_Str());
         recordTextureSource(profile, TextureUsage::MetallicRoughness,
-                            source.sourceIdentity);
-        output.material.metallicRoughnessMapPath = source.displayPath;
-        output.metallicRoughnessSourceIdentity = source.sourceIdentity;
-        const TextureCacheEntry metallicRoughnessMap =
-            source.valid
-                ? loadMetallicRoughnessFileTexture(source, textureCache, profile)
-                : TextureCacheEntry{nullptr, source.invalidReason};
-        if (metallicRoughnessMap.succeeded()) {
-            output.material.hasMetallicRoughnessMap = true;
-            assignMetallicRoughnessImage(output.material, metallicRoughnessMap);
-        } else {
-            output.metallicRoughnessError = metallicRoughnessMap.error;
-        }
+                            output.metallicRoughnessSource.sourceIdentity);
+        output.material.metallicRoughnessMapPath =
+            output.metallicRoughnessSource.displayPath;
+        output.metallicRoughnessSourceIdentity =
+            output.metallicRoughnessSource.sourceIdentity;
+        output.hasMetallicRoughnessSource = true;
+        addDecodeJob(output.metallicRoughnessSource,
+                     TextureUsage::MetallicRoughness, false, jobs, keys);
     }
 
+    return Result::success();
+}
+
+TextureCacheEntry textureEntry(const TextureSource& source, TextureUsage usage,
+                               const TextureCache& cache) {
+    if (!source.valid) {
+        return {nullptr, source.invalidReason};
+    }
+    const auto found = cache.find({source.sourceIdentity, usage});
+    if (found == cache.end()) {
+        return {nullptr, "Texture decode result was not found for " +
+                             source.displayPath};
+    }
+    return found->second;
+}
+
+Result finalizeImportedMaterial(PendingImportedMaterial& pending,
+                               TextureCache& textureCache,
+                               LoadModelProfile& profile) {
+    if (pending.blendWarning) {
+        spdlog::warn("Material {} uses BLEND alpha mode; blended transparency is "
+                     "not implemented and will render as opaque",
+                     pending.firstMeshName);
+    }
+    const TextureCacheEntry intended = textureEntry(
+        pending.baseColorSource, TextureUsage::BaseColor, textureCache);
+    if (intended.succeeded()) {
+        assignBaseColorImage(pending.material, intended);
+        pending.texturePath = pending.baseColorSource.displayPath;
+        pending.baseColorSourceIdentity = pending.baseColorSource.sourceIdentity;
+    } else if (!pending.baseFallbackAllowed) {
+        if (pending.noBaseTextureSpecified) {
+            return Result::failure("No texture was specified for " +
+                                   pending.firstMeshName + "; fallback texture " +
+                                   fallbackTexturePath + ": " + intended.error);
+        }
+        return Result::failure(intended.error);
+    } else {
+        spdlog::error("Failed to load intended texture {}: {}",
+                      pending.baseColorSource.displayPath, intended.error);
+        const TextureSource fallbackSource = makeFallbackTextureSource();
+        recordTextureSource(profile, TextureUsage::BaseColor,
+                            fallbackSource.sourceIdentity);
+        TextureCacheEntry fallback = textureEntry(
+            fallbackSource, TextureUsage::BaseColor, textureCache);
+        if (!fallback.succeeded() &&
+            textureCache.find({fallbackSource.sourceIdentity,
+                               TextureUsage::BaseColor}) == textureCache.end()) {
+            const auto fallbackStart = LoadModelProfile::Clock::now();
+            TextureDecodeJob fallbackJob{{fallbackSource.sourceIdentity,
+                                          TextureUsage::BaseColor},
+                                         fallbackSource, true};
+            TextureDecodeJobResult fallbackResult = decodeTextureJob(fallbackJob);
+            profile.textureDecodeWallTime +=
+                LoadModelProfile::Clock::now() - fallbackStart;
+            gatherDecodeResult(fallbackJob, std::move(fallbackResult), textureCache,
+                               profile);
+            fallback = textureEntry(fallbackSource, TextureUsage::BaseColor,
+                                    textureCache);
+        }
+        if (!fallback.succeeded()) {
+            return Result::failure("Failed to load intended texture " +
+                                   pending.baseColorSource.displayPath + " (" +
+                                   pending.firstMeshName + ") and fallback texture " +
+                                   fallbackTexturePath + ": " + fallback.error);
+        }
+        assignBaseColorImage(pending.material, fallback);
+        pending.texturePath = fallbackSource.displayPath;
+        pending.baseColorSourceIdentity = fallbackSource.sourceIdentity;
+        spdlog::warn("Using fallback texture {} for {}", fallbackTexturePath,
+                     pending.firstMeshName);
+    }
+
+    if (pending.hasNormalMapSource) {
+        const TextureCacheEntry normal = textureEntry(
+            pending.normalMapSource, TextureUsage::Normal, textureCache);
+        if (normal.succeeded()) {
+            assignNormalMapImage(pending.material, normal);
+        } else {
+            pending.normalMapError = normal.error;
+        }
+    }
+    if (pending.hasMetallicRoughnessSource) {
+        const TextureCacheEntry metallicRoughness = textureEntry(
+            pending.metallicRoughnessSource, TextureUsage::MetallicRoughness,
+            textureCache);
+        if (metallicRoughness.succeeded()) {
+            pending.material.hasMetallicRoughnessMap = true;
+            assignMetallicRoughnessImage(pending.material, metallicRoughness);
+        } else {
+            pending.metallicRoughnessError = metallicRoughness.error;
+        }
+    }
     return Result::success();
 }
 
@@ -922,21 +1055,25 @@ void logLoadSummary(const LoadModelProfile& profile,
         "loadModel summary: cache={} total={:.3f}ms lookup={:.3f}ms "
         "instantiate={:.3f}ms sourceLoad={:.3f}ms assimpRead={:.3f}ms "
         "geometry={:.3f}ms materialProperties={:.3f}ms "
-        "baseDecode={:.3f}ms normalDecode={:.3f}ms "
-        "metallicRoughnessDecode={:.3f}ms finalCommit={:.3f}ms; "
+        "textureDecodeWall={:.3f}ms "
+        "decodeCpu(base={:.3f}ms normal={:.3f}ms metallicRoughness={:.3f}ms) "
+        "finalCommit={:.3f}ms; "
         "meshes={} materials={} materialPreparations={} faceIndices={} "
         "uniqueVertices={} copied(meshes={} vertices={} indices={}); "
         "refs(base={} normal={} metallicRoughness={}) "
         "uniqueSources(base={} normal={} metallicRoughness={}); "
         "decodeCalls(base={} [file={} memory={}] normal={} [file={} memory={}] "
         "metallicRoughness={} [file={} memory={}]); fallbackDecodes={} "
-        "decodedRgbaBytes={}; cacheCounts(hits={} misses={})",
+        "decodedRgbaBytes={}; decodeWorkers={} decodeJobs={} "
+        "decodeSuccesses={} decodeFailures={} maxConcurrentDecodes={}; "
+        "cacheCounts(hits={} misses={})",
         profile.cacheHit ? "hit" : "miss", milliseconds(totalTime),
         milliseconds(profile.cacheLookupTime),
         milliseconds(profile.cachedInstantiationTime),
         milliseconds(profile.sourceLoadingTime), milliseconds(profile.assimpReadTime),
         milliseconds(profile.geometryConversionTime),
         milliseconds(profile.materialPropertyExtractionTime),
+        milliseconds(profile.textureDecodeWallTime),
         milliseconds(profile.baseColorDecodeTime),
         milliseconds(profile.normalMapDecodeTime),
         milliseconds(profile.metallicRoughnessDecodeTime),
@@ -957,6 +1094,8 @@ void logLoadSummary(const LoadModelProfile& profile,
         profile.metallicRoughness.stbiLoadCalls,
         profile.metallicRoughness.stbiLoadFromMemoryCalls,
         profile.fallbackTextureDecodeCount, profile.totalDecodedRgbaBytes,
+        profile.decodeWorkers, profile.decodeJobs, profile.decodeSuccesses,
+        profile.decodeFailures, profile.maxConcurrentDecodes,
         profile.cacheHits, profile.cacheMisses);
 }
 
@@ -1076,12 +1215,17 @@ Result GameObject::loadModel() {
         auto loadedAsset = std::make_shared<CachedCpuModel>();
         loadedAsset->sourceMaterialCount = scene->mNumMaterials;
         loadedAsset->meshes.reserve(scene->mNumMeshes);
-        std::vector<bool> warnedBlendMaterials(scene->mNumMaterials, false);
-        std::vector<ImportedMaterialTemplate> materialTemplates(
+        std::vector<PendingImportedMaterial> materialTemplates(
             scene->mNumMaterials);
         TextureCache textureCache;
         textureCache.reserve(static_cast<std::size_t>(scene->mNumMaterials) *
                              3);
+        std::vector<TextureDecodeJob> decodeJobs;
+        decodeJobs.reserve(static_cast<std::size_t>(scene->mNumMaterials) * 3);
+        std::unordered_set<TextureCacheKey, TextureCacheKeyHash> decodeKeys;
+        decodeKeys.reserve(static_cast<std::size_t>(scene->mNumMaterials) * 3);
+        std::vector<unsigned int> materialOrder;
+        materialOrder.reserve(scene->mNumMaterials);
 
         for (unsigned int i = 0; i < scene->mNumMeshes; ++i) {
             const aiMesh* mesh = scene->mMeshes[i];
@@ -1111,19 +1255,43 @@ Result GameObject::loadModel() {
                     " has no usable normals after import");
             }
 
-            ImportedMaterialTemplate& importedMaterial =
+            PendingImportedMaterial& importedMaterial =
                 materialTemplates[mesh->mMaterialIndex];
-            if (!importedMaterial.prepared) {
-                const Result preparationResult = prepareImportedMaterial(
+            if (!importedMaterial.discovered) {
+                const Result discoveryResult = discoverImportedMaterial(
                     scene, material, mesh->mMaterialIndex, modelPath,
-                    texturePath, mesh->mName.C_Str(), warnedBlendMaterials,
-                    textureCache, profile, importedMaterial);
-                if (!preparationResult) {
-                    return preparationResult;
+                    texturePath, mesh->mName.C_Str(), profile, importedMaterial,
+                    decodeJobs, decodeKeys);
+                if (!discoveryResult) {
+                    return discoveryResult;
                 }
-                importedMaterial.prepared = true;
+                importedMaterial.discovered = true;
+                materialOrder.push_back(mesh->mMaterialIndex);
             }
+        }
 
+        std::vector<TextureDecodeJobResult> decodeResults;
+        const Result decodeResult =
+            decodeTextureJobs(decodeJobs, decodeResults, profile);
+        if (!decodeResult) {
+            return decodeResult;
+        }
+        for (std::size_t jobIndex = 0; jobIndex < decodeJobs.size(); ++jobIndex) {
+            gatherDecodeResult(decodeJobs[jobIndex], std::move(decodeResults[jobIndex]),
+                               textureCache, profile);
+        }
+        for (unsigned int materialIndex : materialOrder) {
+            const Result finalization = finalizeImportedMaterial(
+                materialTemplates[materialIndex], textureCache, profile);
+            if (!finalization) {
+                return finalization;
+            }
+        }
+
+        for (unsigned int i = 0; i < scene->mNumMeshes; ++i) {
+            const aiMesh* mesh = scene->mMeshes[i];
+            PendingImportedMaterial& importedMaterial =
+                materialTemplates[mesh->mMaterialIndex];
             CachedCpuMesh cachedMesh;
             Material meshMaterial = importedMaterial.material;
             recordTextureReference(

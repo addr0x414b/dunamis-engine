@@ -1,6 +1,6 @@
 add_library(GameObject STATIC game_object.cpp)
 target_include_directories(GameObject PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(GameObject PUBLIC spdlog VulkanUtils glm assimp)
+target_link_libraries(GameObject PUBLIC spdlog VulkanUtils glm assimp PRIVATE Threads::Threads)
 
 add_library(Camera STATIC camera.cpp)
 target_include_directories(Camera PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

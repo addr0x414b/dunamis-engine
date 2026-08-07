@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -110,6 +111,84 @@ std::filesystem::path createSharedMaterialModel() {
 "materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0},"metallicRoughnessTexture":{"index":2}},"normalTexture":{"index":1}}],
 "meshes":[{"primitives":[{"attributes":{"POSITION":0,"TEXCOORD_0":1},"indices":2,"material":0}]},{"primitives":[{"attributes":{"POSITION":0},"indices":2,"material":0}]}],
 "nodes":[{"mesh":0},{"mesh":1}],"scenes":[{"nodes":[0,1]}],"scene":0
+})json";
+    return directory / "model.gltf";
+}
+
+std::filesystem::path createParallelDecodeModel() {
+    const auto suffix =
+        std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto directory = std::filesystem::temp_directory_path() /
+                           ("dunamis-parallel-decode-" +
+                            std::to_string(suffix));
+    std::filesystem::create_directories(directory);
+
+    std::ofstream binary(directory / "mesh.bin", std::ios::binary);
+    const float positions[] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+                               0.0f, 1.0f, 0.0f};
+    const float texCoords[] = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f};
+    const unsigned short indices[] = {0, 1, 2};
+    binary.write(reinterpret_cast<const char*>(positions), sizeof(positions));
+    binary.write(reinterpret_cast<const char*>(texCoords), sizeof(texCoords));
+    binary.write(reinterpret_cast<const char*>(indices), sizeof(indices));
+
+    for (int index = 0; index < 8; ++index) {
+        std::ofstream image(directory / ("image-" + std::to_string(index) +
+                                         ".ppm"),
+                            std::ios::binary);
+        image << "P6\n1 1\n255\n";
+        const unsigned char pixel[] = {static_cast<unsigned char>(20 + index),
+                                       static_cast<unsigned char>(80 + index),
+                                       static_cast<unsigned char>(140 + index)};
+        image.write(reinterpret_cast<const char*>(pixel), sizeof(pixel));
+    }
+
+    std::ofstream model(directory / "model.gltf");
+    model << R"json({
+"asset":{"version":"2.0"},
+"buffers":[{"uri":"mesh.bin","byteLength":66}],
+"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":24},{"buffer":0,"byteOffset":60,"byteLength":6}],
+"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]},{"bufferView":1,"componentType":5126,"count":3,"type":"VEC2"},{"bufferView":2,"componentType":5123,"count":3,"type":"SCALAR"}],
+"images":[)json";
+    for (int index = 0; index < 8; ++index) {
+        if (index != 0) {
+            model << ',';
+        }
+        model << "{\"uri\":\"image-" << index << ".ppm\"}";
+    }
+    model << "],\n\"textures\":[";
+    for (int index = 0; index < 8; ++index) {
+        if (index != 0) {
+            model << ',';
+        }
+        model << "{\"source\":" << index << '}';
+    }
+    model << "],\n\"materials\":[";
+    for (int index = 0; index < 8; ++index) {
+        if (index != 0) {
+            model << ',';
+        }
+        model << "{\"pbrMetallicRoughness\":{\"baseColorTexture\":{\"index\":"
+              << index << "}";
+        if (index == 1) {
+            model << ",\"metallicRoughnessTexture\":{\"index\":0}";
+        }
+        model << '}';
+        if (index == 0) {
+            model << ",\"normalTexture\":{\"index\":0}";
+        }
+        model << '}';
+    }
+    model << "],\n\"meshes\":[{\"primitives\":[";
+    for (int index = 0; index < 9; ++index) {
+        if (index != 0) {
+            model << ',';
+        }
+        const int material = index == 8 ? 0 : index;
+        model << "{\"attributes\":{\"POSITION\":0,\"TEXCOORD_0\":1},\"indices\":2,\"material\":"
+              << material << '}';
+    }
+    model << R"json(]}],"nodes":[{"mesh":0}],"scenes":[{"nodes":[0]}],"scene":0
 })json";
     return directory / "model.gltf";
 }
@@ -274,6 +353,59 @@ bool testSharedMaterialReuse(const std::filesystem::path& buildDirectory) {
     return passed;
 }
 
+bool testParallelDecodeFixture(const std::filesystem::path& buildDirectory) {
+    const auto modelPath = createParallelDecodeModel();
+    bool passed = true;
+    {
+        CurrentPathGuard guard(buildDirectory);
+        GameObject first;
+        first.modelPath = modelPath.c_str();
+        const Result firstResult = first.loadModel();
+        passed &= expect(static_cast<bool>(firstResult),
+                         "Parallel decode fixture did not load");
+        passed &= expect(first.meshInstances().size() == 9,
+                         "Parallel decode fixture did not retain mesh order");
+        if (firstResult && first.meshInstances().size() == 9) {
+            const Material& firstMaterial = first.meshInstances()[0].material;
+            const Material& repeatedMaterial = first.meshInstances()[8].material;
+            const Material& metallicMaterial = first.meshInstances()[1].material;
+            passed &= expect(firstMaterial.pixels != nullptr &&
+                                 firstMaterial.pixels[0] == 20 &&
+                                 firstMaterial.pixels[1] == 80 &&
+                                 firstMaterial.pixels[2] == 140,
+                             "Parallel fixture base-color pixels differ from source");
+            passed &= expect(firstMaterial.pixels == repeatedMaterial.pixels &&
+                                 firstMaterial.pixelsOwner ==
+                                     repeatedMaterial.pixelsOwner,
+                             "Same source and usage did not share one decode");
+            passed &= expect(firstMaterial.normalMapPixels != nullptr &&
+                                 firstMaterial.normalMapPixels !=
+                                     firstMaterial.pixels &&
+                                 metallicMaterial.metallicRoughnessMapPixels !=
+                                     firstMaterial.pixels,
+                             "Same source used by different usages was not decoded separately");
+            passed &= expect(firstMaterial.pixels == firstMaterial.pixelsOwner.get() &&
+                                 firstMaterial.normalMapPixels ==
+                                     firstMaterial.normalMapPixelsOwner.get() &&
+                                 metallicMaterial.metallicRoughnessMapPixels ==
+                                     metallicMaterial.metallicRoughnessMapPixelsOwner.get(),
+                             "Parallel fixture raw pixel views do not match owners");
+            GameObject cached;
+            cached.modelPath = modelPath.c_str();
+            const Result cachedResult = cached.loadModel();
+            passed &= expect(static_cast<bool>(cachedResult) &&
+                                 cached.meshInstances().size() == 9 &&
+                                 cached.meshInstances()[0].material.pixels ==
+                                     firstMaterial.pixels &&
+                                 cached.meshInstances()[0].mesh.vertices.data() !=
+                                     first.meshInstances()[0].mesh.vertices.data(),
+                             "Cache hit did not preserve pixel sharing and geometry independence");
+        }
+    }
+    std::filesystem::remove_all(modelPath.parent_path());
+    return passed;
+}
+
 bool testFallbackFailure(const std::filesystem::path& modelPath,
                          const std::filesystem::path& noFallbackDirectory) {
     CurrentPathGuard guard(noFallbackDirectory);
@@ -303,6 +435,7 @@ int main(int argc, char** argv) {
     passed &= testFactorValidation(argv[1]);
     passed &= testOptionalMetallicRoughnessFailure(argv[1]);
     passed &= testSharedMaterialReuse(argv[1]);
+    passed &= testParallelDecodeFixture(argv[1]);
     std::filesystem::remove_all(modelPath.parent_path());
     return passed ? 0 : 1;
 }
