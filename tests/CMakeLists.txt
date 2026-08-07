@@ -61,7 +61,7 @@ set_tests_properties(vulkan_partial_cleanup PROPERTIES
         WORKING_DIRECTORY "${VULKAN_PARTIAL_CLEANUP_CWD}"
         SKIP_RETURN_CODE 77
         FAIL_REGULAR_EXPRESSION
-                "has not been destroyed;leaked object"
+                "has not been destroyed;leaked object|VK_IMAGE_LAYOUT_UNDEFINED"
         TIMEOUT 30
 )
 

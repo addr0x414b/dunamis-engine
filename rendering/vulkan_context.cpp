@@ -1795,6 +1795,14 @@ Result VulkanContext::createDirectionalShadowResources() {
             destroyDirectionalShadowResources();
             return vkFailure("vkMapMemory(directional shadow UBO)", result);
         }
+        const DirectionalShadowUBO initialUbo{glm::mat4(1.0f)};
+        memcpy(frame.transformBufferMapped, &initialUbo, sizeof(initialUbo));
+    }
+
+    Result initializeResult = initializeDirectionalShadowImages();
+    if (!initializeResult) {
+        return addContext("Failed to initialize directional-shadow images",
+                          initializeResult);
     }
 
     std::array<VkDescriptorSetLayout, MAX_FRAMES_IN_FLIGHT> layouts{};
@@ -1836,6 +1844,43 @@ Result VulkanContext::createDirectionalShadowResources() {
                                writes.data(), 0, nullptr);
     }
     return Result::success();
+}
+
+Result VulkanContext::initializeDirectionalShadowImages() {
+    for (const auto& frame : directionalShadowFrames) {
+        if (frame.framebuffer == VK_NULL_HANDLE) {
+            return Result::failure(
+                "Directional-shadow framebuffer is unavailable during image initialization");
+        }
+    }
+
+    VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+    Result result = beginSingleTimeCommands(commandBuffer);
+    if (!result) {
+        return result;
+    }
+
+    for (const auto& frame : directionalShadowFrames) {
+        VkRenderPassBeginInfo renderPassInfo{};
+        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        renderPassInfo.renderPass = directionalShadowRenderPass;
+        renderPassInfo.framebuffer = frame.framebuffer;
+        renderPassInfo.renderArea.offset = {0, 0};
+        renderPassInfo.renderArea.extent = {
+            directional_shadow::mapResolution,
+            directional_shadow::mapResolution};
+
+        VkClearValue clearValue{};
+        clearValue.depthStencil = {1.0f, 0};
+        renderPassInfo.clearValueCount = 1;
+        renderPassInfo.pClearValues = &clearValue;
+
+        vkCmdBeginRenderPass(commandBuffer, &renderPassInfo,
+                             VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdEndRenderPass(commandBuffer);
+    }
+
+    return endSingleTimeCommands(commandBuffer);
 }
 
 void VulkanContext::destroyDirectionalShadowResources() noexcept {

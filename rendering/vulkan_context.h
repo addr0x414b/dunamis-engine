@@ -81,6 +81,7 @@ private:
         const std::unique_ptr<GameObject>& gameObject);
     [[nodiscard]] Result createLightsUBO();
     [[nodiscard]] Result createDirectionalShadowResources();
+    [[nodiscard]] Result initializeDirectionalShadowImages();
     [[nodiscard]] Result beginSceneResourceLoad(Scene* scene);
     [[nodiscard]] Result commitSceneResourceLoad(Scene* scene);
     [[nodiscard]] Result cancelSceneResourceLoad();

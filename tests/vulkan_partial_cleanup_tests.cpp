@@ -1,7 +1,9 @@
 #include "core/platform.h"
+#include "rendering/visual_server.h"
 #include "rendering/vulkan_context.h"
 #include "scene/scene.h"
 
+#include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
@@ -48,6 +50,42 @@ public:
     void start() override {}
     void update() override {}
 };
+
+Result addNoLightTriangle(Scene& scene) {
+    auto object = std::make_unique<GameObject>();
+    MeshInstance instance{};
+    instance.mesh.vertices = {
+        {{-0.5f, -0.5f, -2.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f},
+         {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+        {{0.5f, -0.5f, -2.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f},
+         {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+        {{0.0f, 0.5f, -2.0f}, {0.0f, 0.0f, 1.0f}, {0.5f, 0.0f},
+         {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+    };
+    instance.mesh.indices = {0, 1, 2};
+    calculateMeshBounds(instance.mesh);
+    instance.material.pixels = static_cast<stbi_uc*>(std::malloc(4));
+    if (!instance.material.pixels) {
+        return Result::failure("Failed to allocate test texture pixels");
+    }
+    instance.material.pixels[0] = 255;
+    instance.material.pixels[1] = 255;
+    instance.material.pixels[2] = 255;
+    instance.material.pixels[3] = 255;
+    instance.material.pixelsOwner =
+        makeStbiPixelOwner(instance.material.pixels);
+    instance.material.texWidth = 1;
+    instance.material.texHeight = 1;
+    instance.material.texChannels = 4;
+    instance.material.mipLevels = 1;
+    instance.material.doubleSided = true;
+
+    Result result = object->addMeshInstance(std::move(instance));
+    if (!result) {
+        return result;
+    }
+    return scene.addGameObject(std::move(object));
+}
 
 VkSampler foreignSamplerHandle() {
 #if VK_USE_64_BIT_PTR_DEFINES
@@ -203,6 +241,56 @@ int main(int argc, char** argv) {
             !GameObjectTestAccess::mutableTopology(
                 *resourceScene.gameObjects().front())) {
             std::cerr << "Repeated full Vulkan cleanup did not complete\n";
+            return 1;
+        }
+    }
+
+    {
+        EmptyScene noLightScene;
+        const Result sceneResult = addNoLightTriangle(noLightScene);
+        if (!sceneResult) {
+            std::cerr << "Failed to build no-light frame test scene: "
+                      << sceneResult.error() << '\n';
+            return 1;
+        }
+
+        VisualServer visualServer;
+        const Result visualServerResult =
+            visualServer.initialize(platform.window(), &noLightScene);
+        if (!visualServerResult) {
+            std::cerr << "Failed to initialize no-light frame test: "
+                      << visualServerResult.error() << '\n';
+            return 1;
+        }
+
+        Camera camera;
+        camera.position = {0.0f, 0.0f, 0.0f};
+        for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame) {
+            const Result frameResult = visualServer.run(
+                &noLightScene, camera, SceneRunState::Editing);
+            if (!frameResult) {
+                std::cerr << "No-light frame failed: " << frameResult.error()
+                          << '\n';
+                return 1;
+            }
+        }
+
+        (void)SDL_SetWindowSize(platform.window(), 1920, 1080);
+        SDL_Event resizeEvent{};
+        resizeEvent.type = SDL_EVENT_WINDOW_RESIZED;
+        visualServer.processEvent(resizeEvent);
+        for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame) {
+            const Result frameResult = visualServer.run(
+                &noLightScene, camera, SceneRunState::Editing);
+            if (!frameResult) {
+                std::cerr << "No-light frame after resize failed: "
+                          << frameResult.error() << '\n';
+                return 1;
+            }
+        }
+
+        if (!visualServer.shutdown() || !visualServer.shutdown()) {
+            std::cerr << "Repeated no-light VisualServer shutdown failed\n";
             return 1;
         }
     }
