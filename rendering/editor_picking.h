@@ -1,9 +1,14 @@
 #ifndef EDITOR_PICKING_H
 #define EDITOR_PICKING_H
 
+#include <vector>
+
 #include <glm/glm.hpp>
 
 #include "utils/vulkan_utils.h"
+
+class Camera;
+class GameObject;
 
 namespace editor_picking {
 
@@ -28,8 +33,13 @@ struct MeshPickDiagnostics {
 [[nodiscard]] glm::mat4 makeModelMatrix(const glm::vec3& position,
                                          const glm::vec3& rotation,
                                          const glm::vec3& scale) noexcept;
+[[nodiscard]] glm::mat4 makeRotationMatrix(
+    const glm::vec3& rotation) noexcept;
 [[nodiscard]] glm::mat4 makeTranslationMatrix(
     const glm::vec3& translation) noexcept;
+[[nodiscard]] std::vector<const Camera*> collectCameraPointers(
+    const std::vector<const GameObject*>& objects,
+    const Camera* activeCamera);
 [[nodiscard]] AggregateBounds aggregateBounds(
     const std::vector<MeshInstance>& instances) noexcept;
 [[nodiscard]] glm::vec3 worldBoundsCenter(

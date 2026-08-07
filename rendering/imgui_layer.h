@@ -13,6 +13,7 @@
 
 class Scene;
 class GameObject;
+class Camera;
 
 class ImGuiLayer final {
 public:
@@ -63,6 +64,12 @@ private:
     void drawTranslationGizmo(Scene* scene, const glm::mat4& view,
                               const glm::mat4& projection,
                               SceneRunState runState);
+    void drawCameraVisualizations(Scene* scene, const glm::mat4& editorView,
+                                  const glm::mat4& projection,
+                                  SceneRunState runState);
+    void drawCameraVisualization(const Camera& camera,
+                                 const glm::mat4& editorView,
+                                 const glm::mat4& projection, bool active);
     void processWorldSelection(Scene* scene, const glm::mat4& view,
                                const glm::mat4& projection,
                                SceneRunState runState);

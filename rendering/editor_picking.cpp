@@ -6,6 +6,9 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "../scene/camera.h"
+#include "../scene/game_object.h"
+
 namespace editor_picking {
 namespace {
 
@@ -36,17 +39,46 @@ glm::mat4 makeModelMatrix(const glm::vec3& position,
                           const glm::vec3& scale) noexcept {
     glm::mat4 model(1.0f);
     model = glm::translate(model, position);
-    model = glm::rotate(model, glm::radians(rotation.x),
-                        glm::vec3(1.0f, 0.0f, 0.0f));
-    model = glm::rotate(model, glm::radians(rotation.y),
-                        glm::vec3(0.0f, 1.0f, 0.0f));
-    model = glm::rotate(model, glm::radians(rotation.z),
-                        glm::vec3(0.0f, 0.0f, 1.0f));
+    model *= makeRotationMatrix(rotation);
     return glm::scale(model, scale);
+}
+
+glm::mat4 makeRotationMatrix(const glm::vec3& rotation) noexcept {
+    glm::mat4 result(1.0f);
+    result = glm::rotate(result, glm::radians(rotation.x),
+                         glm::vec3(1.0f, 0.0f, 0.0f));
+    result = glm::rotate(result, glm::radians(rotation.y),
+                         glm::vec3(0.0f, 1.0f, 0.0f));
+    result = glm::rotate(result, glm::radians(rotation.z),
+                         glm::vec3(0.0f, 0.0f, 1.0f));
+    return result;
 }
 
 glm::mat4 makeTranslationMatrix(const glm::vec3& translation) noexcept {
     return glm::translate(glm::mat4(1.0f), translation);
+}
+
+std::vector<const Camera*> collectCameraPointers(
+    const std::vector<const GameObject*>& objects,
+    const Camera* activeCamera) {
+    std::vector<const Camera*> cameras;
+    const auto appendUnique = [&cameras](const Camera* camera) {
+        if (camera != nullptr &&
+            std::find(cameras.begin(), cameras.end(), camera) ==
+                cameras.end()) {
+            cameras.push_back(camera);
+        }
+    };
+
+    for (const GameObject* object : objects) {
+        if (object == nullptr) {
+            continue;
+        }
+        appendUnique(dynamic_cast<const Camera*>(object));
+        appendUnique(object->attachedCamera());
+    }
+    appendUnique(activeCamera);
+    return cameras;
 }
 
 AggregateBounds aggregateBounds(

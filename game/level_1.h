@@ -13,7 +13,7 @@ public:
     void update() override;
 
 private:
-    Player player;
+    Player* player_ = nullptr;
 };
 
 #endif

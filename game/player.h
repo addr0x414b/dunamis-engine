@@ -7,17 +7,27 @@
 #include "../scene/game_object.h"
 #include "spdlog/spdlog.h"
 
+class PlayerTestAccess;
+
 class Player : public GameObject {
 public:
     void init();
     void start(std::shared_ptr<InputManager> input);
     void update(std::shared_ptr<InputManager> input);
+    Camera* attachedCamera() noexcept override { return camera.get(); }
+    const Camera* attachedCamera() const noexcept override {
+        return camera.get();
+    }
     std::shared_ptr<Camera> camera;
 
     glm::vec3 front = glm::vec3(0.0f, 0.0f, -1.0f);
     glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
 
 private:
+    friend class PlayerTestAccess;
+
+    [[nodiscard]] bool syncLookAnglesFromCamera() noexcept;
+
     float speed = 1.0f;
     double lastX = 0.0;
     double lastY = 0.0;

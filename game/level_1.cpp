@@ -61,6 +61,9 @@ void Level1::init() {
     test4->intensity = 100.0f;
     (void)test4->loadModel();
     (void)addGameObject(std::move(test4));*/
+    auto test6 = std::make_unique<Camera>();
+    test6->name = "Camera";
+    requireSuccess(addGameObject(std::move(test6)), "Fail");
 
     auto test4 = std::make_unique<DirectionalLight>();
     test4->name = "Direc Light";
@@ -114,12 +117,18 @@ void Level1::init() {
     (void)light2->loadModel();
     (void)addGameObject(std::move(light2));*/
 
-    player.init();
-    const Result cameraResult = setActiveCamera(player.camera);
+    auto player = std::make_unique<Player>();
+    Player* playerObserver = player.get();
+    playerObserver->init();
+    requireSuccess(addGameObject(std::move(player)),
+                   "Failed to add Player");
+
+    const Result cameraResult = setActiveCamera(playerObserver->camera);
     if (!cameraResult) {
         throw std::runtime_error(
             "Failed to set the Level 1 camera: " + cameraResult.error());
     }
+    player_ = playerObserver;
 
     spdlog::info("Scene successfully initialized");
 
@@ -129,7 +138,9 @@ void Level1::start() {
     for (const auto& obj : gameObjects()) {
         obj->start();
     }
-    player.start(inputManager);
+    if (player_ != nullptr) {
+        player_->start(inputManager);
+    }
 }
 
 void Level1::update() {
@@ -141,5 +152,7 @@ void Level1::update() {
 
         }
     }
-    player.update(inputManager);
+    if (player_ != nullptr) {
+        player_->update(inputManager);
+    }
 }

@@ -70,7 +70,7 @@ private:
     glm::vec4 backgroundColor_{
         0.639f, 0.965f, 1.0f, 1.0f};
     glm::vec3 ambientColor_{1.0f, 1.0f, 1.0f};
-    float ambientIntensity_ = 0.01f;
+    float ambientIntensity_ = 0.1f;
     bool active_ = false;
 };
 

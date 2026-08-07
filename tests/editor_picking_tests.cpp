@@ -1,13 +1,25 @@
 #include "rendering/editor_picking.h"
+#include "scene/camera.h"
 #include "scene/game_object.h"
 
 #include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <vector>
 
 #include <glm/gtc/matrix_transform.hpp>
 
 namespace {
+
+class AttachedCameraObject final : public GameObject {
+public:
+    Camera camera;
+
+    Camera* attachedCamera() noexcept override { return &camera; }
+    const Camera* attachedCamera() const noexcept override {
+        return &camera;
+    }
+};
 
 bool expect(bool value, const char* message) {
     if (!value) std::cerr << message << '\n';
@@ -281,13 +293,90 @@ bool runClosestObjectAndGizmoTests() {
     return passed;
 }
 
+bool runRotationMatrixTests() {
+    const glm::vec3 objectPosition{3.0f, -2.0f, 7.0f};
+    const glm::vec3 originalOffset{0.0f, 0.0f, 4.0f};
+    const glm::vec3 originalFront{0.0f, 0.0f, -1.0f};
+    const glm::vec3 originalUp{0.0f, 1.0f, 0.0f};
+    const glm::mat4 oldRotation =
+        editor_picking::makeRotationMatrix({11.0f, -23.0f, 17.0f});
+    const glm::mat4 newRotation =
+        editor_picking::makeRotationMatrix({47.0f, 31.0f, -29.0f});
+    const glm::mat4 deltaRotation = newRotation * glm::inverse(oldRotation);
+    const glm::vec3 rotatedOffset = glm::vec3(
+        deltaRotation * glm::vec4(originalOffset, 0.0f));
+    const glm::vec3 rotatedFront = glm::normalize(glm::vec3(
+        deltaRotation * glm::vec4(originalFront, 0.0f)));
+    const glm::vec3 rotatedUp = glm::normalize(glm::vec3(
+        deltaRotation * glm::vec4(originalUp, 0.0f)));
+    const glm::vec3 rotatedCameraPosition = objectPosition + rotatedOffset;
+
+    bool passed = expect(std::isfinite(rotatedCameraPosition.x) &&
+                             std::isfinite(rotatedCameraPosition.y) &&
+                             std::isfinite(rotatedCameraPosition.z) &&
+                             std::isfinite(rotatedFront.x) &&
+                             std::isfinite(rotatedFront.y) &&
+                             std::isfinite(rotatedFront.z) &&
+                             std::isfinite(rotatedUp.x) &&
+                             std::isfinite(rotatedUp.y) &&
+                             std::isfinite(rotatedUp.z),
+                         "Combined Euler camera rotation was non-finite");
+    passed &= expect(std::abs(glm::length(rotatedOffset) -
+                              glm::length(originalOffset)) < 1.0e-5f &&
+                         std::abs(glm::length(rotatedFront) - 1.0f) < 1.0e-5f &&
+                         std::abs(glm::length(rotatedUp) - 1.0f) < 1.0e-5f,
+                     "Attached camera rotation changed distance or direction lengths");
+
+    const glm::mat4 quarterTurn =
+        editor_picking::makeRotationMatrix({0.0f, 90.0f, 0.0f});
+    const glm::vec3 quarterTurnOffset = glm::vec3(
+        quarterTurn * glm::vec4(originalOffset, 0.0f));
+    const glm::vec3 quarterTurnFront = glm::vec3(
+        quarterTurn * glm::vec4(originalFront, 0.0f));
+    passed &= expect(sameVector(quarterTurnOffset, {4.0f, 0.0f, 0.0f}) &&
+                         sameVector(quarterTurnFront, {-1.0f, 0.0f, 0.0f}),
+                     "Y rotation did not use Dunamis' Euler convention");
+    passed &= expect(sameVector(rotatedCameraPosition - objectPosition,
+                                rotatedOffset),
+                     "Attached camera offset was not rotated around the object");
+    return passed;
+}
+
+bool runCameraDiscoveryTests() {
+    Camera standaloneCamera;
+    Camera secondStandaloneCamera;
+    AttachedCameraObject attachedObject;
+    Camera fallbackCamera;
+
+    const std::vector<const GameObject*> objects{
+        &standaloneCamera, &attachedObject, &secondStandaloneCamera};
+    const std::vector<const Camera*> cameras =
+        editor_picking::collectCameraPointers(objects, &attachedObject.camera);
+    bool passed = expect(cameras.size() == 3 &&
+                             cameras[0] == &standaloneCamera &&
+                             cameras[1] == &attachedObject.camera &&
+                             cameras[2] == &secondStandaloneCamera,
+                         "Camera discovery did not deduplicate an active attached camera");
+
+    const std::vector<const GameObject*> partialObjects{&standaloneCamera};
+    const std::vector<const Camera*> withFallback =
+        editor_picking::collectCameraPointers(partialObjects, &fallbackCamera);
+    passed &= expect(withFallback.size() == 2 &&
+                         withFallback[0] == &standaloneCamera &&
+                         withFallback[1] == &fallbackCamera,
+                     "Active Camera fallback was not discovered");
+    return passed;
+}
+
 }  // namespace
 
 int main() {
     return runAabbTests() && runTriangleTests() && runTransformedTests() &&
                    runTriangleScaleToleranceTests() &&
                    runMeshBoundsTests() &&
-                   runClosestObjectAndGizmoTests()
+                   runClosestObjectAndGizmoTests() &&
+                   runRotationMatrixTests() &&
+                   runCameraDiscoveryTests()
                ? 0
                : 1;
 }

@@ -12,6 +12,7 @@
 
 class Scene;
 class VulkanContext;
+class Camera;
 namespace model_loading {
 struct CachedCpuModel;
 }
@@ -25,6 +26,10 @@ public:
 
     virtual void start() {}
     virtual void update() {}
+    virtual Camera* attachedCamera() noexcept { return nullptr; }
+    virtual const Camera* attachedCamera() const noexcept {
+        return nullptr;
+    }
     virtual ~GameObject();
 
     const char* modelPath = nullptr;

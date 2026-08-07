@@ -16,6 +16,11 @@
 #include <unordered_map>
 #include <utility>
 
+class PlayerTestAccess {
+public:
+    static double yaw(const Player& player) { return player.yaw; }
+    static double pitch(const Player& player) { return player.pitch; }
+};
 
 namespace {
 
@@ -66,6 +71,10 @@ bool nearlyEqual(float actual, float expected) {
     return std::fabs(actual - expected) < 0.0001f;
 }
 
+bool sameVector(const glm::vec3& first, const glm::vec3& second) {
+    return glm::length(first - second) < 1.0e-5f;
+}
+
 bool hasDirectionalLightError(const Result& result) {
     return result.error().find("Directional light") != std::string::npos;
 }
@@ -108,6 +117,12 @@ bool runLevel1FailurePropagationTest() {
 
 bool runAuthoringTransferTests() {
     bool passed = true;
+    GameObject baseObject;
+    const GameObject& constBaseObject = baseObject;
+    passed &= expect(baseObject.attachedCamera() == nullptr &&
+                         constBaseObject.attachedCamera() == nullptr,
+                     "Base GameObject unexpectedly reports an attached camera");
+
     TestScene editing;
     TestScene runtime;
     editing.name = "Edited Level";
@@ -167,6 +182,9 @@ bool runAuthoringTransferTests() {
 
     auto editingCamera = std::make_unique<Camera>();
     Camera* editingCameraPointer = editingCamera.get();
+    editingCamera->position = {31.0f, 32.0f, 33.0f};
+    editingCamera->rotation = {34.0f, 35.0f, 36.0f};
+    editingCamera->scale = {37.0f, 38.0f, 39.0f};
     editingCamera->front = {0.5f, 0.25f, -0.75f};
     editingCamera->up = {0.0f, 0.5f, 0.5f};
     auto runtimeCamera = std::make_unique<Camera>();
@@ -177,6 +195,36 @@ bool runAuthoringTransferTests() {
     passed &= expect(static_cast<bool>(
                          runtime.addGameObject(std::move(runtimeCamera))),
                      "Could not add runtime camera for transfer test");
+
+    auto editingPlayer = std::make_unique<Player>();
+    Player* editingPlayerPointer = editingPlayer.get();
+    editingPlayer->init();
+    editingPlayer->position = {10.0f, 20.0f, 30.0f};
+    editingPlayer->camera->position = {11.0f, 22.0f, 33.0f};
+    editingPlayer->camera->front = {0.25f, 0.5f, -0.75f};
+    editingPlayer->camera->up = {0.0f, 0.8f, 0.2f};
+    const glm::vec3 editingPlayerCameraPosition =
+        editingPlayer->camera->position;
+    const glm::vec3 editingPlayerCameraFront = editingPlayer->camera->front;
+    const glm::vec3 editingPlayerCameraUp = editingPlayer->camera->up;
+    passed &= expect(
+        editingPlayer->attachedCamera() == editingPlayer->camera.get() &&
+            static_cast<const Player&>(*editingPlayer).attachedCamera() ==
+                editingPlayer->camera.get(),
+        "Player does not report its attached camera through both accessors");
+
+    auto runtimePlayer = std::make_unique<Player>();
+    Player* runtimePlayerPointer = runtimePlayer.get();
+    runtimePlayer->init();
+    runtimePlayer->camera->position = {-1.0f, -2.0f, -3.0f};
+    runtimePlayer->camera->front = {1.0f, 0.0f, 0.0f};
+    runtimePlayer->camera->up = {0.0f, 0.0f, 1.0f};
+    passed &= expect(static_cast<bool>(
+                         editing.addGameObject(std::move(editingPlayer))),
+                     "Could not add editing Player for transfer test");
+    passed &= expect(static_cast<bool>(
+                         runtime.addGameObject(std::move(runtimePlayer))),
+                     "Could not add runtime Player for transfer test");
 
     const Result transfer = editing.copyAuthoringStateTo(runtime);
     passed &= expect(static_cast<bool>(transfer),
@@ -206,9 +254,28 @@ bool runAuthoringTransferTests() {
                          runtimeDirectionalPointer->shadow.nearPlane == 2.0f &&
                          runtimeDirectionalPointer->shadow.farPlane == 456.0f,
                      "Directional-light authoring state was not transferred");
-    passed &= expect(runtimeCameraPointer->front == editingCameraPointer->front &&
+    passed &= expect(runtimeCameraPointer->position == editingCameraPointer->position &&
+                         runtimeCameraPointer->rotation == editingCameraPointer->rotation &&
+                         runtimeCameraPointer->scale == editingCameraPointer->scale &&
+                         runtimeCameraPointer->front == editingCameraPointer->front &&
                          runtimeCameraPointer->up == editingCameraPointer->up,
-                     "Camera authoring vectors were not transferred");
+                     "Standalone Camera authoring state was not transferred");
+    passed &= expect(
+        runtimePlayerPointer->attachedCamera()->position ==
+                editingPlayerCameraPosition &&
+            runtimePlayerPointer->attachedCamera()->front ==
+                editingPlayerCameraFront &&
+            runtimePlayerPointer->attachedCamera()->up ==
+                editingPlayerCameraUp,
+        "Attached camera authoring state was not transferred");
+    passed &= expect(
+        editingPlayerPointer->attachedCamera()->position ==
+                editingPlayerCameraPosition &&
+            editingPlayerPointer->attachedCamera()->front ==
+                editingPlayerCameraFront &&
+            editingPlayerPointer->attachedCamera()->up ==
+                editingPlayerCameraUp,
+        "Attached camera transfer mutated the editing camera");
     passed &= expect(editingObjectPointer->position == glm::vec3(1.0f, 2.0f, 3.0f),
                      "Authoring transfer mutated the editing scene");
 
@@ -240,6 +307,39 @@ bool runAuthoringTransferTests() {
                          typeDestinationPointer->position ==
                              glm::vec3(81.0f, 82.0f, 83.0f),
                      "Object-type mismatch mutated the destination");
+
+    TestScene attachedSource;
+    TestScene attachedDestination;
+    attachedSource.name = "Attached source";
+    attachedDestination.name = "Attached destination";
+    auto attachedSourcePlayer = std::make_unique<Player>();
+    attachedSourcePlayer->init();
+    Player* attachedSourcePointer = attachedSourcePlayer.get();
+    auto attachedDestinationPlayer = std::make_unique<Player>();
+    attachedDestinationPlayer->init();
+    attachedDestinationPlayer->camera.reset();
+    Player* attachedDestinationPointer = attachedDestinationPlayer.get();
+    attachedDestinationPointer->position = {71.0f, 72.0f, 73.0f};
+    attachedDestinationPointer->rotation = {74.0f, 75.0f, 76.0f};
+    attachedDestinationPointer->scale = {77.0f, 78.0f, 79.0f};
+    passed &= expect(static_cast<bool>(attachedSource.addGameObject(
+                         std::move(attachedSourcePlayer))) &&
+                         static_cast<bool>(attachedDestination.addGameObject(
+                             std::move(attachedDestinationPlayer))),
+                     "Could not configure attached-camera mismatch test");
+    const Result attachedTopologyResult =
+        attachedSource.copyAuthoringStateTo(attachedDestination);
+    passed &= expect(
+        !attachedTopologyResult && attachedSourcePointer->attachedCamera() != nullptr &&
+            attachedDestinationPointer->attachedCamera() == nullptr &&
+            attachedDestination.name == "Attached destination" &&
+            attachedDestinationPointer->position ==
+                glm::vec3(71.0f, 72.0f, 73.0f) &&
+            attachedDestinationPointer->rotation ==
+                glm::vec3(74.0f, 75.0f, 76.0f) &&
+            attachedDestinationPointer->scale ==
+                glm::vec3(77.0f, 78.0f, 79.0f),
+        "Attached-camera topology mismatch mutated the destination");
     return passed;
 }
 
@@ -296,6 +396,46 @@ bool runSceneManagerTests() {
     return passed;
 }
 
+bool runPlayerLookSynchronizationTests() {
+    bool passed = true;
+    const glm::vec3 directions[] = {
+        {0.0f, 0.0f, -1.0f},
+        {0.98f, 0.15f, 0.1f},
+        {-0.98f, -0.1f, 0.15f},
+        {0.2f, 0.96f, -0.1f},
+        {0.1f, -0.95f, -0.2f},
+        {0.02f, 0.999f, 0.01f},
+        {0.02f, -0.999f, 0.01f},
+    };
+
+    for (const glm::vec3& sourceDirection : directions) {
+        Player player;
+        player.init();
+        player.camera->front = glm::normalize(sourceDirection);
+        player.camera->up = glm::vec3(0.0f, 1.0f, 0.0f);
+        player.start(nullptr);
+
+        const double yaw = PlayerTestAccess::yaw(player);
+        const double pitch = PlayerTestAccess::pitch(player);
+        glm::vec3 reconstructed;
+        reconstructed.x = std::cos(glm::radians(yaw)) *
+                          std::cos(glm::radians(pitch));
+        reconstructed.y = std::sin(glm::radians(pitch));
+        reconstructed.z = std::sin(glm::radians(yaw)) *
+                          std::cos(glm::radians(pitch));
+        reconstructed = glm::normalize(reconstructed);
+
+        passed &= expect(std::isfinite(yaw) && std::isfinite(pitch) &&
+                             sameVector(player.front, reconstructed) &&
+                             sameVector(player.camera->front, reconstructed),
+                         "Player look-angle synchronization did not preserve "
+                         "the authored direction");
+        passed &= expect(pitch >= -89.0 && pitch <= 89.0,
+                         "Player look synchronization exceeded pitch limits");
+    }
+    return passed;
+}
+
 struct CountingPixelDeleter {
     std::size_t* releaseCount = nullptr;
 
@@ -340,6 +480,7 @@ int main() {
     passed &= runLevel1FailurePropagationTest();
     passed &= runAuthoringTransferTests();
     passed &= runSceneManagerTests();
+    passed &= runPlayerLookSynchronizationTests();
 
     Vertex vertex{};
     vertex.normal = {0.0f, 0.0f, 1.0f};

@@ -215,6 +215,16 @@ Result Scene::copyAuthoringStateTo(Scene& runtimeScene) const {
                 "Editor/runtime object types do not match at index " +
                 std::to_string(index));
         }
+
+        const bool editorHasAttachedCamera =
+            editorObjects[index]->attachedCamera() != nullptr;
+        const bool runtimeHasAttachedCamera =
+            runtimeObjects[index]->attachedCamera() != nullptr;
+        if (editorHasAttachedCamera != runtimeHasAttachedCamera) {
+            return Result::failure(
+                "Editor/runtime attached-camera topology does not match at "
+                "index " + std::to_string(index));
+        }
     }
 
     Result result = runtimeScene.setBackgroundColor(backgroundColor_);
@@ -260,6 +270,14 @@ Result Scene::copyAuthoringStateTo(Scene& runtimeScene) const {
             auto& runtimeCamera = static_cast<Camera&>(runtimeObject);
             runtimeCamera.front = editorCamera->front;
             runtimeCamera.up = editorCamera->up;
+        }
+
+        const Camera* editorAttachedCamera = editorObject.attachedCamera();
+        Camera* runtimeAttachedCamera = runtimeObject.attachedCamera();
+        if (editorAttachedCamera != nullptr && runtimeAttachedCamera != nullptr) {
+            runtimeAttachedCamera->position = editorAttachedCamera->position;
+            runtimeAttachedCamera->front = editorAttachedCamera->front;
+            runtimeAttachedCamera->up = editorAttachedCamera->up;
         }
     }
 

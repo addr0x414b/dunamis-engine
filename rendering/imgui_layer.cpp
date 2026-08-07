@@ -10,6 +10,7 @@
 #include <cmath>
 #include <limits>
 #include <string>
+#include <vector>
 
 #include <glm/gtc/type_ptr.hpp>
 
@@ -24,6 +25,8 @@ namespace {
 constexpr const char* dunamisDockspaceName =
     "DunamisEditorDockspace_v1";
 constexpr float minDirectionalDirectionLengthSquared = 1.0e-8f;
+constexpr float minCameraBasisLengthSquared = 1.0e-8f;
+constexpr float cameraVisualizationDistance = 8.0f;
 
 void applyDunamisEditorStyle() {
     ImGuiStyle& style = ImGui::GetStyle();
@@ -108,6 +111,214 @@ void buildDefaultDockLayout(ImGuiID dockspaceId,
 bool isFiniteVector(const glm::vec3& vector) noexcept {
     return std::isfinite(vector.x) && std::isfinite(vector.y) &&
            std::isfinite(vector.z);
+}
+
+bool isFiniteVector(const glm::vec4& vector) noexcept {
+    return std::isfinite(vector.x) && std::isfinite(vector.y) &&
+           std::isfinite(vector.z) && std::isfinite(vector.w);
+}
+
+bool isFiniteMatrix(const glm::mat4& matrix) noexcept {
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            if (!std::isfinite(matrix[column][row])) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool normalizeFinite(const glm::vec3& value, glm::vec3& normalized) noexcept {
+    normalized = {};
+    if (!isFiniteVector(value)) {
+        return false;
+    }
+
+    const float lengthSquared = glm::dot(value, value);
+    if (!std::isfinite(lengthSquared) ||
+        lengthSquared <= minCameraBasisLengthSquared) {
+        return false;
+    }
+    const float length = std::sqrt(lengthSquared);
+    if (!std::isfinite(length) || length <= 0.0f) {
+        return false;
+    }
+
+    normalized = value / length;
+    return isFiniteVector(normalized);
+}
+
+bool makeCameraBasis(const Camera& camera, glm::vec3& forward,
+                     glm::vec3& right, glm::vec3& up) noexcept {
+    if (!isFiniteVector(camera.position) ||
+        !normalizeFinite(camera.front, forward)) {
+        return false;
+    }
+
+    glm::vec3 normalizedUp;
+    if (!normalizeFinite(camera.up, normalizedUp)) {
+        return false;
+    }
+
+    if (!normalizeFinite(glm::cross(forward, normalizedUp), right)) {
+        return false;
+    }
+    if (!normalizeFinite(glm::cross(right, forward), up)) {
+        return false;
+    }
+
+    return isFiniteVector(forward) && isFiniteVector(right) &&
+           isFiniteVector(up);
+}
+
+bool projectWorldToImGui(const glm::vec3& worldPoint,
+                         const glm::mat4& editorView,
+                         const glm::mat4& projection,
+                         const ImGuiViewport& viewport,
+                         ImVec2& screenPoint) noexcept {
+    screenPoint = {};
+    if (!isFiniteVector(worldPoint) || !isFiniteMatrix(editorView) ||
+        !isFiniteMatrix(projection) || !std::isfinite(viewport.Pos.x) ||
+        !std::isfinite(viewport.Pos.y) || !std::isfinite(viewport.Size.x) ||
+        !std::isfinite(viewport.Size.y) || viewport.Size.x <= 0.0f ||
+        viewport.Size.y <= 0.0f) {
+        return false;
+    }
+
+    const glm::vec4 clip =
+        projection * editorView * glm::vec4(worldPoint, 1.0f);
+    if (!isFiniteVector(clip) || clip.w <= 1.0e-6f) {
+        return false;
+    }
+
+    const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+    if (!isFiniteVector(ndc)) {
+        return false;
+    }
+
+    // The renderer already flips projection Y for Vulkan. Mapping NDC Y
+    // directly therefore converts world-up to the smaller ImGui screen Y.
+    screenPoint = ImVec2(
+        viewport.Pos.x + (ndc.x * 0.5f + 0.5f) * viewport.Size.x,
+        viewport.Pos.y + (ndc.y * 0.5f + 0.5f) * viewport.Size.y);
+    return std::isfinite(screenPoint.x) && std::isfinite(screenPoint.y);
+}
+
+bool applyObjectPosition(GameObject& object,
+                         const glm::vec3& newPosition) noexcept {
+    if (!isFiniteVector(object.position) || !isFiniteVector(newPosition)) {
+        return false;
+    }
+
+    const glm::vec3 delta = newPosition - object.position;
+    if (!isFiniteVector(delta)) {
+        return false;
+    }
+
+    const bool isStandaloneCamera =
+        dynamic_cast<Camera*>(&object) != nullptr;
+    Camera* attachedCamera =
+        isStandaloneCamera ? nullptr : object.attachedCamera();
+    glm::vec3 newCameraPosition;
+    if (attachedCamera != nullptr) {
+        if (!isFiniteVector(attachedCamera->position)) {
+            return false;
+        }
+        newCameraPosition = attachedCamera->position + delta;
+        if (!isFiniteVector(newCameraPosition)) {
+            return false;
+        }
+    }
+
+    object.position = newPosition;
+    if (attachedCamera != nullptr) {
+        attachedCamera->position = newCameraPosition;
+    }
+    return true;
+}
+
+bool hasValidCameraDirections(const glm::vec3& front,
+                              const glm::vec3& up) noexcept {
+    const glm::vec3 cross = glm::cross(front, up);
+    const float crossLengthSquared = glm::dot(cross, cross);
+    return isFiniteVector(cross) && std::isfinite(crossLengthSquared) &&
+           crossLengthSquared > minCameraBasisLengthSquared;
+}
+
+bool applyObjectRotation(GameObject& object,
+                         const glm::vec3& newRotation) noexcept {
+    if (!isFiniteVector(object.rotation) || !isFiniteVector(newRotation)) {
+        return false;
+    }
+
+    const glm::mat4 oldRotation =
+        editor_picking::makeRotationMatrix(object.rotation);
+    const glm::mat4 updatedRotation =
+        editor_picking::makeRotationMatrix(newRotation);
+    if (!isFiniteMatrix(oldRotation) || !isFiniteMatrix(updatedRotation)) {
+        return false;
+    }
+
+    const glm::mat4 deltaRotation =
+        updatedRotation * glm::inverse(oldRotation);
+    if (!isFiniteMatrix(deltaRotation)) {
+        return false;
+    }
+
+    Camera* standaloneCamera = dynamic_cast<Camera*>(&object);
+    Camera* attachedCamera =
+        standaloneCamera == nullptr ? object.attachedCamera() : nullptr;
+    Camera* orientationCamera = standaloneCamera != nullptr
+                                    ? standaloneCamera
+                                    : attachedCamera;
+    glm::vec3 newCameraPosition;
+    glm::vec3 newCameraFront;
+    glm::vec3 newCameraUp;
+    if (orientationCamera != nullptr) {
+        if (!isFiniteVector(orientationCamera->position) ||
+            !isFiniteVector(orientationCamera->front) ||
+            !isFiniteVector(orientationCamera->up)) {
+            return false;
+        }
+
+        if (attachedCamera != nullptr) {
+            if (!isFiniteVector(object.position)) {
+                return false;
+            }
+            const glm::vec3 offset =
+                attachedCamera->position - object.position;
+            const glm::vec3 rotatedOffset = glm::vec3(
+                deltaRotation * glm::vec4(offset, 0.0f));
+            if (!isFiniteVector(offset) || !isFiniteVector(rotatedOffset)) {
+                return false;
+            }
+            newCameraPosition = object.position + rotatedOffset;
+            if (!isFiniteVector(newCameraPosition)) {
+                return false;
+            }
+        }
+
+        const glm::vec3 rotatedFront = glm::vec3(
+            deltaRotation * glm::vec4(orientationCamera->front, 0.0f));
+        const glm::vec3 rotatedUp = glm::vec3(
+            deltaRotation * glm::vec4(orientationCamera->up, 0.0f));
+        if (!normalizeFinite(rotatedFront, newCameraFront) ||
+            !normalizeFinite(rotatedUp, newCameraUp) ||
+            !hasValidCameraDirections(newCameraFront, newCameraUp)) {
+            return false;
+        }
+    }
+
+    object.rotation = newRotation;
+    if (orientationCamera != nullptr) {
+        orientationCamera->front = newCameraFront;
+        orientationCamera->up = newCameraUp;
+    }
+    if (attachedCamera != nullptr) {
+        attachedCamera->position = newCameraPosition;
+    }
+    return true;
 }
 
 bool isFiniteNonnegativeVector(const glm::vec3& vector) noexcept {
@@ -328,6 +539,7 @@ void ImGuiLayer::drawEditor(Scene* scene, const glm::mat4& view,
         const bool disabled = runState == SceneRunState::Playing;
         drawSceneHierarchy(scene, disabled);
         updateSceneInteractionAreaHovered();
+        drawCameraVisualizations(scene, view, projection, runState);
         drawTranslationGizmo(scene, view, projection, runState);
         processWorldSelection(scene, view, projection, runState);
         drawInspector(scene, disabled);
@@ -542,13 +754,148 @@ void ImGuiLayer::drawTranslationGizmo(Scene* scene, const glm::mat4& view,
         const glm::vec3 worldDelta =
             manipulatedGizmoCenter - originalGizmoCenter;
         if (isFiniteVector(manipulatedGizmoCenter) &&
-            isFiniteVector(worldDelta) && isFiniteVector(selected->position)) {
-            selected->position += worldDelta;
+            isFiniteVector(worldDelta) &&
+            applyObjectPosition(*selected, selected->position + worldDelta)) {
             inspectorError_.clear();
+        } else {
+            inspectorError_ = "Transform values must be finite.";
         }
     }
     gizmoDragActive_ = ImGuizmo::IsUsing() &&
                        ImGui::IsMouseDown(ImGuiMouseButton_Left);
+}
+
+void ImGuiLayer::drawCameraVisualizations(
+    Scene* scene, const glm::mat4& editorView, const glm::mat4& projection,
+    SceneRunState runState) {
+    if (runState != SceneRunState::Editing || scene == nullptr ||
+        !sceneInteractionRect_.valid ||
+        !std::isfinite(sceneInteractionRect_.x) ||
+        !std::isfinite(sceneInteractionRect_.y) ||
+        !std::isfinite(sceneInteractionRect_.width) ||
+        !std::isfinite(sceneInteractionRect_.height) ||
+        sceneInteractionRect_.width <= 0.0f ||
+        sceneInteractionRect_.height <= 0.0f) {
+        return;
+    }
+
+    std::vector<const GameObject*> objects;
+    objects.reserve(scene->gameObjects().size());
+    for (const auto& owner : scene->gameObjects()) {
+        if (owner != nullptr) {
+            objects.push_back(owner.get());
+        }
+    }
+
+    const Camera* activeCamera = scene->activeCamera();
+    const std::vector<const Camera*> cameras =
+        editor_picking::collectCameraPointers(objects, activeCamera);
+    for (const Camera* camera : cameras) {
+        if (camera != nullptr) {
+            drawCameraVisualization(*camera, editorView, projection,
+                                    camera == activeCamera);
+        }
+    }
+}
+
+void ImGuiLayer::drawCameraVisualization(
+    const Camera& camera, const glm::mat4& editorView,
+    const glm::mat4& projection, bool active) {
+
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    if (viewport == nullptr || viewport->Size.x <= 0.0f ||
+        viewport->Size.y <= 0.0f || !isFiniteMatrix(projection)) {
+        return;
+    }
+
+    glm::vec3 forward;
+    glm::vec3 right;
+    glm::vec3 up;
+    if (!makeCameraBasis(camera, forward, right, up)) {
+        return;
+    }
+
+    const float horizontalProjectionScale = std::abs(projection[0][0]);
+    const float verticalProjectionScale = std::abs(projection[1][1]);
+    if (!std::isfinite(horizontalProjectionScale) ||
+        !std::isfinite(verticalProjectionScale) ||
+        horizontalProjectionScale <= minCameraBasisLengthSquared ||
+        verticalProjectionScale <= minCameraBasisLengthSquared) {
+        return;
+    }
+
+    const float halfWidth =
+        cameraVisualizationDistance / horizontalProjectionScale;
+    const float halfHeight =
+        cameraVisualizationDistance / verticalProjectionScale;
+    if (!std::isfinite(halfWidth) || !std::isfinite(halfHeight) ||
+        halfWidth <= 0.0f || halfHeight <= 0.0f) {
+        return;
+    }
+
+    const glm::vec3 apex = camera.position;
+    const glm::vec3 planeCenter =
+        apex + forward * cameraVisualizationDistance;
+    const glm::vec3 topLeft =
+        planeCenter + up * halfHeight - right * halfWidth;
+    const glm::vec3 topRight =
+        planeCenter + up * halfHeight + right * halfWidth;
+    const glm::vec3 bottomRight =
+        planeCenter - up * halfHeight + right * halfWidth;
+    const glm::vec3 bottomLeft =
+        planeCenter - up * halfHeight - right * halfWidth;
+    if (!isFiniteVector(planeCenter) || !isFiniteVector(topLeft) ||
+        !isFiniteVector(topRight) || !isFiniteVector(bottomRight) ||
+        !isFiniteVector(bottomLeft)) {
+        return;
+    }
+
+    ImDrawList* drawList = ImGui::GetForegroundDrawList(viewport);
+    if (drawList == nullptr) {
+        return;
+    }
+
+    const ImVec2 clipMin(sceneInteractionRect_.x, sceneInteractionRect_.y);
+    const ImVec2 clipMax(
+        sceneInteractionRect_.x + sceneInteractionRect_.width,
+        sceneInteractionRect_.y + sceneInteractionRect_.height);
+    const ImGuiCol accent = active ? ImGuiCol_ButtonActive
+                                   : ImGuiCol_ButtonHovered;
+    const ImU32 color = ImGui::ColorConvertFloat4ToU32(
+        ImGui::GetStyle().Colors[accent]);
+    drawList->PushClipRect(clipMin, clipMax, true);
+
+    const float lineThickness = active ? 2.5f : 2.0f;
+    const auto drawSegment = [&](const glm::vec3& first,
+                                 const glm::vec3& second) {
+        ImVec2 firstScreen;
+        ImVec2 secondScreen;
+        if (projectWorldToImGui(first, editorView, projection, *viewport,
+                                firstScreen) &&
+            projectWorldToImGui(second, editorView, projection, *viewport,
+                                secondScreen)) {
+            drawList->AddLine(firstScreen, secondScreen, color,
+                              lineThickness);
+        }
+    };
+
+    drawSegment(apex, topLeft);
+    drawSegment(apex, topRight);
+    drawSegment(apex, bottomRight);
+    drawSegment(apex, bottomLeft);
+    drawSegment(topLeft, topRight);
+    drawSegment(topRight, bottomRight);
+    drawSegment(bottomRight, bottomLeft);
+    drawSegment(bottomLeft, topLeft);
+    drawSegment(apex, planeCenter);
+
+    ImVec2 apexScreen;
+    if (projectWorldToImGui(apex, editorView, projection, *viewport,
+                            apexScreen)) {
+        drawList->AddCircleFilled(apexScreen, 4.0f, color);
+    }
+
+    drawList->PopClipRect();
 }
 
 void ImGuiLayer::processWorldSelection(Scene* scene, const glm::mat4& view,
@@ -656,11 +1003,13 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
     PointLight* pointLight = dynamic_cast<PointLight*>(selectedGameObject_);
     DirectionalLight* directionalLight =
         dynamic_cast<DirectionalLight*>(selectedGameObject_);
+    Camera* camera = dynamic_cast<Camera*>(selectedGameObject_);
     const char* objectType = pointLight != nullptr
                                  ? "Point Light"
                                  : directionalLight != nullptr
                                        ? "Directional Light"
-                                       : "GameObject";
+                                       : camera != nullptr ? "Camera"
+                                                           : "GameObject";
 
     ImGui::Text("Name: %s", objectName);
     ImGui::Text("Type: %s", objectType);
@@ -668,8 +1017,7 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
     ImGui::SeparatorText("Transform");
     glm::vec3 position = selectedGameObject_->position;
     if (ImGui::DragFloat3("Position", &position.x, 0.1f)) {
-        if (isFiniteVector(position)) {
-            selectedGameObject_->position = position;
+        if (applyObjectPosition(*selectedGameObject_, position)) {
             inspectorError_.clear();
         } else {
             inspectorError_ = "Transform values must be finite.";
@@ -678,8 +1026,7 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
 
     glm::vec3 rotation = selectedGameObject_->rotation;
     if (ImGui::DragFloat3("Rotation (degrees)", &rotation.x, 0.5f)) {
-        if (isFiniteVector(rotation)) {
-            selectedGameObject_->rotation = rotation;
+        if (applyObjectRotation(*selectedGameObject_, rotation)) {
             inspectorError_.clear();
         } else {
             inspectorError_ = "Transform values must be finite.";
