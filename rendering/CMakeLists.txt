@@ -11,6 +11,10 @@ add_library(DirectionalShadow STATIC directional_shadow.cpp)
 target_include_directories(DirectionalShadow PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(DirectionalShadow PUBLIC Scene GameObject glm spdlog)
 
+add_library(AmbientOcclusion STATIC ambient_occlusion.cpp)
+target_include_directories(AmbientOcclusion PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(AmbientOcclusion PUBLIC glm)
+
 set(IMGUI_DIR ${PROJECT_SOURCE_DIR}/third_party/imgui)
 
 add_library(VulkanContext STATIC
@@ -29,7 +33,7 @@ target_include_directories(VulkanContext SYSTEM PRIVATE
         ${IMGUI_DIR}
         ${IMGUI_DIR}/backends
         ${PROJECT_SOURCE_DIR}/third_party/imguizmo)
-target_link_libraries(VulkanContext PRIVATE SDL3::SDL3 Vulkan::Vulkan spdlog VulkanUtils EditorPicking DirectionalShadow GameObject Scene glm)
+target_link_libraries(VulkanContext PRIVATE SDL3::SDL3 Vulkan::Vulkan spdlog VulkanUtils EditorPicking DirectionalShadow AmbientOcclusion GameObject Scene glm)
 
 add_library(VisualServer STATIC visual_server.cpp)
 target_include_directories(VisualServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

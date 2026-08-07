@@ -76,6 +76,11 @@ Result VisualServer::initGameObjects() {
         return result;
     }
 
+    result = vulkanContext.createAmbientOcclusionResources();
+    if (!result) {
+        return result;
+    }
+
     result = vulkanContext.createLightsUBO();
     if (!result) {
         return result;

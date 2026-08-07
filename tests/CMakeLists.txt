@@ -180,3 +180,8 @@ target_include_directories(DirectionalShadowTests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(DirectionalShadowTests PRIVATE
         DirectionalShadow EditorPicking Scene GameObject VulkanUtils glm)
 add_test(NAME directional_shadow_math COMMAND DirectionalShadowTests)
+
+add_executable(AmbientOcclusionTests ambient_occlusion_tests.cpp)
+target_include_directories(AmbientOcclusionTests PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(AmbientOcclusionTests PRIVATE AmbientOcclusion glm)
+add_test(NAME ambient_occlusion_math COMMAND AmbientOcclusionTests)

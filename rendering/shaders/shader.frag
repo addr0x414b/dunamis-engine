@@ -13,6 +13,7 @@ layout(set = 0, binding = 1) uniform sampler2D baseColorSampler;
 layout(set = 0, binding = 2) uniform sampler2D normalSampler;
 layout(set = 0, binding = 3) uniform sampler2D metallicRoughnessSampler;
 layout(set = 2, binding = 1) uniform sampler2D directionalShadowMap;
+layout(set = 3, binding = 3) uniform sampler2D ambientOcclusionMap;
 
 struct LightData {
     vec3 position;
@@ -175,8 +176,11 @@ void main() {
     float roughness = max(
         clamp(metallicRoughnessSample.g * roughnessFactor, 0.0, 1.0), 0.04);
 
+    float ambientVisibility = clamp(texture(ambientOcclusionMap,
+        gl_FragCoord.xy / vec2(textureSize(ambientOcclusionMap, 0))).r,
+        0.0, 1.0);
     vec3 ambient = albedo * ambientColorIntensity.rgb *
-                   ambientColorIntensity.a;
+                   ambientColorIntensity.a * ambientVisibility;
     vec3 finalColor = ambient;
     vec3 normal = safeNormalize(fragNormal);
     if (!(dot(normal, normal) > EPSILON)) {

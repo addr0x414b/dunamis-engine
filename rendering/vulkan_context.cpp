@@ -572,6 +572,9 @@ Result VulkanContext::init(SDL_Window* w, Scene* scene) {
         result = initializeStep(createDirectionalShadowRenderPass(),
                                 "Directional-shadow render-pass creation");
         if (!result) return result;
+        result = initializeStep(createAmbientOcclusionRenderPasses(),
+                                "Ambient-occlusion render-pass creation");
+        if (!result) return result;
         result = initializeStep(createDescriptorSetLayout(),
                                 "Descriptor-set-layout creation");
         if (!result) return result;
@@ -581,6 +584,9 @@ Result VulkanContext::init(SDL_Window* w, Scene* scene) {
         result = initializeStep(createDirectionalShadowDescriptorSetLayout(),
                                 "Directional-shadow descriptor-set-layout creation");
         if (!result) return result;
+        result = initializeStep(createAmbientOcclusionDescriptorSetLayout(),
+                                "Ambient-occlusion descriptor-set-layout creation");
+        if (!result) return result;
         result = initializeStep(createGraphicsPipeline(),
                                 "Graphics-pipeline creation");
         if (!result) return result;
@@ -589,6 +595,9 @@ Result VulkanContext::init(SDL_Window* w, Scene* scene) {
         if (!result) return result;
         result = initializeStep(createSelectionOutlinePipeline(),
                                 "Selection-outline-pipeline creation");
+        if (!result) return result;
+        result = initializeStep(createAmbientOcclusionPipelines(),
+                                "Ambient-occlusion pipeline creation");
         if (!result) return result;
         result = initializeStep(createCommandPool(), "Command-pool creation");
         if (!result) return result;
@@ -1426,6 +1435,32 @@ Result VulkanContext::findDirectionalShadowDepthFormat(VkFormat& format) const {
         format);
 }
 
+Result VulkanContext::findAmbientOcclusionDepthFormat(VkFormat& format) const {
+    return findSupportedFormat(
+        {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D24_UNORM_S8_UINT,
+         VK_FORMAT_D16_UNORM}, VK_IMAGE_TILING_OPTIMAL,
+        VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT |
+            VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT,
+        format);
+}
+
+Result VulkanContext::findAmbientOcclusionNormalFormat(VkFormat& format) const {
+    return findSupportedFormat(
+        {VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT},
+        VK_IMAGE_TILING_OPTIMAL,
+        VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT |
+            VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT,
+        format);
+}
+
+Result VulkanContext::findAmbientOcclusionOutputFormat(VkFormat& format) const {
+    return findSupportedFormat(
+        {VK_FORMAT_R8_UNORM, VK_FORMAT_R16_SFLOAT}, VK_IMAGE_TILING_OPTIMAL,
+        VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT |
+            VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT,
+        format);
+}
+
 Result VulkanContext::createDirectionalShadowRenderPass() {
     Result formatResult = findDirectionalShadowDepthFormat(
         directionalShadowDepthFormat);
@@ -1475,6 +1510,103 @@ Result VulkanContext::createDirectionalShadowRenderPass() {
         directionalShadowDepthFormat = VK_FORMAT_UNDEFINED;
         return vkFailure("vkCreateRenderPass(directional shadow)", result);
     }
+    return Result::success();
+}
+
+Result VulkanContext::createAmbientOcclusionRenderPasses() {
+    Result result = findAmbientOcclusionDepthFormat(ambientOcclusionDepthFormat);
+    if (!result) return addContext("Failed to find sampleable screen-space depth format", result);
+    result = findAmbientOcclusionNormalFormat(ambientOcclusionNormalFormat);
+    if (!result) return addContext("Failed to find sampleable screen-space normal format", result);
+    result = findAmbientOcclusionOutputFormat(ambientOcclusionOutputFormat);
+    if (!result) return addContext("Failed to find sampleable ambient-occlusion output format", result);
+
+    VkAttachmentDescription normal{};
+    normal.format = ambientOcclusionNormalFormat;
+    normal.samples = VK_SAMPLE_COUNT_1_BIT;
+    normal.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    normal.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    normal.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    normal.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    normal.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    normal.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkAttachmentDescription depth{};
+    depth.format = ambientOcclusionDepthFormat;
+    depth.samples = VK_SAMPLE_COUNT_1_BIT;
+    depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depth.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depth.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    VkAttachmentReference normalReference{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkAttachmentReference depthReference{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription geometrySubpass{};
+    geometrySubpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    geometrySubpass.colorAttachmentCount = 1;
+    geometrySubpass.pColorAttachments = &normalReference;
+    geometrySubpass.pDepthStencilAttachment = &depthReference;
+    VkSubpassDependency geometryDependency{};
+    geometryDependency.srcSubpass = 0;
+    geometryDependency.dstSubpass = VK_SUBPASS_EXTERNAL;
+    geometryDependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                      VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                      VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    geometryDependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                                      VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    geometryDependency.dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    geometryDependency.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    const std::array<VkAttachmentDescription, 2> geometryAttachments{normal, depth};
+    VkRenderPassCreateInfo geometryInfo{};
+    geometryInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    geometryInfo.attachmentCount = static_cast<uint32_t>(geometryAttachments.size());
+    geometryInfo.pAttachments = geometryAttachments.data();
+    geometryInfo.subpassCount = 1;
+    geometryInfo.pSubpasses = &geometrySubpass;
+    geometryInfo.dependencyCount = 1;
+    geometryInfo.pDependencies = &geometryDependency;
+    VkResult createResult = vkCreateRenderPass(device, &geometryInfo, nullptr,
+                                               &ambientOcclusionGeometryRenderPass);
+    if (createResult != VK_SUCCESS) {
+        ambientOcclusionGeometryRenderPass = VK_NULL_HANDLE;
+        return vkFailure("vkCreateRenderPass(ambient-occlusion geometry)", createResult);
+    }
+
+    VkAttachmentDescription output{};
+    output.format = ambientOcclusionOutputFormat;
+    output.samples = VK_SAMPLE_COUNT_1_BIT;
+    output.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    output.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    output.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    output.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    output.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    output.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkAttachmentReference outputReference{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription outputSubpass{};
+    outputSubpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    outputSubpass.colorAttachmentCount = 1;
+    outputSubpass.pColorAttachments = &outputReference;
+    VkSubpassDependency outputDependency{};
+    outputDependency.srcSubpass = 0;
+    outputDependency.dstSubpass = VK_SUBPASS_EXTERNAL;
+    outputDependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    outputDependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    outputDependency.dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    outputDependency.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    VkRenderPassCreateInfo outputInfo{};
+    outputInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    outputInfo.attachmentCount = 1;
+    outputInfo.pAttachments = &output;
+    outputInfo.subpassCount = 1;
+    outputInfo.pSubpasses = &outputSubpass;
+    outputInfo.dependencyCount = 1;
+    outputInfo.pDependencies = &outputDependency;
+    createResult = vkCreateRenderPass(device, &outputInfo, nullptr,
+                                      &ambientOcclusionRenderPass);
+    if (createResult != VK_SUCCESS) return vkFailure("vkCreateRenderPass(ambient occlusion)", createResult);
+    createResult = vkCreateRenderPass(device, &outputInfo, nullptr,
+                                      &ambientOcclusionBlurRenderPass);
+    if (createResult != VK_SUCCESS) return vkFailure("vkCreateRenderPass(ambient-occlusion blur)", createResult);
     return Result::success();
 }
 
@@ -1599,6 +1731,31 @@ Result VulkanContext::createDirectionalShadowDescriptorSetLayout() {
     if (result != VK_SUCCESS) {
         directionalShadowDescriptorSetLayout = VK_NULL_HANDLE;
         return vkFailure("vkCreateDescriptorSetLayout(directional shadow)", result);
+    }
+    return Result::success();
+}
+
+Result VulkanContext::createAmbientOcclusionDescriptorSetLayout() {
+    std::array<VkDescriptorSetLayoutBinding, 5> bindings{};
+    for (uint32_t binding = 0; binding < 4; ++binding) {
+        bindings[binding].binding = binding;
+        bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[binding].descriptorCount = 1;
+        bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+    bindings[4].binding = 4;
+    bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[4].descriptorCount = 1;
+    bindings[4].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    info.bindingCount = static_cast<uint32_t>(bindings.size());
+    info.pBindings = bindings.data();
+    const VkResult result = vkCreateDescriptorSetLayout(device, &info, nullptr,
+                                                         &ambientOcclusionDescriptorSetLayout);
+    if (result != VK_SUCCESS) {
+        ambientOcclusionDescriptorSetLayout = VK_NULL_HANDLE;
+        return vkFailure("vkCreateDescriptorSetLayout(ambient occlusion)", result);
     }
     return Result::success();
 }
@@ -1920,6 +2077,215 @@ void VulkanContext::destroyDirectionalShadowResources() noexcept {
     directionalShadowDepthFormat = VK_FORMAT_UNDEFINED;
 }
 
+Result VulkanContext::createAmbientOcclusionResources() {
+    if (!initialized || descriptorPool == VK_NULL_HANDLE) {
+        return Result::failure("Ambient-occlusion resources require an initialized descriptor pool");
+    }
+    if (ambientOcclusionSampler != VK_NULL_HANDLE) {
+        return Result::failure("Ambient-occlusion resources are already initialized");
+    }
+    Result settingsResult = ambient_occlusion::validate(ambientOcclusionSettings);
+    if (!settingsResult) return settingsResult;
+
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_NEAREST;
+    samplerInfo.minFilter = VK_FILTER_NEAREST;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.anisotropyEnable = VK_FALSE;
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.minLod = 0.0f;
+    samplerInfo.maxLod = 0.0f;
+    VkResult result = vkCreateSampler(device, &samplerInfo, nullptr,
+                                      &ambientOcclusionSampler);
+    if (result != VK_SUCCESS) {
+        ambientOcclusionSampler = VK_NULL_HANDLE;
+        return vkFailure("vkCreateSampler(ambient occlusion)", result);
+    }
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+        auto& frame = ambientOcclusionFrames[i];
+        Result createResult = createBuffer(sizeof(AmbientOcclusionUBO),
+            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            frame.uniformBuffer, frame.uniformBufferMemory);
+        if (!createResult) {
+            destroyAmbientOcclusionResources();
+            return addContext("Failed to create ambient-occlusion UBO for frame " +
+                              std::to_string(i), createResult);
+        }
+        result = vkMapMemory(device, frame.uniformBufferMemory, 0,
+                             sizeof(AmbientOcclusionUBO), 0,
+                             &frame.uniformBufferMapped);
+        if (result != VK_SUCCESS) {
+            frame.uniformBufferMapped = nullptr;
+            destroyAmbientOcclusionResources();
+            return vkFailure("vkMapMemory(ambient-occlusion UBO)", result);
+        }
+        const AmbientOcclusionUBO initial{};
+        memcpy(frame.uniformBufferMapped, &initial, sizeof(initial));
+    }
+    Result createResult = createAmbientOcclusionExtentResources();
+    if (!createResult) {
+        destroyAmbientOcclusionResources();
+        return createResult;
+    }
+    std::array<VkDescriptorSetLayout, MAX_FRAMES_IN_FLIGHT> layouts{};
+    layouts.fill(ambientOcclusionDescriptorSetLayout);
+    VkDescriptorSetAllocateInfo allocation{};
+    allocation.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocation.descriptorPool = descriptorPool;
+    allocation.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+    allocation.pSetLayouts = layouts.data();
+    std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> sets{};
+    result = vkAllocateDescriptorSets(device, &allocation, sets.data());
+    if (result != VK_SUCCESS) {
+        destroyAmbientOcclusionResources();
+        return vkFailure("vkAllocateDescriptorSets(ambient occlusion)", result);
+    }
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+        ambientOcclusionFrames[i].descriptorSet = sets[i];
+    }
+    createResult = rewriteAmbientOcclusionDescriptors();
+    if (!createResult) {
+        destroyAmbientOcclusionResources();
+        return createResult;
+    }
+    return Result::success();
+}
+
+Result VulkanContext::createAmbientOcclusionExtentResources() {
+    if (!ambient_occlusion::validExtent(swapchainExtent.width, swapchainExtent.height)) {
+        return Result::failure("Ambient-occlusion images require a nonzero swapchain extent");
+    }
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+        auto& frame = ambientOcclusionFrames[i];
+        Result result = createImage(swapchainExtent.width, swapchainExtent.height, 1,
+            VK_SAMPLE_COUNT_1_BIT, ambientOcclusionDepthFormat, VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, frame.depthImage, frame.depthImageMemory);
+        if (!result) { destroyAmbientOcclusionExtentResources(); return addContext("Failed to create AO depth image", result); }
+        result = createImageView(frame.depthImage, ambientOcclusionDepthFormat,
+            VK_IMAGE_ASPECT_DEPTH_BIT, 1, frame.depthImageView);
+        if (!result) { destroyAmbientOcclusionExtentResources(); return addContext("Failed to create AO depth view", result); }
+        result = createImage(swapchainExtent.width, swapchainExtent.height, 1,
+            VK_SAMPLE_COUNT_1_BIT, ambientOcclusionNormalFormat, VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, frame.normalImage, frame.normalImageMemory);
+        if (!result) { destroyAmbientOcclusionExtentResources(); return addContext("Failed to create AO normal image", result); }
+        result = createImageView(frame.normalImage, ambientOcclusionNormalFormat,
+            VK_IMAGE_ASPECT_COLOR_BIT, 1, frame.normalImageView);
+        if (!result) { destroyAmbientOcclusionExtentResources(); return addContext("Failed to create AO normal view", result); }
+        result = createImage(swapchainExtent.width, swapchainExtent.height, 1,
+            VK_SAMPLE_COUNT_1_BIT, ambientOcclusionOutputFormat, VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, frame.rawImage, frame.rawImageMemory);
+        if (!result) { destroyAmbientOcclusionExtentResources(); return addContext("Failed to create raw AO image", result); }
+        result = createImageView(frame.rawImage, ambientOcclusionOutputFormat,
+            VK_IMAGE_ASPECT_COLOR_BIT, 1, frame.rawImageView);
+        if (!result) { destroyAmbientOcclusionExtentResources(); return addContext("Failed to create raw AO view", result); }
+        result = createImage(swapchainExtent.width, swapchainExtent.height, 1,
+            VK_SAMPLE_COUNT_1_BIT, ambientOcclusionOutputFormat, VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, frame.blurredImage, frame.blurredImageMemory);
+        if (!result) { destroyAmbientOcclusionExtentResources(); return addContext("Failed to create blurred AO image", result); }
+        result = createImageView(frame.blurredImage, ambientOcclusionOutputFormat,
+            VK_IMAGE_ASPECT_COLOR_BIT, 1, frame.blurredImageView);
+        if (!result) { destroyAmbientOcclusionExtentResources(); return addContext("Failed to create blurred AO view", result); }
+        const std::array<VkImageView, 2> geometryAttachments{frame.normalImageView, frame.depthImageView};
+        VkFramebufferCreateInfo framebuffer{};
+        framebuffer.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebuffer.renderPass = ambientOcclusionGeometryRenderPass;
+        framebuffer.attachmentCount = static_cast<uint32_t>(geometryAttachments.size());
+        framebuffer.pAttachments = geometryAttachments.data();
+        framebuffer.width = swapchainExtent.width;
+        framebuffer.height = swapchainExtent.height;
+        framebuffer.layers = 1;
+        VkResult createResult = vkCreateFramebuffer(device, &framebuffer, nullptr, &frame.geometryFramebuffer);
+        if (createResult != VK_SUCCESS) { destroyAmbientOcclusionExtentResources(); return vkFailure("vkCreateFramebuffer(AO geometry)", createResult); }
+        framebuffer.renderPass = ambientOcclusionRenderPass;
+        framebuffer.attachmentCount = 1;
+        framebuffer.pAttachments = &frame.rawImageView;
+        createResult = vkCreateFramebuffer(device, &framebuffer, nullptr, &frame.rawFramebuffer);
+        if (createResult != VK_SUCCESS) { destroyAmbientOcclusionExtentResources(); return vkFailure("vkCreateFramebuffer(raw AO)", createResult); }
+        framebuffer.renderPass = ambientOcclusionBlurRenderPass;
+        framebuffer.pAttachments = &frame.blurredImageView;
+        createResult = vkCreateFramebuffer(device, &framebuffer, nullptr, &frame.blurFramebuffer);
+        if (createResult != VK_SUCCESS) { destroyAmbientOcclusionExtentResources(); return vkFailure("vkCreateFramebuffer(blurred AO)", createResult); }
+    }
+    return Result::success();
+}
+
+Result VulkanContext::rewriteAmbientOcclusionDescriptors() {
+    for (const auto& frame : ambientOcclusionFrames) {
+        if (frame.descriptorSet == VK_NULL_HANDLE || frame.depthImageView == VK_NULL_HANDLE ||
+            frame.normalImageView == VK_NULL_HANDLE || frame.rawImageView == VK_NULL_HANDLE ||
+            frame.blurredImageView == VK_NULL_HANDLE || frame.uniformBuffer == VK_NULL_HANDLE) {
+            return Result::failure("Ambient-occlusion descriptor inputs are unavailable");
+        }
+        std::array<VkDescriptorImageInfo, 4> images{};
+        images[0] = {ambientOcclusionSampler, frame.depthImageView, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL};
+        images[1] = {ambientOcclusionSampler, frame.normalImageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        images[2] = {ambientOcclusionSampler, frame.rawImageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        images[3] = {ambientOcclusionSampler, frame.blurredImageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkDescriptorBufferInfo buffer{frame.uniformBuffer, 0, sizeof(AmbientOcclusionUBO)};
+        std::array<VkWriteDescriptorSet, 5> writes{};
+        for (uint32_t binding = 0; binding < 4; ++binding) {
+            writes[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[binding].dstSet = frame.descriptorSet;
+            writes[binding].dstBinding = binding;
+            writes[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[binding].descriptorCount = 1;
+            writes[binding].pImageInfo = &images[binding];
+        }
+        writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[4].dstSet = frame.descriptorSet;
+        writes[4].dstBinding = 4;
+        writes[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[4].descriptorCount = 1;
+        writes[4].pBufferInfo = &buffer;
+        vkUpdateDescriptorSets(device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    }
+    return Result::success();
+}
+
+void VulkanContext::destroyAmbientOcclusionExtentResources() noexcept {
+    if (device != VK_NULL_HANDLE) {
+        for (auto& frame : ambientOcclusionFrames) {
+            if (frame.geometryFramebuffer != VK_NULL_HANDLE) vkDestroyFramebuffer(device, frame.geometryFramebuffer, nullptr);
+            if (frame.rawFramebuffer != VK_NULL_HANDLE) vkDestroyFramebuffer(device, frame.rawFramebuffer, nullptr);
+            if (frame.blurFramebuffer != VK_NULL_HANDLE) vkDestroyFramebuffer(device, frame.blurFramebuffer, nullptr);
+            frame.geometryFramebuffer = frame.rawFramebuffer = frame.blurFramebuffer = VK_NULL_HANDLE;
+            const std::array<VkImageView*, 4> views{&frame.depthImageView, &frame.normalImageView, &frame.rawImageView, &frame.blurredImageView};
+            for (VkImageView* view : views) { if (*view != VK_NULL_HANDLE) { vkDestroyImageView(device, *view, nullptr); *view = VK_NULL_HANDLE; } }
+            const std::array<VkImage*, 4> images{&frame.depthImage, &frame.normalImage, &frame.rawImage, &frame.blurredImage};
+            for (VkImage* image : images) { if (*image != VK_NULL_HANDLE) { vkDestroyImage(device, *image, nullptr); *image = VK_NULL_HANDLE; } }
+            const std::array<VkDeviceMemory*, 4> memories{&frame.depthImageMemory, &frame.normalImageMemory, &frame.rawImageMemory, &frame.blurredImageMemory};
+            for (VkDeviceMemory* memory : memories) { if (*memory != VK_NULL_HANDLE) { vkFreeMemory(device, *memory, nullptr); *memory = VK_NULL_HANDLE; } }
+        }
+    }
+}
+
+void VulkanContext::destroyAmbientOcclusionResources() noexcept {
+    destroyAmbientOcclusionExtentResources();
+    if (device != VK_NULL_HANDLE) {
+        for (auto& frame : ambientOcclusionFrames) {
+            if (frame.uniformBufferMapped != nullptr && frame.uniformBufferMemory != VK_NULL_HANDLE) vkUnmapMemory(device, frame.uniformBufferMemory);
+            frame.uniformBufferMapped = nullptr;
+            if (frame.uniformBuffer != VK_NULL_HANDLE) vkDestroyBuffer(device, frame.uniformBuffer, nullptr);
+            if (frame.uniformBufferMemory != VK_NULL_HANDLE) vkFreeMemory(device, frame.uniformBufferMemory, nullptr);
+            frame.uniformBuffer = VK_NULL_HANDLE;
+            frame.uniformBufferMemory = VK_NULL_HANDLE;
+            frame.descriptorSet = VK_NULL_HANDLE;
+        }
+        if (ambientOcclusionSampler != VK_NULL_HANDLE) vkDestroySampler(device, ambientOcclusionSampler, nullptr);
+    }
+    ambientOcclusionFrames = {};
+    ambientOcclusionSampler = VK_NULL_HANDLE;
+}
+
 Result VulkanContext::createGraphicsPipeline() {
 
     spdlog::info("Reading vertex shader code {}...", "rendering/shaders/vert.spv");
@@ -2041,7 +2407,8 @@ Result VulkanContext::createGraphicsPipeline() {
     }
 
     VkDescriptorSetLayout setLayouts[] = {descriptorSetLayout,
-        lightsDescriptorSetLayout, directionalShadowDescriptorSetLayout};
+        lightsDescriptorSetLayout, directionalShadowDescriptorSetLayout,
+        ambientOcclusionDescriptorSetLayout};
     VkPushConstantRange materialPushConstantRange{};
     materialPushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     materialPushConstantRange.offset = 0;
@@ -2049,7 +2416,7 @@ Result VulkanContext::createGraphicsPipeline() {
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 3;
+    pipelineLayoutInfo.setLayoutCount = 4;
     pipelineLayoutInfo.pSetLayouts = setLayouts;
     pipelineLayoutInfo.pushConstantRangeCount = 1;
     pipelineLayoutInfo.pPushConstantRanges = &materialPushConstantRange;
@@ -2240,6 +2607,149 @@ Result VulkanContext::createDirectionalShadowPipelines() {
         directionalShadowPipeline = VK_NULL_HANDLE;
         return vkFailure("vkCreateGraphicsPipelines(directional shadow double-sided)", createResult);
     }
+    return Result::success();
+}
+
+Result VulkanContext::createAmbientOcclusionPipelines() {
+    auto readModule = [this](const char* path, VkShaderModule& module) -> Result {
+        std::vector<char> code;
+        Result result = readFile(path, code);
+        if (!result) return result;
+        return createShaderModule(code, module);
+    };
+    ScopedShaderModule geometryVertex(device), geometryFragment(device);
+    Result result = readModule("rendering/shaders/ambient_occlusion_geometry.vert.spv", geometryVertex.module);
+    if (!result) return addContext("Failed to create AO geometry vertex shader", result);
+    result = readModule("rendering/shaders/ambient_occlusion_geometry.frag.spv", geometryFragment.module);
+    if (!result) return addContext("Failed to create AO geometry fragment shader", result);
+    VkPipelineShaderStageCreateInfo geometryStages[2]{};
+    geometryStages[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+                         VK_SHADER_STAGE_VERTEX_BIT, geometryVertex.module, "main"};
+    geometryStages[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+                         VK_SHADER_STAGE_FRAGMENT_BIT, geometryFragment.module, "main"};
+    const VkVertexInputBindingDescription binding = Vertex::getBindingDescription();
+    std::array<VkVertexInputAttributeDescription, 3> attributes{};
+    attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, pos)};
+    attributes[1] = {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, texCoord)};
+    attributes[2] = {3, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, normal)};
+    VkPipelineVertexInputStateCreateInfo vertexInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    vertexInput.vertexBindingDescriptionCount = 1;
+    vertexInput.pVertexBindingDescriptions = &binding;
+    vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributes.size());
+    vertexInput.pVertexAttributeDescriptions = attributes.data();
+    VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkPipelineViewportStateCreateInfo viewport{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+    viewport.viewportCount = 1;
+    viewport.scissorCount = 1;
+    VkPipelineRasterizationStateCreateInfo rasterizer{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    depth.depthTestEnable = VK_TRUE;
+    depth.depthWriteEnable = VK_TRUE;
+    depth.depthCompareOp = VK_COMPARE_OP_LESS;
+    VkPipelineColorBlendAttachmentState colorAttachment{};
+    colorAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                     VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+    blend.attachmentCount = 1;
+    blend.pAttachments = &colorAttachment;
+    const std::array<VkDynamicState, 2> dynamicStates{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+    dynamic.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+    dynamic.pDynamicStates = dynamicStates.data();
+    VkPushConstantRange materialPush{};
+    materialPush.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    materialPush.size = sizeof(MaterialPushConstants);
+    VkPipelineLayoutCreateInfo geometryLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    geometryLayoutInfo.setLayoutCount = 1;
+    geometryLayoutInfo.pSetLayouts = &descriptorSetLayout;
+    geometryLayoutInfo.pushConstantRangeCount = 1;
+    geometryLayoutInfo.pPushConstantRanges = &materialPush;
+    VkResult createResult = vkCreatePipelineLayout(device, &geometryLayoutInfo, nullptr,
+                                                    &ambientOcclusionGeometryPipelineLayout);
+    if (createResult != VK_SUCCESS) return vkFailure("vkCreatePipelineLayout(AO geometry)", createResult);
+    VkGraphicsPipelineCreateInfo geometryInfo{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+    geometryInfo.stageCount = 2;
+    geometryInfo.pStages = geometryStages;
+    geometryInfo.pVertexInputState = &vertexInput;
+    geometryInfo.pInputAssemblyState = &assembly;
+    geometryInfo.pViewportState = &viewport;
+    geometryInfo.pRasterizationState = &rasterizer;
+    geometryInfo.pMultisampleState = &multisample;
+    geometryInfo.pDepthStencilState = &depth;
+    geometryInfo.pColorBlendState = &blend;
+    geometryInfo.pDynamicState = &dynamic;
+    geometryInfo.layout = ambientOcclusionGeometryPipelineLayout;
+    geometryInfo.renderPass = ambientOcclusionGeometryRenderPass;
+    createResult = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &geometryInfo, nullptr,
+                                             &ambientOcclusionGeometryPipeline);
+    if (createResult != VK_SUCCESS) return vkFailure("vkCreateGraphicsPipelines(AO geometry)", createResult);
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
+    createResult = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &geometryInfo, nullptr,
+                                             &ambientOcclusionGeometryDoubleSidedPipeline);
+    if (createResult != VK_SUCCESS) return vkFailure("vkCreateGraphicsPipelines(AO geometry double-sided)", createResult);
+
+    ScopedShaderModule fullscreenVertex(device), occlusionFragment(device), blurFragment(device);
+    result = readModule("rendering/shaders/fullscreen_triangle.vert.spv", fullscreenVertex.module);
+    if (!result) return addContext("Failed to create fullscreen AO vertex shader", result);
+    result = readModule("rendering/shaders/ambient_occlusion.frag.spv", occlusionFragment.module);
+    if (!result) return addContext("Failed to create AO evaluation fragment shader", result);
+    result = readModule("rendering/shaders/ambient_occlusion_blur.frag.spv", blurFragment.module);
+    if (!result) return addContext("Failed to create AO blur fragment shader", result);
+    VkPipelineShaderStageCreateInfo fullscreenStages[2]{};
+    fullscreenStages[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+                           VK_SHADER_STAGE_VERTEX_BIT, fullscreenVertex.module, "main"};
+    fullscreenStages[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+                           VK_SHADER_STAGE_FRAGMENT_BIT, occlusionFragment.module, "main"};
+    VkPipelineVertexInputStateCreateInfo fullscreenInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    VkPipelineRasterizationStateCreateInfo fullscreenRaster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    fullscreenRaster.polygonMode = VK_POLYGON_MODE_FILL;
+    fullscreenRaster.lineWidth = 1.0f;
+    fullscreenRaster.cullMode = VK_CULL_MODE_NONE;
+    fullscreenRaster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    VkPipelineMultisampleStateCreateInfo fullscreenSamples{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    fullscreenSamples.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineDepthStencilStateCreateInfo fullscreenDepth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    fullscreenDepth.depthTestEnable = VK_FALSE;
+    fullscreenDepth.depthWriteEnable = VK_FALSE;
+    VkPipelineLayoutCreateInfo fullscreenLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    fullscreenLayoutInfo.setLayoutCount = 1;
+    fullscreenLayoutInfo.pSetLayouts = &ambientOcclusionDescriptorSetLayout;
+    createResult = vkCreatePipelineLayout(device, &fullscreenLayoutInfo, nullptr,
+                                          &ambientOcclusionPipelineLayout);
+    if (createResult != VK_SUCCESS) return vkFailure("vkCreatePipelineLayout(AO)", createResult);
+    createResult = vkCreatePipelineLayout(device, &fullscreenLayoutInfo, nullptr,
+                                          &ambientOcclusionBlurPipelineLayout);
+    if (createResult != VK_SUCCESS) return vkFailure("vkCreatePipelineLayout(AO blur)", createResult);
+    VkGraphicsPipelineCreateInfo fullscreenInfo{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+    fullscreenInfo.stageCount = 2;
+    fullscreenInfo.pStages = fullscreenStages;
+    fullscreenInfo.pVertexInputState = &fullscreenInput;
+    fullscreenInfo.pInputAssemblyState = &assembly;
+    fullscreenInfo.pViewportState = &viewport;
+    fullscreenInfo.pRasterizationState = &fullscreenRaster;
+    fullscreenInfo.pMultisampleState = &fullscreenSamples;
+    fullscreenInfo.pDepthStencilState = &fullscreenDepth;
+    fullscreenInfo.pColorBlendState = &blend;
+    fullscreenInfo.pDynamicState = &dynamic;
+    fullscreenInfo.layout = ambientOcclusionPipelineLayout;
+    fullscreenInfo.renderPass = ambientOcclusionRenderPass;
+    createResult = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &fullscreenInfo, nullptr,
+                                             &ambientOcclusionPipeline);
+    if (createResult != VK_SUCCESS) return vkFailure("vkCreateGraphicsPipelines(AO)", createResult);
+    fullscreenStages[1].module = blurFragment.module;
+    fullscreenInfo.pStages = fullscreenStages;
+    fullscreenInfo.layout = ambientOcclusionBlurPipelineLayout;
+    fullscreenInfo.renderPass = ambientOcclusionBlurRenderPass;
+    createResult = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &fullscreenInfo, nullptr,
+                                             &ambientOcclusionBlurPipeline);
+    if (createResult != VK_SUCCESS) return vkFailure("vkCreateGraphicsPipelines(AO blur)", createResult);
     return Result::success();
 }
 
@@ -3305,18 +3815,20 @@ Result VulkanContext::createDescriptorPool(uint32_t numOfObjects) {
 
     const directional_shadow::DescriptorPoolRequirements shadowPool =
         directional_shadow::descriptorPoolRequirements(MAX_FRAMES_IN_FLIGHT);
+    const ambient_occlusion::DescriptorPoolRequirements aoPool =
+        ambient_occlusion::descriptorPoolRequirements(MAX_FRAMES_IN_FLIGHT);
 
     // Per-object UBOs plus lighting and directional-shadow UBOs per frame.
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount =
         static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT) +
-        MAX_FRAMES_IN_FLIGHT + shadowPool.uniformBuffers;
+        MAX_FRAMES_IN_FLIGHT + shadowPool.uniformBuffers + aoPool.uniformBuffers;
 
     // Texture samplers 
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount =
         static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT * 3) +
-        shadowPool.combinedImageSamplers;
+        shadowPool.combinedImageSamplers + aoPool.combinedImageSamplers;
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -3325,7 +3837,7 @@ Result VulkanContext::createDescriptorPool(uint32_t numOfObjects) {
     poolInfo.pPoolSizes = poolSizes.data();
     poolInfo.maxSets =
         static_cast<uint32_t>(numOfObjects * MAX_FRAMES_IN_FLIGHT) +
-        MAX_FRAMES_IN_FLIGHT + shadowPool.descriptorSets;
+        MAX_FRAMES_IN_FLIGHT + shadowPool.descriptorSets + aoPool.descriptorSets;
 
     const VkResult result = vkCreateDescriptorPool(
         device, &poolInfo, nullptr, &descriptorPool);
@@ -3725,6 +4237,10 @@ void VulkanContext::cleanupSwapchain() noexcept {
         return;
     }
 
+    // These per-frame targets are extent dependent; descriptors are rewritten
+    // after recreation before another frame can use them.
+    destroyAmbientOcclusionExtentResources();
+
     for (auto framebuffer : swapchainFramebuffers) {
         if (framebuffer != VK_NULL_HANDLE) {
             vkDestroyFramebuffer(device, framebuffer, nullptr);
@@ -3844,6 +4360,36 @@ Result VulkanContext::updateDirectionalShadowUniformBuffer(Scene* scene) {
     if (!result) return result;
     const DirectionalShadowUBO ubo{matrices.viewProjection};
     memcpy(frame.transformBufferMapped, &ubo, sizeof(ubo));
+    return Result::success();
+}
+
+Result VulkanContext::updateAmbientOcclusionUniformBuffer(
+    const glm::mat4& projection) {
+    Result settingsResult = ambient_occlusion::validate(ambientOcclusionSettings);
+    if (!settingsResult) return settingsResult;
+    const glm::mat4 inverseProjection = glm::inverse(projection);
+    if (!ambient_occlusion::isFiniteMatrix(projection) ||
+        !ambient_occlusion::isFiniteMatrix(inverseProjection)) {
+        return Result::failure("Ambient-occlusion projection matrices are not finite");
+    }
+    auto& frame = ambientOcclusionFrames[currentFrame];
+    if (frame.uniformBufferMapped == nullptr) {
+        return Result::failure("Current-frame ambient-occlusion uniform buffer is not mapped");
+    }
+    AmbientOcclusionUBO ubo{};
+    ubo.projection = projection;
+    ubo.inverseProjection = inverseProjection;
+    for (size_t i = 0; i < ambientOcclusionKernel.size(); ++i) {
+        ubo.samples[i] = glm::vec4(ambientOcclusionKernel[i], 0.0f);
+    }
+    ubo.parameters = glm::vec4(ambientOcclusionSettings.radius,
+                               ambientOcclusionSettings.bias,
+                               ambientOcclusionSettings.power,
+                               ambientOcclusionSettings.enabled ? 1.0f : 0.0f);
+    const float width = static_cast<float>(swapchainExtent.width);
+    const float height = static_cast<float>(swapchainExtent.height);
+    ubo.viewport = glm::vec4(width, height, 1.0f / width, 1.0f / height);
+    memcpy(frame.uniformBufferMapped, &ubo, sizeof(ubo));
     return Result::success();
 }
 
@@ -3968,6 +4514,11 @@ Result VulkanContext::drawFrame(Scene* scene, const Camera& renderCamera,
     Result shadowResult = updateDirectionalShadowUniformBuffer(scene);
     if (!shadowResult) {
         return shadowResult;
+    }
+
+    Result aoResult = updateAmbientOcclusionUniformBuffer(projection);
+    if (!aoResult) {
+        return aoResult;
     }
 
     Result recordResult = recordCommandBuffer(
@@ -4125,6 +4676,99 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
         vkCmdEndRenderPass(commandBuffer);
     }
 
+    const auto& aoFrame = ambientOcclusionFrames[currentFrame];
+    if (aoFrame.geometryFramebuffer == VK_NULL_HANDLE ||
+        aoFrame.rawFramebuffer == VK_NULL_HANDLE ||
+        aoFrame.blurFramebuffer == VK_NULL_HANDLE ||
+        aoFrame.descriptorSet == VK_NULL_HANDLE) {
+        return Result::failure("Current-frame ambient-occlusion resources are unavailable");
+    }
+    VkViewport aoViewport{};
+    aoViewport.width = static_cast<float>(swapchainExtent.width);
+    aoViewport.height = static_cast<float>(swapchainExtent.height);
+    aoViewport.minDepth = 0.0f;
+    aoViewport.maxDepth = 1.0f;
+    VkRect2D aoScissor{};
+    aoScissor.extent = swapchainExtent;
+
+    VkRenderPassBeginInfo geometryPass{};
+    geometryPass.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    geometryPass.renderPass = ambientOcclusionGeometryRenderPass;
+    geometryPass.framebuffer = aoFrame.geometryFramebuffer;
+    geometryPass.renderArea.extent = swapchainExtent;
+    std::array<VkClearValue, 2> geometryClears{};
+    geometryClears[0].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
+    geometryClears[1].depthStencil = {1.0f, 0};
+    geometryPass.clearValueCount = static_cast<uint32_t>(geometryClears.size());
+    geometryPass.pClearValues = geometryClears.data();
+    vkCmdBeginRenderPass(commandBuffer, &geometryPass, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdSetViewport(commandBuffer, 0, 1, &aoViewport);
+    vkCmdSetScissor(commandBuffer, 0, 1, &aoScissor);
+    VkPipeline boundGeometryPipeline = VK_NULL_HANDLE;
+    for (const auto& obj : scene->gameObjects()) {
+        for (const auto& instance : obj->meshInstances_) {
+            if (instance.material.alphaMode == MaterialAlphaMode::Blend) continue;
+            const VkPipeline pipeline = instance.material.doubleSided
+                ? ambientOcclusionGeometryDoubleSidedPipeline
+                : ambientOcclusionGeometryPipeline;
+            if (pipeline != boundGeometryPipeline) {
+                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+                boundGeometryPipeline = pipeline;
+            }
+            const VkBuffer vertexBuffer[] = {instance.mesh.vertexBuffer};
+            const VkDeviceSize offset[] = {0};
+            vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffer, offset);
+            vkCmdBindIndexBuffer(commandBuffer, instance.mesh.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    ambientOcclusionGeometryPipelineLayout, 0, 1,
+                                    &instance.renderData.descriptorSets[currentFrame], 0, nullptr);
+            const MaterialPushConstants materialPushConstants{
+                instance.material.baseColorFactor, instance.material.metallicFactor,
+                instance.material.roughnessFactor,
+                static_cast<std::int32_t>(instance.material.alphaMode),
+                instance.material.alphaCutoff,
+                instance.material.normalMapEnabled ? 1 : 0,
+                instance.material.hasMetallicRoughnessMap ? 1 : 0};
+            vkCmdPushConstants(commandBuffer, ambientOcclusionGeometryPipelineLayout,
+                               VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                               sizeof(MaterialPushConstants), &materialPushConstants);
+            vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(instance.mesh.indices.size()),
+                             1, 0, 0, 0);
+        }
+    }
+    vkCmdEndRenderPass(commandBuffer);
+
+    VkClearValue aoClear{};
+    aoClear.color = {{1.0f, 1.0f, 1.0f, 1.0f}};
+    VkRenderPassBeginInfo aoPass{};
+    aoPass.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    aoPass.renderPass = ambientOcclusionRenderPass;
+    aoPass.framebuffer = aoFrame.rawFramebuffer;
+    aoPass.renderArea.extent = swapchainExtent;
+    aoPass.clearValueCount = 1;
+    aoPass.pClearValues = &aoClear;
+    vkCmdBeginRenderPass(commandBuffer, &aoPass, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdSetViewport(commandBuffer, 0, 1, &aoViewport);
+    vkCmdSetScissor(commandBuffer, 0, 1, &aoScissor);
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ambientOcclusionPipeline);
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            ambientOcclusionPipelineLayout, 0, 1,
+                            &aoFrame.descriptorSet, 0, nullptr);
+    vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+    vkCmdEndRenderPass(commandBuffer);
+
+    aoPass.renderPass = ambientOcclusionBlurRenderPass;
+    aoPass.framebuffer = aoFrame.blurFramebuffer;
+    vkCmdBeginRenderPass(commandBuffer, &aoPass, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdSetViewport(commandBuffer, 0, 1, &aoViewport);
+    vkCmdSetScissor(commandBuffer, 0, 1, &aoScissor);
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ambientOcclusionBlurPipeline);
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            ambientOcclusionBlurPipelineLayout, 0, 1,
+                            &aoFrame.descriptorSet, 0, nullptr);
+    vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+    vkCmdEndRenderPass(commandBuffer);
+
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     renderPassInfo.renderPass = renderPass;
@@ -4151,6 +4795,9 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             pipelineLayout, 2, 1,
                             &directionalShadowFrames[currentFrame].descriptorSet,
+                            0, nullptr);
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            pipelineLayout, 3, 1, &aoFrame.descriptorSet,
                             0, nullptr);
 
     VkViewport viewport{};
@@ -4313,6 +4960,18 @@ Result VulkanContext::recreateSwapchain() {
         destroyRenderFinishedSemaphores();
         cleanupSwapchain();
         return addContext("Failed to recreate depth resources", result);
+    }
+    result = createAmbientOcclusionExtentResources();
+    if (!result) {
+        destroyRenderFinishedSemaphores();
+        cleanupSwapchain();
+        return addContext("Failed to recreate ambient-occlusion images", result);
+    }
+    result = rewriteAmbientOcclusionDescriptors();
+    if (!result) {
+        destroyRenderFinishedSemaphores();
+        cleanupSwapchain();
+        return addContext("Failed to rewrite ambient-occlusion descriptors", result);
     }
     result = createFramebuffers();
     if (!result) {
@@ -4542,6 +5201,7 @@ bool VulkanContext::cleanup() noexcept {
         destroyRenderFinishedSemaphores();
 
         destroyDirectionalShadowResources();
+        destroyAmbientOcclusionResources();
 
         if (descriptorPool != VK_NULL_HANDLE) {
             vkDestroyDescriptorPool(device, descriptorPool, nullptr);
@@ -4580,6 +5240,22 @@ bool VulkanContext::cleanup() noexcept {
             vkDestroyPipeline(device, selectionOutlinePipeline, nullptr);
             selectionOutlinePipeline = VK_NULL_HANDLE;
         }
+        if (ambientOcclusionGeometryPipeline != VK_NULL_HANDLE) {
+            vkDestroyPipeline(device, ambientOcclusionGeometryPipeline, nullptr);
+            ambientOcclusionGeometryPipeline = VK_NULL_HANDLE;
+        }
+        if (ambientOcclusionGeometryDoubleSidedPipeline != VK_NULL_HANDLE) {
+            vkDestroyPipeline(device, ambientOcclusionGeometryDoubleSidedPipeline, nullptr);
+            ambientOcclusionGeometryDoubleSidedPipeline = VK_NULL_HANDLE;
+        }
+        if (ambientOcclusionPipeline != VK_NULL_HANDLE) {
+            vkDestroyPipeline(device, ambientOcclusionPipeline, nullptr);
+            ambientOcclusionPipeline = VK_NULL_HANDLE;
+        }
+        if (ambientOcclusionBlurPipeline != VK_NULL_HANDLE) {
+            vkDestroyPipeline(device, ambientOcclusionBlurPipeline, nullptr);
+            ambientOcclusionBlurPipeline = VK_NULL_HANDLE;
+        }
         if (selectionOutlinePipelineLayout != VK_NULL_HANDLE) {
             vkDestroyPipelineLayout(device, selectionOutlinePipelineLayout,
                                     nullptr);
@@ -4593,6 +5269,18 @@ bool VulkanContext::cleanup() noexcept {
             vkDestroyPipelineLayout(device, directionalShadowPipelineLayout,
                                     nullptr);
             directionalShadowPipelineLayout = VK_NULL_HANDLE;
+        }
+        if (ambientOcclusionGeometryPipelineLayout != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(device, ambientOcclusionGeometryPipelineLayout, nullptr);
+            ambientOcclusionGeometryPipelineLayout = VK_NULL_HANDLE;
+        }
+        if (ambientOcclusionPipelineLayout != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(device, ambientOcclusionPipelineLayout, nullptr);
+            ambientOcclusionPipelineLayout = VK_NULL_HANDLE;
+        }
+        if (ambientOcclusionBlurPipelineLayout != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(device, ambientOcclusionBlurPipelineLayout, nullptr);
+            ambientOcclusionBlurPipelineLayout = VK_NULL_HANDLE;
         }
         if (descriptorSetLayout != VK_NULL_HANDLE) {
             vkDestroyDescriptorSetLayout(device, descriptorSetLayout,
@@ -4610,6 +5298,11 @@ bool VulkanContext::cleanup() noexcept {
                                          nullptr);
             directionalShadowDescriptorSetLayout = VK_NULL_HANDLE;
         }
+        if (ambientOcclusionDescriptorSetLayout != VK_NULL_HANDLE) {
+            vkDestroyDescriptorSetLayout(device, ambientOcclusionDescriptorSetLayout,
+                                         nullptr);
+            ambientOcclusionDescriptorSetLayout = VK_NULL_HANDLE;
+        }
         if (renderPass != VK_NULL_HANDLE) {
             vkDestroyRenderPass(device, renderPass, nullptr);
             renderPass = VK_NULL_HANDLE;
@@ -4617,6 +5310,18 @@ bool VulkanContext::cleanup() noexcept {
         if (directionalShadowRenderPass != VK_NULL_HANDLE) {
             vkDestroyRenderPass(device, directionalShadowRenderPass, nullptr);
             directionalShadowRenderPass = VK_NULL_HANDLE;
+        }
+        if (ambientOcclusionGeometryRenderPass != VK_NULL_HANDLE) {
+            vkDestroyRenderPass(device, ambientOcclusionGeometryRenderPass, nullptr);
+            ambientOcclusionGeometryRenderPass = VK_NULL_HANDLE;
+        }
+        if (ambientOcclusionRenderPass != VK_NULL_HANDLE) {
+            vkDestroyRenderPass(device, ambientOcclusionRenderPass, nullptr);
+            ambientOcclusionRenderPass = VK_NULL_HANDLE;
+        }
+        if (ambientOcclusionBlurRenderPass != VK_NULL_HANDLE) {
+            vkDestroyRenderPass(device, ambientOcclusionBlurRenderPass, nullptr);
+            ambientOcclusionBlurRenderPass = VK_NULL_HANDLE;
         }
 
         for (VkSemaphore semaphore : imageAvailableSemaphores) {
@@ -4656,6 +5361,7 @@ bool VulkanContext::cleanup() noexcept {
         sceneResourceOwnership_.clear();
         sceneResourceLoadTarget_ = nullptr;
         destroyDirectionalShadowResources();
+        destroyAmbientOcclusionResources();
     }
 
     graphicsQueue = VK_NULL_HANDLE;
@@ -4686,19 +5392,35 @@ bool VulkanContext::cleanup() noexcept {
     directionalShadowFrames = {};
     directionalShadowSampler = VK_NULL_HANDLE;
     directionalShadowDepthFormat = VK_FORMAT_UNDEFINED;
+    ambientOcclusionFrames = {};
+    ambientOcclusionSampler = VK_NULL_HANDLE;
+    ambientOcclusionDepthFormat = VK_FORMAT_UNDEFINED;
+    ambientOcclusionNormalFormat = VK_FORMAT_UNDEFINED;
+    ambientOcclusionOutputFormat = VK_FORMAT_UNDEFINED;
     descriptorSetLayout = VK_NULL_HANDLE;
     lightsDescriptorSetLayout = VK_NULL_HANDLE;
     directionalShadowDescriptorSetLayout = VK_NULL_HANDLE;
+    ambientOcclusionDescriptorSetLayout = VK_NULL_HANDLE;
     graphicsPipeline = VK_NULL_HANDLE;
     doubleSidedGraphicsPipeline = VK_NULL_HANDLE;
     directionalShadowPipeline = VK_NULL_HANDLE;
     directionalShadowDoubleSidedPipeline = VK_NULL_HANDLE;
     selectionOutlinePipeline = VK_NULL_HANDLE;
+    ambientOcclusionGeometryPipeline = VK_NULL_HANDLE;
+    ambientOcclusionGeometryDoubleSidedPipeline = VK_NULL_HANDLE;
+    ambientOcclusionPipeline = VK_NULL_HANDLE;
+    ambientOcclusionBlurPipeline = VK_NULL_HANDLE;
     selectionOutlinePipelineLayout = VK_NULL_HANDLE;
     pipelineLayout = VK_NULL_HANDLE;
     directionalShadowPipelineLayout = VK_NULL_HANDLE;
+    ambientOcclusionGeometryPipelineLayout = VK_NULL_HANDLE;
+    ambientOcclusionPipelineLayout = VK_NULL_HANDLE;
+    ambientOcclusionBlurPipelineLayout = VK_NULL_HANDLE;
     renderPass = VK_NULL_HANDLE;
     directionalShadowRenderPass = VK_NULL_HANDLE;
+    ambientOcclusionGeometryRenderPass = VK_NULL_HANDLE;
+    ambientOcclusionRenderPass = VK_NULL_HANDLE;
+    ambientOcclusionBlurRenderPass = VK_NULL_HANDLE;
     commandPool = VK_NULL_HANDLE;
     colorImage = VK_NULL_HANDLE;
     colorImageView = VK_NULL_HANDLE;

@@ -31,6 +31,48 @@ public:
         const std::unique_ptr<GameObject>& gameObject) {
         return context.createUniformBuffers(gameObject);
     }
+
+    [[nodiscard]] static bool ambientOcclusionIsReset(
+        const VulkanContext& context) {
+        if (context.ambientOcclusionSampler != VK_NULL_HANDLE ||
+            context.ambientOcclusionDescriptorSetLayout != VK_NULL_HANDLE ||
+            context.ambientOcclusionGeometryRenderPass != VK_NULL_HANDLE ||
+            context.ambientOcclusionRenderPass != VK_NULL_HANDLE ||
+            context.ambientOcclusionBlurRenderPass != VK_NULL_HANDLE ||
+            context.ambientOcclusionGeometryPipelineLayout != VK_NULL_HANDLE ||
+            context.ambientOcclusionPipelineLayout != VK_NULL_HANDLE ||
+            context.ambientOcclusionBlurPipelineLayout != VK_NULL_HANDLE ||
+            context.ambientOcclusionGeometryPipeline != VK_NULL_HANDLE ||
+            context.ambientOcclusionGeometryDoubleSidedPipeline != VK_NULL_HANDLE ||
+            context.ambientOcclusionPipeline != VK_NULL_HANDLE ||
+            context.ambientOcclusionBlurPipeline != VK_NULL_HANDLE) {
+            return false;
+        }
+        for (const auto& frame : context.ambientOcclusionFrames) {
+            if (frame.depthImage != VK_NULL_HANDLE ||
+                frame.depthImageMemory != VK_NULL_HANDLE ||
+                frame.depthImageView != VK_NULL_HANDLE ||
+                frame.normalImage != VK_NULL_HANDLE ||
+                frame.normalImageMemory != VK_NULL_HANDLE ||
+                frame.normalImageView != VK_NULL_HANDLE ||
+                frame.rawImage != VK_NULL_HANDLE ||
+                frame.rawImageMemory != VK_NULL_HANDLE ||
+                frame.rawImageView != VK_NULL_HANDLE ||
+                frame.blurredImage != VK_NULL_HANDLE ||
+                frame.blurredImageMemory != VK_NULL_HANDLE ||
+                frame.blurredImageView != VK_NULL_HANDLE ||
+                frame.geometryFramebuffer != VK_NULL_HANDLE ||
+                frame.rawFramebuffer != VK_NULL_HANDLE ||
+                frame.blurFramebuffer != VK_NULL_HANDLE ||
+                frame.uniformBuffer != VK_NULL_HANDLE ||
+                frame.uniformBufferMemory != VK_NULL_HANDLE ||
+                frame.uniformBufferMapped != nullptr ||
+                frame.descriptorSet != VK_NULL_HANDLE) {
+                return false;
+            }
+        }
+        return true;
+    }
 };
 
 class GameObjectTestAccess {
@@ -142,7 +184,8 @@ int main(int argc, char** argv) {
     const bool firstPartialCleanup = context.cleanup();
     const bool secondPartialCleanup = context.cleanup();
 
-    if (!firstPartialCleanup || !secondPartialCleanup) {
+    if (!firstPartialCleanup || !secondPartialCleanup ||
+        !VulkanContextTestAccess::ambientOcclusionIsReset(context)) {
         std::cerr << "Repeated partial Vulkan cleanup did not complete\n";
         return 1;
     }
@@ -238,6 +281,7 @@ int main(int argc, char** argv) {
 
         if (!initializedContext.cleanup() ||
             !initializedContext.cleanup() ||
+            !VulkanContextTestAccess::ambientOcclusionIsReset(initializedContext) ||
             !GameObjectTestAccess::mutableTopology(
                 *resourceScene.gameObjects().front())) {
             std::cerr << "Repeated full Vulkan cleanup did not complete\n";

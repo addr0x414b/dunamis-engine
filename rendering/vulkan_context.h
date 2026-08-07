@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <fstream>
 #include <optional>
 #include <set>
@@ -21,6 +22,7 @@
 #include "../scene/scene.h"
 #include "imgui_layer.h"
 #include "directional_shadow.h"
+#include "ambient_occlusion.h"
 #include "utils/vulkan_utils.h"
 
 #ifdef NDEBUG
@@ -81,6 +83,7 @@ private:
         const std::unique_ptr<GameObject>& gameObject);
     [[nodiscard]] Result createLightsUBO();
     [[nodiscard]] Result createDirectionalShadowResources();
+    [[nodiscard]] Result createAmbientOcclusionResources();
     [[nodiscard]] Result initializeDirectionalShadowImages();
     [[nodiscard]] Result beginSceneResourceLoad(Scene* scene);
     [[nodiscard]] Result commitSceneResourceLoad(Scene* scene);
@@ -207,23 +210,35 @@ private:
 
     [[nodiscard]] Result createRenderPass();
     [[nodiscard]] Result createDirectionalShadowRenderPass();
+    [[nodiscard]] Result createAmbientOcclusionRenderPasses();
     [[nodiscard]] Result findDepthFormat(VkFormat& format) const;
     [[nodiscard]] Result findSupportedFormat(
         const std::vector<VkFormat>& candidates, VkImageTiling tiling,
         VkFormatFeatureFlags features, VkFormat& format) const;
     [[nodiscard]] Result findDirectionalShadowDepthFormat(VkFormat& format) const;
+    [[nodiscard]] Result findAmbientOcclusionDepthFormat(VkFormat& format) const;
+    [[nodiscard]] Result findAmbientOcclusionNormalFormat(VkFormat& format) const;
+    [[nodiscard]] Result findAmbientOcclusionOutputFormat(VkFormat& format) const;
 
     [[nodiscard]] Result createDescriptorSetLayout();
     [[nodiscard]] Result createLightsDescriptorSetLayout();
     [[nodiscard]] Result createDirectionalShadowDescriptorSetLayout();
+    [[nodiscard]] Result createAmbientOcclusionDescriptorSetLayout();
     [[nodiscard]] Result updateLightsUniformBuffer(Scene* scene);
     [[nodiscard]] Result updateDirectionalShadowUniformBuffer(Scene* scene);
+    [[nodiscard]] Result updateAmbientOcclusionUniformBuffer(
+        const glm::mat4& projection);
     void destroyLightsUBOs() noexcept;
     void destroyDirectionalShadowResources() noexcept;
+    void destroyAmbientOcclusionResources() noexcept;
+    void destroyAmbientOcclusionExtentResources() noexcept;
+    [[nodiscard]] Result createAmbientOcclusionExtentResources();
+    [[nodiscard]] Result rewriteAmbientOcclusionDescriptors();
 
     [[nodiscard]] Result createGraphicsPipeline();
     [[nodiscard]] Result createDirectionalShadowPipelines();
     [[nodiscard]] Result createSelectionOutlinePipeline();
+    [[nodiscard]] Result createAmbientOcclusionPipelines();
     [[nodiscard]] Result readFile(const std::string& filename,
                                   std::vector<char>& contents) const;
     [[nodiscard]] Result createShaderModule(const std::vector<char>& code,
@@ -303,6 +318,7 @@ private:
     VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout lightsDescriptorSetLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout directionalShadowDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout ambientOcclusionDescriptorSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
     std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT>
         lightsDescriptorSets{};
@@ -326,6 +342,48 @@ private:
     VkFormat directionalShadowDepthFormat = VK_FORMAT_UNDEFINED;
     VkSampler directionalShadowSampler = VK_NULL_HANDLE;
 
+    struct alignas(16) AmbientOcclusionUBO {
+        alignas(16) glm::mat4 projection{1.0f};
+        alignas(16) glm::mat4 inverseProjection{1.0f};
+        alignas(16) std::array<glm::vec4, ambient_occlusion::sampleCount> samples{};
+        alignas(16) glm::vec4 parameters{};
+        alignas(16) glm::vec4 viewport{};
+    };
+    static_assert(offsetof(AmbientOcclusionUBO, projection) == 0);
+    static_assert(offsetof(AmbientOcclusionUBO, inverseProjection) == 64);
+    static_assert(offsetof(AmbientOcclusionUBO, samples) == 128);
+    static_assert(sizeof(AmbientOcclusionUBO) == 672);
+
+    struct AmbientOcclusionFrameResources {
+        VkImage depthImage = VK_NULL_HANDLE;
+        VkDeviceMemory depthImageMemory = VK_NULL_HANDLE;
+        VkImageView depthImageView = VK_NULL_HANDLE;
+        VkImage normalImage = VK_NULL_HANDLE;
+        VkDeviceMemory normalImageMemory = VK_NULL_HANDLE;
+        VkImageView normalImageView = VK_NULL_HANDLE;
+        VkImage rawImage = VK_NULL_HANDLE;
+        VkDeviceMemory rawImageMemory = VK_NULL_HANDLE;
+        VkImageView rawImageView = VK_NULL_HANDLE;
+        VkImage blurredImage = VK_NULL_HANDLE;
+        VkDeviceMemory blurredImageMemory = VK_NULL_HANDLE;
+        VkImageView blurredImageView = VK_NULL_HANDLE;
+        VkFramebuffer geometryFramebuffer = VK_NULL_HANDLE;
+        VkFramebuffer rawFramebuffer = VK_NULL_HANDLE;
+        VkFramebuffer blurFramebuffer = VK_NULL_HANDLE;
+        VkBuffer uniformBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory uniformBufferMemory = VK_NULL_HANDLE;
+        void* uniformBufferMapped = nullptr;
+        VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+    };
+    std::array<AmbientOcclusionFrameResources, MAX_FRAMES_IN_FLIGHT>
+        ambientOcclusionFrames{};
+    ambient_occlusion::AmbientOcclusionSettings ambientOcclusionSettings{};
+    ambient_occlusion::Kernel ambientOcclusionKernel = ambient_occlusion::makeKernel();
+    VkFormat ambientOcclusionDepthFormat = VK_FORMAT_UNDEFINED;
+    VkFormat ambientOcclusionNormalFormat = VK_FORMAT_UNDEFINED;
+    VkFormat ambientOcclusionOutputFormat = VK_FORMAT_UNDEFINED;
+    VkSampler ambientOcclusionSampler = VK_NULL_HANDLE;
+
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkPipeline graphicsPipeline = VK_NULL_HANDLE;
     VkPipeline doubleSidedGraphicsPipeline = VK_NULL_HANDLE;
@@ -335,6 +393,16 @@ private:
     VkPipeline directionalShadowDoubleSidedPipeline = VK_NULL_HANDLE;
     VkPipelineLayout selectionOutlinePipelineLayout = VK_NULL_HANDLE;
     VkPipeline selectionOutlinePipeline = VK_NULL_HANDLE;
+    VkRenderPass ambientOcclusionGeometryRenderPass = VK_NULL_HANDLE;
+    VkRenderPass ambientOcclusionRenderPass = VK_NULL_HANDLE;
+    VkRenderPass ambientOcclusionBlurRenderPass = VK_NULL_HANDLE;
+    VkPipelineLayout ambientOcclusionGeometryPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline ambientOcclusionGeometryPipeline = VK_NULL_HANDLE;
+    VkPipeline ambientOcclusionGeometryDoubleSidedPipeline = VK_NULL_HANDLE;
+    VkPipelineLayout ambientOcclusionPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline ambientOcclusionPipeline = VK_NULL_HANDLE;
+    VkPipelineLayout ambientOcclusionBlurPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline ambientOcclusionBlurPipeline = VK_NULL_HANDLE;
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
     VkCommandPool commandPool = VK_NULL_HANDLE;
 
