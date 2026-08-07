@@ -32,6 +32,11 @@ set_tests_properties(startup_failure_returns_nonzero PROPERTIES
         TIMEOUT 10
 )
 
+add_executable(CameraTests camera_tests.cpp)
+target_include_directories(CameraTests PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(CameraTests PRIVATE Camera glm spdlog)
+add_test(NAME camera_math COMMAND CameraTests)
+
 add_executable(VulkanPartialCleanupTests vulkan_partial_cleanup_tests.cpp)
 add_dependencies(VulkanPartialCleanupTests DunamisEngine)
 

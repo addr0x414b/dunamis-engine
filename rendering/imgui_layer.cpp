@@ -238,14 +238,6 @@ bool applyObjectPosition(GameObject& object,
     return true;
 }
 
-bool hasValidCameraDirections(const glm::vec3& front,
-                              const glm::vec3& up) noexcept {
-    const glm::vec3 cross = glm::cross(front, up);
-    const float crossLengthSquared = glm::dot(cross, cross);
-    return isFiniteVector(cross) && std::isfinite(crossLengthSquared) &&
-           crossLengthSquared > minCameraBasisLengthSquared;
-}
-
 bool applyObjectRotation(GameObject& object,
                          const glm::vec3& newRotation) noexcept {
     if (!isFiniteVector(object.rotation) || !isFiniteVector(newRotation)) {
@@ -273,12 +265,8 @@ bool applyObjectRotation(GameObject& object,
                                     ? standaloneCamera
                                     : attachedCamera;
     glm::vec3 newCameraPosition;
-    glm::vec3 newCameraFront;
-    glm::vec3 newCameraUp;
     if (orientationCamera != nullptr) {
-        if (!isFiniteVector(orientationCamera->position) ||
-            !isFiniteVector(orientationCamera->front) ||
-            !isFiniteVector(orientationCamera->up)) {
+        if (!isFiniteVector(orientationCamera->position)) {
             return false;
         }
 
@@ -299,22 +287,12 @@ bool applyObjectRotation(GameObject& object,
             }
         }
 
-        const glm::vec3 rotatedFront = glm::vec3(
-            deltaRotation * glm::vec4(orientationCamera->front, 0.0f));
-        const glm::vec3 rotatedUp = glm::vec3(
-            deltaRotation * glm::vec4(orientationCamera->up, 0.0f));
-        if (!normalizeFinite(rotatedFront, newCameraFront) ||
-            !normalizeFinite(rotatedUp, newCameraUp) ||
-            !hasValidCameraDirections(newCameraFront, newCameraUp)) {
+        if (!orientationCamera->applyOrientationDelta(glm::mat3(deltaRotation))) {
             return false;
         }
     }
 
     object.rotation = newRotation;
-    if (orientationCamera != nullptr) {
-        orientationCamera->front = newCameraFront;
-        orientationCamera->up = newCameraUp;
-    }
     if (attachedCamera != nullptr) {
         attachedCamera->position = newCameraPosition;
     }

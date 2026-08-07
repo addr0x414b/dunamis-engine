@@ -2,10 +2,11 @@
 #define PLAYER_H
 
 #include <glm/glm.hpp>
+#include <memory>
+
 #include "../input/input_manager.h"
 #include "../scene/camera.h"
 #include "../scene/game_object.h"
-#include "spdlog/spdlog.h"
 
 class PlayerTestAccess;
 
@@ -20,21 +21,12 @@ public:
     }
     std::shared_ptr<Camera> camera;
 
-    glm::vec3 front = glm::vec3(0.0f, 0.0f, -1.0f);
-    glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
-
 private:
     friend class PlayerTestAccess;
 
-    [[nodiscard]] bool syncLookAnglesFromCamera() noexcept;
-    [[nodiscard]] bool reconstructForward(glm::vec3& forward) const noexcept;
     void applyMovementDelta(const glm::vec3& delta) noexcept;
 
-    static const glm::vec3 worldUp;
-
     float speed = 1.0f;
-    double lastX = 0.0;
-    double lastY = 0.0;
     double yaw = -90.0f;
     double pitch = 0.0f;
 };

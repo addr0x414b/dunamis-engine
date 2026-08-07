@@ -21,12 +21,6 @@ class PlayerTestAccess {
 public:
     static double yaw(const Player& player) { return player.yaw; }
     static double pitch(const Player& player) { return player.pitch; }
-    static void setYaw(Player& player, double value) { player.yaw = value; }
-    static glm::vec3 worldUp() { return Player::worldUp; }
-    static bool reconstructForward(const Player& player,
-                                   glm::vec3& forward) {
-        return player.reconstructForward(forward);
-    }
     static void applyMovementDelta(Player& player, const glm::vec3& delta) {
         player.applyMovementDelta(delta);
     }
@@ -406,8 +400,9 @@ bool runSceneManagerTests() {
     return passed;
 }
 
-bool runPlayerLookSynchronizationTests() {
+bool runPlayerCameraInitializationTests() {
     bool passed = true;
+    const glm::vec3 playerWorldUp{0.0f, 1.0f, 0.0f};
     const glm::vec3 directions[] = {
         {0.0f, 0.0f, -1.0f},
         {0.98f, 0.15f, 0.1f},
@@ -421,45 +416,40 @@ bool runPlayerLookSynchronizationTests() {
     };
 
     for (const glm::vec3& sourceDirection : directions) {
+        Camera expectedCamera;
+        expectedCamera.front = glm::normalize(sourceDirection);
+        double expectedYaw = 0.0;
+        double expectedPitch = 0.0;
+        const bool expectedDerived = expectedCamera.deriveYawPitchDegrees(
+            expectedYaw, expectedPitch);
+        expectedPitch = std::clamp(expectedPitch, -89.0, 89.0);
+        const bool expectedSet = expectedCamera.setYawPitchDegrees(
+            expectedYaw, expectedPitch, playerWorldUp);
+        passed &= expect(expectedDerived && expectedSet,
+                         "Could not configure expected Player camera state");
+
         Player player;
         player.init();
         const glm::vec3 normalizedSource = glm::normalize(sourceDirection);
         player.camera->front = normalizedSource;
-        player.camera->up = PlayerTestAccess::worldUp();
+        player.camera->up = playerWorldUp;
         player.start(nullptr);
 
-        const double yaw = PlayerTestAccess::yaw(player);
-        const double pitch = PlayerTestAccess::pitch(player);
-        glm::vec3 reconstructed;
-        const bool reconstructionSucceeded =
-            PlayerTestAccess::reconstructForward(player, reconstructed);
-        const double expectedPitch = std::clamp(
-            std::asin(static_cast<double>(normalizedSource.y)) *
-                57.2957795130823208768,
-            -89.0, 89.0);
-        const double expectedYaw =
-            std::atan2(static_cast<double>(normalizedSource.z),
-                       static_cast<double>(normalizedSource.x)) *
-            57.2957795130823208768;
-
-        passed &= expect(reconstructionSucceeded && std::isfinite(yaw) &&
-                             std::isfinite(pitch),
-                         "Player look-angle synchronization produced invalid "
-                         "angles");
-        const bool anglesMatch =
-            std::fabs(yaw - expectedYaw) < 1.0e-3 &&
-            std::fabs(pitch - expectedPitch) < 1.0e-3;
-        passed &= expect(anglesMatch,
-                         "Player look-angle synchronization changed the authored angles");
-        passed &= expect(sameVector(player.front, reconstructed) &&
-                             sameVector(player.camera->front, reconstructed),
-                         "Player look-angle synchronization produced an "
-                         "inconsistent forward vector");
+        const double playerYaw = PlayerTestAccess::yaw(player);
+        const double playerPitch = PlayerTestAccess::pitch(player);
+        passed &= expect(std::isfinite(playerYaw) && std::isfinite(playerPitch),
+                         "Player startup produced invalid look angles");
         passed &= expect(
-            sameVector(player.up, PlayerTestAccess::worldUp()) &&
-                sameVector(player.camera->up, PlayerTestAccess::worldUp()),
+            std::fabs(playerYaw - expectedYaw) < 1.0e-3 &&
+                std::fabs(playerPitch - expectedPitch) < 1.0e-3,
+            "Player startup did not consume the authored Camera direction");
+        passed &= expect(sameVector(player.camera->front,
+                                    expectedCamera.front),
+                         "Player startup produced an unexpected Camera direction");
+        passed &= expect(
+            sameVector(player.camera->up, playerWorldUp),
             "Player look-angle synchronization did not canonicalize world up");
-        passed &= expect(pitch >= -89.0 && pitch <= 89.0,
+        passed &= expect(playerPitch >= -89.0 && playerPitch <= 89.0,
                          "Player look synchronization exceeded pitch limits");
     }
 
@@ -470,70 +460,27 @@ bool runPlayerLookSynchronizationTests() {
         0.0f, std::sin(authoredPitch), -std::cos(authoredPitch)};
     rotatedCameraPlayer.camera->up = {
         0.0f, std::cos(authoredPitch), std::sin(authoredPitch)};
+
+    Camera expectedRotatedCamera;
+    expectedRotatedCamera.front = rotatedCameraPlayer.camera->front;
+    double expectedRotatedYaw = 0.0;
+    double expectedRotatedPitch = 0.0;
+    const bool expectedRotatedDerived =
+        expectedRotatedCamera.deriveYawPitchDegrees(
+            expectedRotatedYaw, expectedRotatedPitch);
+    expectedRotatedPitch = std::clamp(expectedRotatedPitch, -89.0, 89.0);
+    const bool expectedRotatedSet = expectedRotatedCamera.setYawPitchDegrees(
+        expectedRotatedYaw, expectedRotatedPitch, playerWorldUp);
     rotatedCameraPlayer.start(nullptr);
 
-    glm::vec3 rotatedCameraForward;
-    const bool rotatedCameraReconstructionSucceeded =
-        PlayerTestAccess::reconstructForward(rotatedCameraPlayer,
-                                             rotatedCameraForward);
     passed &= expect(
-        rotatedCameraReconstructionSucceeded &&
-            sameVector(rotatedCameraPlayer.front, rotatedCameraForward) &&
+        expectedRotatedDerived && expectedRotatedSet &&
             sameVector(rotatedCameraPlayer.camera->front,
-                       rotatedCameraForward) &&
-            sameVector(rotatedCameraPlayer.up, PlayerTestAccess::worldUp()) &&
-            sameVector(rotatedCameraPlayer.camera->up,
-                       PlayerTestAccess::worldUp()) &&
-            std::fabs(glm::dot(rotatedCameraForward,
-                               PlayerTestAccess::worldUp())) < 0.9999f,
+                       expectedRotatedCamera.front) &&
+            sameVector(rotatedCameraPlayer.camera->up, playerWorldUp) &&
+            glm::length(glm::cross(rotatedCameraPlayer.camera->front,
+                                   rotatedCameraPlayer.camera->up)) > 1.0e-4f,
         "Editor-rotated Camera up contaminated the runtime Player basis");
-
-    Player verticalPlayer;
-    verticalPlayer.init();
-    verticalPlayer.camera->front = {0.0f, 1.0f, 0.0f};
-    verticalPlayer.camera->up = {0.0f, 0.0f, 1.0f};
-    verticalPlayer.start(nullptr);
-    glm::vec3 verticalForward;
-    const bool verticalReconstructionSucceeded =
-        PlayerTestAccess::reconstructForward(verticalPlayer, verticalForward);
-    passed &= expect(verticalReconstructionSucceeded &&
-                         PlayerTestAccess::pitch(verticalPlayer) <= 89.0 &&
-                         PlayerTestAccess::pitch(verticalPlayer) >= -89.0 &&
-                         std::isfinite(verticalForward.x) &&
-                         std::isfinite(verticalForward.y) &&
-                         std::isfinite(verticalForward.z) &&
-                         sameVector(verticalPlayer.front, verticalForward) &&
-                         std::fabs(glm::dot(verticalForward,
-                                            PlayerTestAccess::worldUp())) <
-                             0.9999f,
-                     "Exactly vertical authored pitch was not clamped safely");
-
-    Player basisPlayer;
-    basisPlayer.init();
-    basisPlayer.camera->front = {
-        0.0f, std::sin(authoredPitch), -std::cos(authoredPitch)};
-    basisPlayer.camera->up = {
-        0.0f, std::cos(authoredPitch), std::sin(authoredPitch)};
-    basisPlayer.start(nullptr);
-    const double synchronizedPitch = PlayerTestAccess::pitch(basisPlayer);
-    const glm::vec3 worldUp = PlayerTestAccess::worldUp();
-    const double yawAngles[] = {-180.0, -90.0, 0.0, 90.0, 180.0};
-    for (const double yaw : yawAngles) {
-        PlayerTestAccess::setYaw(basisPlayer, yaw);
-        glm::vec3 forward;
-        const bool reconstructionSucceeded =
-            PlayerTestAccess::reconstructForward(basisPlayer, forward);
-        const glm::vec3 right = glm::cross(forward, worldUp);
-        passed &= expect(
-            reconstructionSucceeded && std::isfinite(synchronizedPitch) &&
-                std::isfinite(forward.x) && std::isfinite(forward.y) &&
-                std::isfinite(forward.z) &&
-                std::fabs(glm::length(forward) - 1.0f) < 1.0e-5f &&
-                std::fabs(glm::dot(forward, worldUp)) < 0.9999f &&
-                std::isfinite(right.x) && std::isfinite(right.y) &&
-                std::isfinite(right.z) && glm::length(right) > 1.0e-4f,
-            "Player look basis became unstable across yaw changes");
-    }
 
     return passed;
 }
@@ -550,8 +497,8 @@ bool runPlayerMovementInvariantTests() {
     player.position = {10.0f, 20.0f, 30.0f};
     player.camera->position = player.position + offset;
 
-    const glm::vec3 worldUp = PlayerTestAccess::worldUp();
-    const glm::vec3 forward = player.front;
+    const glm::vec3 worldUp{0.0f, 1.0f, 0.0f};
+    const glm::vec3 forward = player.camera->front;
     const glm::vec3 right = glm::normalize(glm::cross(forward, worldUp));
     const glm::vec3 deltas[] = {forward, right, worldUp, -forward, -right,
                                 -worldUp};
@@ -621,7 +568,7 @@ int main() {
     passed &= runLevel1FailurePropagationTest();
     passed &= runAuthoringTransferTests();
     passed &= runSceneManagerTests();
-    passed &= runPlayerLookSynchronizationTests();
+    passed &= runPlayerCameraInitializationTests();
     passed &= runPlayerMovementInvariantTests();
 
     Vertex vertex{};
