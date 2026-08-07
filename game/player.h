@@ -27,6 +27,10 @@ private:
     friend class PlayerTestAccess;
 
     [[nodiscard]] bool syncLookAnglesFromCamera() noexcept;
+    [[nodiscard]] bool reconstructForward(glm::vec3& forward) const noexcept;
+    void applyMovementDelta(const glm::vec3& delta) noexcept;
+
+    static const glm::vec3 worldUp;
 
     float speed = 1.0f;
     double lastX = 0.0;

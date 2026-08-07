@@ -37,6 +37,8 @@ bool normalizeFinite(const glm::vec3& value,
 
 }  // namespace
 
+const glm::vec3 Player::worldUp = glm::vec3(0.0f, 1.0f, 0.0f);
+
 void Player::init() {
     name = "Player";
 
@@ -50,16 +52,7 @@ bool Player::syncLookAnglesFromCamera() noexcept {
     }
 
     glm::vec3 normalizedFront;
-    glm::vec3 normalizedUp;
-    if (!normalizeFinite(camera->front, normalizedFront) ||
-        !normalizeFinite(camera->up, normalizedUp)) {
-        return false;
-    }
-
-    const glm::vec3 basisCross = glm::cross(normalizedFront, normalizedUp);
-    const float crossLengthSquared = glm::dot(basisCross, basisCross);
-    if (!isFiniteVector(basisCross) || !std::isfinite(crossLengthSquared) ||
-        crossLengthSquared <= minimumLookDirectionLengthSquared) {
+    if (!normalizeFinite(camera->front, normalizedFront)) {
         return false;
     }
 
@@ -77,9 +70,39 @@ bool Player::syncLookAnglesFromCamera() noexcept {
 
     pitch = std::clamp(synchronizedPitch, -89.0, 89.0);
     yaw = synchronizedYaw;
-    camera->front = normalizedFront;
-    front = camera->front;
+
+    glm::vec3 canonicalForward;
+    if (!reconstructForward(canonicalForward)) {
+        return false;
+    }
+
+    camera->front = canonicalForward;
+    front = canonicalForward;
+    camera->up = worldUp;
+    up = worldUp;
     return true;
+}
+
+bool Player::reconstructForward(glm::vec3& forward) const noexcept {
+    forward = {};
+    if (!std::isfinite(yaw) || !std::isfinite(pitch)) {
+        return false;
+    }
+
+    glm::vec3 direction;
+    direction.x = std::cos(glm::radians(yaw)) * std::cos(glm::radians(pitch));
+    direction.y = std::sin(glm::radians(pitch));
+    direction.z = std::sin(glm::radians(yaw)) * std::cos(glm::radians(pitch));
+    return normalizeFinite(direction, forward);
+}
+
+void Player::applyMovementDelta(const glm::vec3& delta) noexcept {
+    if (!camera || !isFiniteVector(delta)) {
+        return;
+    }
+
+    position += delta;
+    camera->position += delta;
 }
 
 void Player::start(std::shared_ptr<InputManager> input) {
@@ -104,6 +127,9 @@ void Player::update(std::shared_ptr<InputManager> input) {
         return;
     }
 
+    up = worldUp;
+    camera->up = worldUp;
+
     if (input->isKeyDown(SDLK_LSHIFT)) {
         speed = 5.0f;
     }else if (input->isKeyDown(SDLK_LCTRL)) {
@@ -113,34 +139,34 @@ void Player::update(std::shared_ptr<InputManager> input) {
         speed = 1.0f;
     }
 
+    glm::vec3 right;
+    if (!normalizeFinite(glm::cross(front, worldUp), right)) {
+        spdlog::error("Player could not calculate a valid movement right vector");
+        return;
+    }
+
     if (input->isKeyDown(SDLK_W)) {
-        position += speed * camera->front;
-        camera->position += speed * camera->front;
+        applyMovementDelta(speed * front);
     }
 
     if (input->isKeyDown(SDLK_D)) {
-        position += glm::normalize(glm::cross(front, up)) * speed;
-        camera->position += glm::normalize(glm::cross(camera->front, camera->up)) * speed;
+        applyMovementDelta(speed * right);
     }
 
     if (input->isKeyDown(SDLK_A)) {
-        position -= glm::normalize(glm::cross(front, up)) * speed;
-        camera->position -= glm::normalize(glm::cross(camera->front, camera->up)) * speed;
+        applyMovementDelta(-speed * right);
     }
 
     if (input->isKeyDown(SDLK_S)) {
-        position -= speed * camera->front;
-        camera->position -= speed * camera->front;
+        applyMovementDelta(-speed * front);
     }
 
     if (input->isKeyDown(SDLK_E)) {
-        position += speed * up;
-        camera->position += speed * up;
+        applyMovementDelta(speed * worldUp);
     }
 
     if (input->isKeyDown(SDLK_Q)) {
-        position -= speed * up;
-        camera->position -= speed * up;
+        applyMovementDelta(-speed * worldUp);
     }
 
     double xPos = input->getMouseRelX();
@@ -162,10 +188,14 @@ void Player::update(std::shared_ptr<InputManager> input) {
         pitch = -89.0f;
     }
 
-    glm::vec3 direction;
-    direction.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
-    direction.y = sin(glm::radians(pitch));
-    direction.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
-    camera->front = glm::normalize(direction);
-    front = glm::normalize(direction);
+    glm::vec3 canonicalForward;
+    if (!reconstructForward(canonicalForward)) {
+        spdlog::error("Player could not reconstruct a valid look direction");
+        return;
+    }
+
+    camera->front = canonicalForward;
+    front = canonicalForward;
+    camera->up = worldUp;
+    up = worldUp;
 }
