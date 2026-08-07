@@ -21,6 +21,21 @@ inline std::string normalizedExternalSourceIdentity(
     return "external:" + source.lexically_normal().generic_string();
 }
 
+inline std::string normalizedFilesystemIdentity(
+    const std::filesystem::path& source) {
+    std::error_code error;
+    std::filesystem::path normalized = std::filesystem::absolute(source, error);
+    if (error) {
+        normalized = source;
+        error.clear();
+    }
+    normalized = std::filesystem::weakly_canonical(normalized, error);
+    if (error) {
+        normalized = normalized.lexically_normal();
+    }
+    return normalized.generic_string();
+}
+
 inline std::string embeddedSourceIdentity(std::string_view modelIdentity,
                                           std::size_t textureIndex) {
     return std::string(modelIdentity) + "|embedded:" +
@@ -40,6 +55,43 @@ struct TextureCacheKey {
         return usage == other.usage && sourceIdentity == other.sourceIdentity;
     }
 };
+
+struct ModelAssetCacheKey {
+    std::string modelIdentity;
+    bool hasTextureFallbackOverride = false;
+    std::string textureFallbackIdentity;
+
+    bool operator==(const ModelAssetCacheKey& other) const noexcept {
+        return modelIdentity == other.modelIdentity &&
+               hasTextureFallbackOverride == other.hasTextureFallbackOverride &&
+               textureFallbackIdentity == other.textureFallbackIdentity;
+    }
+};
+
+struct ModelAssetCacheKeyHash {
+    std::size_t operator()(const ModelAssetCacheKey& key) const noexcept {
+        std::size_t result = std::hash<std::string>{}(key.modelIdentity);
+        const auto combine = [&result](std::size_t value) {
+            result ^= value + static_cast<std::size_t>(0x9e3779b9) +
+                      (result << 6) + (result >> 2);
+        };
+        combine(std::hash<bool>{}(key.hasTextureFallbackOverride));
+        combine(std::hash<std::string>{}(key.textureFallbackIdentity));
+        return result;
+    }
+};
+
+inline ModelAssetCacheKey makeModelAssetCacheKey(
+    const char* modelPath, const char* textureFallbackOverride) {
+    ModelAssetCacheKey key;
+    key.modelIdentity = normalizedFilesystemIdentity(modelPath ? modelPath : "");
+    key.hasTextureFallbackOverride = textureFallbackOverride != nullptr;
+    if (textureFallbackOverride != nullptr) {
+        key.textureFallbackIdentity =
+            normalizedFilesystemIdentity(textureFallbackOverride);
+    }
+    return key;
+}
 
 struct TextureCacheKeyHash {
     std::size_t operator()(const TextureCacheKey& key) const noexcept {

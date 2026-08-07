@@ -3,6 +3,7 @@
 
 #include <deque>
 #include <glm/glm.hpp>
+#include <memory>
 #include <string>
 #include <vector>
 #include "spdlog/spdlog.h"
@@ -11,6 +12,9 @@
 
 class Scene;
 class VulkanContext;
+namespace model_loading {
+struct CachedCpuModel;
+}
 
 class GameObject {
 public:
@@ -21,7 +25,7 @@ public:
 
     virtual void start() {}
     virtual void update() {}
-    virtual ~GameObject() = default;
+    virtual ~GameObject();
 
     const char* modelPath = nullptr;
     // texturePath is only used if the textures are not baked into the model file
@@ -39,6 +43,7 @@ private:
     friend class Scene;
     friend class VulkanContext;
     friend class GameObjectTestAccess;
+    friend class GameObjectModelCacheTestAccess;
 
     enum class RenderTopologyState {
         Mutable,
@@ -52,6 +57,8 @@ private:
     RenderTopologyState renderTopologyState_ = RenderTopologyState::Mutable;
     std::vector<MeshInstance> meshInstances_;
     std::deque<std::string> texturePathStorage_;
+    std::string modelPathStorage_;
+    std::shared_ptr<const model_loading::CachedCpuModel> loadedModelAsset_;
 };
 
 #endif

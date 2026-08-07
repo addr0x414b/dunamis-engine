@@ -244,13 +244,13 @@ bool testSharedMaterialReuse(const std::filesystem::path& buildDirectory) {
             const Material& second = secondInstance.material;
             passed &= expect(first.pixels != nullptr &&
                                  first.pixels == second.pixels &&
-                                 first.pixelsOwner.use_count() == 2,
+                                 first.pixelsOwner.use_count() >= 2,
                              "Meshes did not share one base-color allocation");
             passed &= expect(first.hasMetallicRoughnessMap &&
                                  second.hasMetallicRoughnessMap &&
                                  first.metallicRoughnessMapPixels ==
                                      second.metallicRoughnessMapPixels &&
-                                 first.metallicRoughnessMapPixelsOwner.use_count() ==
+                                 first.metallicRoughnessMapPixelsOwner.use_count() >=
                                      2,
                              "Meshes did not share one metallic-roughness allocation");
             const Material& tangentMaterial =

@@ -127,6 +127,14 @@ target_link_libraries(GameObjectOwnershipTests PRIVATE
         spdlog)
 add_test(NAME game_object_ownership COMMAND GameObjectOwnershipTests)
 
+add_executable(ModelLoadingCacheTests model_loading_cache_tests.cpp)
+target_include_directories(ModelLoadingCacheTests PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_definitions(ModelLoadingCacheTests PRIVATE
+        DUNAMIS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(ModelLoadingCacheTests PRIVATE
+        GameObject VulkanUtils assimp glm spdlog)
+add_test(NAME model_loading_cache COMMAND ModelLoadingCacheTests)
+
 add_executable(ModelLoadingBenchmark model_loading_benchmark.cpp)
 target_include_directories(ModelLoadingBenchmark PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(ModelLoadingBenchmark PRIVATE

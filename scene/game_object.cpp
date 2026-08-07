@@ -17,11 +17,60 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+
+namespace model_loading {
+
+struct CachedCpuMaterial {
+    glm::vec4 baseColorFactor{1.0f};
+    float metallicFactor = 1.0f;
+    float roughnessFactor = 1.0f;
+    uint32_t mipLevels = 0;
+    StbiPixelOwner pixelsOwner{};
+    int texWidth = 0;
+    int texHeight = 0;
+    int texChannels = 0;
+    std::string texturePath;
+    std::string normalMapPath;
+    uint32_t normalMapMipLevels = 0;
+    StbiPixelOwner normalMapPixelsOwner{};
+    int normalMapWidth = 0;
+    int normalMapHeight = 0;
+    int normalMapChannels = 0;
+    bool normalMapEnabled = false;
+    std::string metallicRoughnessMapPath;
+    uint32_t metallicRoughnessMapMipLevels = 0;
+    StbiPixelOwner metallicRoughnessMapPixelsOwner{};
+    int metallicRoughnessMapWidth = 0;
+    int metallicRoughnessMapHeight = 0;
+    int metallicRoughnessMapChannels = 0;
+    bool hasMetallicRoughnessMap = false;
+    MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
+    float alphaCutoff = 0.5f;
+    bool doubleSided = false;
+};
+
+struct CachedCpuMesh {
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
+    Mesh::Bounds bounds;
+    CachedCpuMaterial material;
+};
+
+struct CachedCpuModel {
+    std::vector<CachedCpuMesh> meshes;
+    std::size_t sourceMaterialCount = 0;
+    std::size_t sourceFaceIndexCount = 0;
+    std::size_t sourceUniqueVertexCount = 0;
+    std::size_t sourceMaterialPreparations = 0;
+};
+
+}  // namespace model_loading
 
 namespace {
 
@@ -31,6 +80,53 @@ constexpr const char* fallbackTexturePath =
 using TextureUsage = model_loading::TextureUsage;
 using TextureCacheKey = model_loading::TextureCacheKey;
 using TextureCacheKeyHash = model_loading::TextureCacheKeyHash;
+using CachedCpuMaterial = model_loading::CachedCpuMaterial;
+using CachedCpuMesh = model_loading::CachedCpuMesh;
+using CachedCpuModel = model_loading::CachedCpuModel;
+using ModelAssetCacheKey = model_loading::ModelAssetCacheKey;
+using ModelAssetCacheKeyHash = model_loading::ModelAssetCacheKeyHash;
+
+struct ModelAssetCache {
+    std::mutex mutex;
+    std::unordered_map<ModelAssetCacheKey, std::weak_ptr<const CachedCpuModel>,
+                       ModelAssetCacheKeyHash>
+        entries;
+    std::size_t hits = 0;
+    std::size_t misses = 0;
+};
+
+ModelAssetCache& modelAssetCache() {
+    static ModelAssetCache cache;
+    return cache;
+}
+
+struct CacheLookupResult {
+    std::shared_ptr<const CachedCpuModel> asset;
+    std::size_t hits = 0;
+    std::size_t misses = 0;
+};
+
+CacheLookupResult findCachedCpuModel(const ModelAssetCacheKey& key) {
+    ModelAssetCache& cache = modelAssetCache();
+    std::lock_guard<std::mutex> lock(cache.mutex);
+    const auto found = cache.entries.find(key);
+    if (found != cache.entries.end()) {
+        if (std::shared_ptr<const CachedCpuModel> asset = found->second.lock()) {
+            ++cache.hits;
+            return {std::move(asset), cache.hits, cache.misses};
+        }
+        cache.entries.erase(found);
+    }
+    ++cache.misses;
+    return {nullptr, cache.hits, cache.misses};
+}
+
+void publishCachedCpuModel(const ModelAssetCacheKey& key,
+                           const std::shared_ptr<const CachedCpuModel>& asset) {
+    ModelAssetCache& cache = modelAssetCache();
+    std::lock_guard<std::mutex> lock(cache.mutex);
+    cache.entries[key] = asset;
+}
 
 struct TextureDecodeProfile {
     std::size_t references = 0;
@@ -45,6 +141,9 @@ struct LoadModelProfile {
 
     Clock::time_point totalStart = Clock::now();
     Clock::duration assimpReadTime{};
+    Clock::duration cacheLookupTime{};
+    Clock::duration cachedInstantiationTime{};
+    Clock::duration sourceLoadingTime{};
     Clock::duration geometryConversionTime{};
     Clock::duration materialPropertyExtractionTime{};
     Clock::duration baseColorDecodeTime{};
@@ -56,6 +155,12 @@ struct LoadModelProfile {
     std::size_t materialPreparations = 0;
     std::size_t fallbackTextureDecodeCount = 0;
     std::size_t totalDecodedRgbaBytes = 0;
+    std::size_t copiedMeshes = 0;
+    std::size_t copiedVertices = 0;
+    std::size_t copiedIndices = 0;
+    std::size_t cacheHits = 0;
+    std::size_t cacheMisses = 0;
+    bool cacheHit = false;
     TextureDecodeProfile baseColor;
     TextureDecodeProfile normalMap;
     TextureDecodeProfile metallicRoughness;
@@ -690,7 +795,174 @@ Result validateIncomingMeshInstance(const MeshInstance& instance) {
     return Result::success();
 }
 
+CachedCpuMaterial cacheMaterial(const Material& material,
+                                std::string texturePath) {
+    CachedCpuMaterial cached;
+    cached.baseColorFactor = material.baseColorFactor;
+    cached.metallicFactor = material.metallicFactor;
+    cached.roughnessFactor = material.roughnessFactor;
+    cached.mipLevels = material.mipLevels;
+    cached.pixelsOwner = material.pixelsOwner;
+    cached.texWidth = material.texWidth;
+    cached.texHeight = material.texHeight;
+    cached.texChannels = material.texChannels;
+    cached.texturePath = std::move(texturePath);
+    cached.normalMapPath = material.normalMapPath;
+    cached.normalMapMipLevels = material.normalMapMipLevels;
+    cached.normalMapPixelsOwner = material.normalMapPixelsOwner;
+    cached.normalMapWidth = material.normalMapWidth;
+    cached.normalMapHeight = material.normalMapHeight;
+    cached.normalMapChannels = material.normalMapChannels;
+    cached.normalMapEnabled = material.normalMapEnabled;
+    cached.metallicRoughnessMapPath = material.metallicRoughnessMapPath;
+    cached.metallicRoughnessMapMipLevels = material.metallicRoughnessMapMipLevels;
+    cached.metallicRoughnessMapPixelsOwner =
+        material.metallicRoughnessMapPixelsOwner;
+    cached.metallicRoughnessMapWidth = material.metallicRoughnessMapWidth;
+    cached.metallicRoughnessMapHeight = material.metallicRoughnessMapHeight;
+    cached.metallicRoughnessMapChannels = material.metallicRoughnessMapChannels;
+    cached.hasMetallicRoughnessMap = material.hasMetallicRoughnessMap;
+    cached.alphaMode = material.alphaMode;
+    cached.alphaCutoff = material.alphaCutoff;
+    cached.doubleSided = material.doubleSided;
+    return cached;
+}
+
+Material instantiateMaterial(const CachedCpuMaterial& cached) {
+    Material material{};
+    material.baseColorFactor = cached.baseColorFactor;
+    material.metallicFactor = cached.metallicFactor;
+    material.roughnessFactor = cached.roughnessFactor;
+    material.mipLevels = cached.mipLevels;
+    material.pixelsOwner = cached.pixelsOwner;
+    material.pixels = material.pixelsOwner.get();
+    material.texWidth = cached.texWidth;
+    material.texHeight = cached.texHeight;
+    material.texChannels = cached.texChannels;
+    material.normalMapPath = cached.normalMapPath;
+    material.normalMapMipLevels = cached.normalMapMipLevels;
+    material.normalMapPixelsOwner = cached.normalMapPixelsOwner;
+    material.normalMapPixels = material.normalMapPixelsOwner.get();
+    material.normalMapWidth = cached.normalMapWidth;
+    material.normalMapHeight = cached.normalMapHeight;
+    material.normalMapChannels = cached.normalMapChannels;
+    material.normalMapEnabled = cached.normalMapEnabled;
+    material.metallicRoughnessMapPath = cached.metallicRoughnessMapPath;
+    material.metallicRoughnessMapMipLevels =
+        cached.metallicRoughnessMapMipLevels;
+    material.metallicRoughnessMapPixelsOwner =
+        cached.metallicRoughnessMapPixelsOwner;
+    material.metallicRoughnessMapPixels =
+        material.metallicRoughnessMapPixelsOwner.get();
+    material.metallicRoughnessMapWidth = cached.metallicRoughnessMapWidth;
+    material.metallicRoughnessMapHeight = cached.metallicRoughnessMapHeight;
+    material.metallicRoughnessMapChannels = cached.metallicRoughnessMapChannels;
+    material.hasMetallicRoughnessMap = cached.hasMetallicRoughnessMap;
+    material.alphaMode = cached.alphaMode;
+    material.alphaCutoff = cached.alphaCutoff;
+    material.doubleSided = cached.doubleSided;
+    return material;
+}
+
+Result instantiateCachedCpuModel(const CachedCpuModel& asset,
+                                 std::vector<MeshInstance>& pendingMeshes,
+                                 std::vector<std::string>& pendingTexturePaths,
+                                 LoadModelProfile& profile) {
+    PhaseTimer phaseTimer(profile.cachedInstantiationTime);
+    pendingMeshes.reserve(asset.meshes.size());
+    pendingTexturePaths.reserve(asset.meshes.size());
+    for (const CachedCpuMesh& cached : asset.meshes) {
+        MeshInstance instance{};
+        instance.mesh.vertices = cached.vertices;
+        instance.mesh.indices = cached.indices;
+        instance.mesh.bounds = cached.bounds;
+        instance.material = instantiateMaterial(cached.material);
+        const Result validation = validateIncomingMeshInstance(instance);
+        if (!validation) {
+            return Result::failure("Cached CPU model is invalid: " +
+                                   validation.error());
+        }
+        pendingTexturePaths.push_back(cached.material.texturePath);
+        profile.copiedVertices += instance.mesh.vertices.size();
+        profile.copiedIndices += instance.mesh.indices.size();
+        ++profile.copiedMeshes;
+        pendingMeshes.push_back(std::move(instance));
+    }
+    return Result::success();
+}
+
+bool calculateCachedMeshBounds(CachedCpuMesh& mesh) noexcept {
+    mesh.bounds = {};
+    bool foundFinitePosition = false;
+    for (const Vertex& vertex : mesh.vertices) {
+        if (!isFiniteVector(vertex.pos)) {
+            continue;
+        }
+        if (!foundFinitePosition) {
+            mesh.bounds.minimum = vertex.pos;
+            mesh.bounds.maximum = vertex.pos;
+            foundFinitePosition = true;
+        } else {
+            mesh.bounds.minimum = glm::min(mesh.bounds.minimum, vertex.pos);
+            mesh.bounds.maximum = glm::max(mesh.bounds.maximum, vertex.pos);
+        }
+    }
+    mesh.bounds.valid = foundFinitePosition;
+    return foundFinitePosition;
+}
+
+double milliseconds(LoadModelProfile::Clock::duration duration) {
+    return std::chrono::duration<double, std::milli>(duration).count();
+}
+
+void logLoadSummary(const LoadModelProfile& profile,
+                    const CachedCpuModel& asset) {
+    const auto totalTime = LoadModelProfile::Clock::now() - profile.totalStart;
+    spdlog::info(
+        "loadModel summary: cache={} total={:.3f}ms lookup={:.3f}ms "
+        "instantiate={:.3f}ms sourceLoad={:.3f}ms assimpRead={:.3f}ms "
+        "geometry={:.3f}ms materialProperties={:.3f}ms "
+        "baseDecode={:.3f}ms normalDecode={:.3f}ms "
+        "metallicRoughnessDecode={:.3f}ms finalCommit={:.3f}ms; "
+        "meshes={} materials={} materialPreparations={} faceIndices={} "
+        "uniqueVertices={} copied(meshes={} vertices={} indices={}); "
+        "refs(base={} normal={} metallicRoughness={}) "
+        "uniqueSources(base={} normal={} metallicRoughness={}); "
+        "decodeCalls(base={} [file={} memory={}] normal={} [file={} memory={}] "
+        "metallicRoughness={} [file={} memory={}]); fallbackDecodes={} "
+        "decodedRgbaBytes={}; cacheCounts(hits={} misses={})",
+        profile.cacheHit ? "hit" : "miss", milliseconds(totalTime),
+        milliseconds(profile.cacheLookupTime),
+        milliseconds(profile.cachedInstantiationTime),
+        milliseconds(profile.sourceLoadingTime), milliseconds(profile.assimpReadTime),
+        milliseconds(profile.geometryConversionTime),
+        milliseconds(profile.materialPropertyExtractionTime),
+        milliseconds(profile.baseColorDecodeTime),
+        milliseconds(profile.normalMapDecodeTime),
+        milliseconds(profile.metallicRoughnessDecodeTime),
+        milliseconds(profile.finalCommitTime), asset.meshes.size(),
+        asset.sourceMaterialCount, asset.sourceMaterialPreparations,
+        asset.sourceFaceIndexCount, asset.sourceUniqueVertexCount,
+        profile.copiedMeshes, profile.copiedVertices, profile.copiedIndices,
+        profile.baseColor.references, profile.normalMap.references,
+        profile.metallicRoughness.references,
+        profile.baseColor.uniqueSources.size(), profile.normalMap.uniqueSources.size(),
+        profile.metallicRoughness.uniqueSources.size(),
+        profile.baseColor.stbiLoadCalls + profile.baseColor.stbiLoadFromMemoryCalls,
+        profile.baseColor.stbiLoadCalls, profile.baseColor.stbiLoadFromMemoryCalls,
+        profile.normalMap.stbiLoadCalls + profile.normalMap.stbiLoadFromMemoryCalls,
+        profile.normalMap.stbiLoadCalls, profile.normalMap.stbiLoadFromMemoryCalls,
+        profile.metallicRoughness.stbiLoadCalls +
+            profile.metallicRoughness.stbiLoadFromMemoryCalls,
+        profile.metallicRoughness.stbiLoadCalls,
+        profile.metallicRoughness.stbiLoadFromMemoryCalls,
+        profile.fallbackTextureDecodeCount, profile.totalDecodedRgbaBytes,
+        profile.cacheHits, profile.cacheMisses);
+}
+
 }  // namespace
+
+GameObject::~GameObject() = default;
 
 Result GameObject::loadModel() {
     LoadModelProfile profile;
@@ -709,8 +981,71 @@ Result GameObject::loadModel() {
     }
     spdlog::info("Loading game object model from path {}...", modelPath);
 
+    const ModelAssetCacheKey cacheKey =
+        model_loading::makeModelAssetCacheKey(modelPath, texturePath);
+    const auto lookupStart = LoadModelProfile::Clock::now();
+    const CacheLookupResult lookup = findCachedCpuModel(cacheKey);
+    profile.cacheLookupTime = LoadModelProfile::Clock::now() - lookupStart;
+    profile.cacheHits = lookup.hits;
+    profile.cacheMisses = lookup.misses;
+
+    const auto commitAsset = [&](const std::shared_ptr<const CachedCpuModel>& asset)
+        -> Result {
+        std::vector<MeshInstance> pendingMeshes;
+        std::vector<std::string> pendingTexturePaths;
+        const Result instantiation = instantiateCachedCpuModel(
+            *asset, pendingMeshes, pendingTexturePaths, profile);
+        if (!instantiation) {
+            return instantiation;
+        }
+
+        const auto finalCommitStart = LoadModelProfile::Clock::now();
+        const std::size_t originalTexturePathCount = texturePathStorage_.size();
+        std::string originalModelPath = modelPathStorage_;
+        try {
+            for (std::string& path : pendingTexturePaths) {
+                texturePathStorage_.push_back(std::move(path));
+            }
+            modelPathStorage_ = modelPath;
+            const char* stableModelPath = modelPathStorage_.c_str();
+            for (std::size_t i = 0; i < pendingMeshes.size(); ++i) {
+                pendingMeshes[i].material.texturePath =
+                    texturePathStorage_[originalTexturePathCount + i].c_str();
+                pendingMeshes[i].mesh.modelPath = stableModelPath;
+            }
+            meshInstances_.swap(pendingMeshes);
+            loadedModelAsset_ = asset;
+        } catch (const std::exception& exception) {
+            texturePathStorage_.resize(originalTexturePathCount);
+            modelPathStorage_.swap(originalModelPath);
+            return Result::failure("Failed to commit meshes from model " +
+                                   std::string(modelPath) + ": " +
+                                   exception.what());
+        } catch (...) {
+            texturePathStorage_.resize(originalTexturePathCount);
+            modelPathStorage_.swap(originalModelPath);
+            return Result::failure("Failed to commit meshes from model " +
+                                   std::string(modelPath) +
+                                   ": unknown error");
+        }
+        profile.finalCommitTime =
+            LoadModelProfile::Clock::now() - finalCommitStart;
+        return Result::success();
+    };
+
+    if (lookup.asset) {
+        profile.cacheHit = true;
+        const Result result = commitAsset(lookup.asset);
+        if (result) {
+            logLoadSummary(profile, *lookup.asset);
+            spdlog::info("Successfully loaded game object model");
+        }
+        return result;
+    }
+
     Assimp::Importer importer;
     const aiScene* scene = nullptr;
+    const auto sourceLoadingStart = LoadModelProfile::Clock::now();
     try {
         const auto assimpReadStart = LoadModelProfile::Clock::now();
         scene = importer.ReadFile(modelPath, aiProcess_Triangulate |
@@ -738,16 +1073,15 @@ Result GameObject::loadModel() {
     }
 
     try {
-        std::vector<MeshInstance> pendingMeshes;
-        std::vector<std::string> pendingTexturePaths;
+        auto loadedAsset = std::make_shared<CachedCpuModel>();
+        loadedAsset->sourceMaterialCount = scene->mNumMaterials;
+        loadedAsset->meshes.reserve(scene->mNumMeshes);
         std::vector<bool> warnedBlendMaterials(scene->mNumMaterials, false);
         std::vector<ImportedMaterialTemplate> materialTemplates(
             scene->mNumMaterials);
         TextureCache textureCache;
         textureCache.reserve(static_cast<std::size_t>(scene->mNumMaterials) *
                              3);
-        pendingMeshes.reserve(scene->mNumMeshes);
-        pendingTexturePaths.reserve(scene->mNumMeshes);
 
         for (unsigned int i = 0; i < scene->mNumMeshes; ++i) {
             const aiMesh* mesh = scene->mMeshes[i];
@@ -790,8 +1124,8 @@ Result GameObject::loadModel() {
                 importedMaterial.prepared = true;
             }
 
-            MeshInstance instance{};
-            instance.material = importedMaterial.material;
+            CachedCpuMesh cachedMesh;
+            Material meshMaterial = importedMaterial.material;
             recordTextureReference(
                 profile, TextureUsage::BaseColor,
                 importedMaterial.baseColorIntendedSourceIdentity);
@@ -817,8 +1151,8 @@ Result GameObject::loadModel() {
             for (unsigned int f = 0; f < mesh->mNumFaces; ++f) {
                 faceIndexCount += mesh->mFaces[f].mNumIndices;
             }
-            instance.mesh.indices.reserve(faceIndexCount);
-            instance.mesh.vertices.reserve(mesh->mNumVertices);
+            cachedMesh.indices.reserve(faceIndexCount);
+            cachedMesh.vertices.reserve(mesh->mNumVertices);
             std::unordered_map<Vertex, uint32_t> uniqueVertices;
             uniqueVertices.reserve(mesh->mNumVertices);
 
@@ -894,40 +1228,39 @@ Result GameObject::loadModel() {
 
                         const auto [vertexIt, inserted] = uniqueVertices.emplace(
                             vertex,
-                            static_cast<uint32_t>(instance.mesh.vertices.size()));
+                            static_cast<uint32_t>(cachedMesh.vertices.size()));
                         if (inserted) {
-                            instance.mesh.vertices.push_back(vertex);
+                            cachedMesh.vertices.push_back(vertex);
                         }
-                        instance.mesh.indices.push_back(vertexIt->second);
+                        cachedMesh.indices.push_back(vertexIt->second);
                     }
                 }
             }
-            profile.totalUniqueVertices += instance.mesh.vertices.size();
-            calculateMeshBounds(instance.mesh);
-            if (!instance.mesh.bounds.valid) {
+            profile.totalUniqueVertices += cachedMesh.vertices.size();
+            if (!calculateCachedMeshBounds(cachedMesh)) {
                 return Result::failure("Mesh " +
                                        std::string(mesh->mName.C_Str()) +
                                        " has invalid bounds");
             }
 
-            if (instance.material.normalMapPixels) {
+            if (meshMaterial.normalMapPixels) {
                 if (meshHasUsableTangents) {
-                    instance.material.normalMapEnabled = true;
+                    meshMaterial.normalMapEnabled = true;
                 } else {
                     spdlog::warn("Mesh {} has a normal map but no usable tangent "
                                  "basis; normal mapping is disabled",
                                  mesh->mName.C_Str());
-                    releaseStbiPixel(instance.material.normalMapPixelsOwner,
-                                     instance.material.normalMapPixels);
-                    instance.material.normalMapWidth = 0;
-                    instance.material.normalMapHeight = 0;
-                    instance.material.normalMapChannels = 0;
-                    instance.material.normalMapMipLevels = 0;
+                    releaseStbiPixel(meshMaterial.normalMapPixelsOwner,
+                                     meshMaterial.normalMapPixels);
+                    meshMaterial.normalMapWidth = 0;
+                    meshMaterial.normalMapHeight = 0;
+                    meshMaterial.normalMapChannels = 0;
+                    meshMaterial.normalMapMipLevels = 0;
                 }
             } else if (!importedMaterial.normalMapError.empty()) {
                 spdlog::warn("Failed to load normal map {} for mesh {}: {}; "
                              "using geometric normals",
-                             instance.material.normalMapPath,
+                             meshMaterial.normalMapPath,
                              mesh->mName.C_Str(),
                              importedMaterial.normalMapError);
             }
@@ -936,84 +1269,32 @@ Result GameObject::loadModel() {
                 spdlog::warn(
                     "Failed to load optional metallic-roughness texture {} "
                     "for mesh {}: {}; using scalar factors",
-                    instance.material.metallicRoughnessMapPath,
+                    meshMaterial.metallicRoughnessMapPath,
                     mesh->mName.C_Str(),
                     importedMaterial.metallicRoughnessError);
             }
 
-            pendingTexturePaths.push_back(importedMaterial.texturePath);
-            pendingMeshes.push_back(std::move(instance));
+            cachedMesh.material = cacheMaterial(meshMaterial,
+                                                importedMaterial.texturePath);
+            loadedAsset->meshes.push_back(std::move(cachedMesh));
         }
+        loadedAsset->sourceFaceIndexCount = profile.totalFaceIndexCount;
+        loadedAsset->sourceUniqueVertexCount = profile.totalUniqueVertices;
+        loadedAsset->sourceMaterialPreparations = profile.materialPreparations;
+        profile.sourceLoadingTime =
+            LoadModelProfile::Clock::now() - sourceLoadingStart;
 
-        const auto finalCommitStart = LoadModelProfile::Clock::now();
-        const std::size_t originalTexturePathCount =
-            texturePathStorage_.size();
+        const Result result = commitAsset(loadedAsset);
+        if (!result) {
+            return result;
+        }
         try {
-            for (std::size_t i = 0; i < pendingMeshes.size(); ++i) {
-                texturePathStorage_.push_back(std::move(pendingTexturePaths[i]));
-                pendingMeshes[i].material.texturePath =
-                    texturePathStorage_.back().c_str();
-            }
-            meshInstances_.swap(pendingMeshes);
+            publishCachedCpuModel(cacheKey, loadedAsset);
         } catch (const std::exception& exception) {
-            texturePathStorage_.resize(originalTexturePathCount);
-            return Result::failure("Failed to commit meshes from model " +
-                                   std::string(modelPath) + ": " +
-                                   exception.what());
-        } catch (...) {
-            texturePathStorage_.resize(originalTexturePathCount);
-            return Result::failure("Failed to commit meshes from model " +
-                                   std::string(modelPath) +
-                                   ": unknown error");
+            spdlog::warn("Model loaded without publishing a cache entry: {}",
+                         exception.what());
         }
-        profile.finalCommitTime =
-            LoadModelProfile::Clock::now() - finalCommitStart;
-
-        const auto milliseconds =
-            [](LoadModelProfile::Clock::duration duration) {
-                return std::chrono::duration<double, std::milli>(duration)
-                    .count();
-            };
-        const auto totalTime =
-            LoadModelProfile::Clock::now() - profile.totalStart;
-        spdlog::info(
-            "loadModel summary: total={:.3f}ms assimpRead={:.3f}ms "
-            "geometry={:.3f}ms materialProperties={:.3f}ms "
-            "baseDecode={:.3f}ms normalDecode={:.3f}ms "
-            "metallicRoughnessDecode={:.3f}ms finalCommit={:.3f}ms; "
-            "meshes={} materials={} materialPreparations={} faceIndices={} "
-            "uniqueVertices={}; refs(base={} normal={} metallicRoughness={}) "
-            "uniqueSources(base={} normal={} metallicRoughness={}); "
-            "decodeCalls(base={} [file={} memory={}] normal={} [file={} "
-            "memory={}] metallicRoughness={} [file={} memory={}]); "
-            "fallbackDecodes={} decodedRgbaBytes={}",
-            milliseconds(totalTime), milliseconds(profile.assimpReadTime),
-            milliseconds(profile.geometryConversionTime),
-            milliseconds(profile.materialPropertyExtractionTime),
-            milliseconds(profile.baseColorDecodeTime),
-            milliseconds(profile.normalMapDecodeTime),
-            milliseconds(profile.metallicRoughnessDecodeTime),
-            milliseconds(profile.finalCommitTime), scene->mNumMeshes,
-            scene->mNumMaterials, profile.materialPreparations,
-            profile.totalFaceIndexCount, profile.totalUniqueVertices,
-            profile.baseColor.references, profile.normalMap.references,
-            profile.metallicRoughness.references,
-            profile.baseColor.uniqueSources.size(),
-            profile.normalMap.uniqueSources.size(),
-            profile.metallicRoughness.uniqueSources.size(),
-            profile.baseColor.stbiLoadCalls +
-                profile.baseColor.stbiLoadFromMemoryCalls,
-            profile.baseColor.stbiLoadCalls,
-            profile.baseColor.stbiLoadFromMemoryCalls,
-            profile.normalMap.stbiLoadCalls +
-                profile.normalMap.stbiLoadFromMemoryCalls,
-            profile.normalMap.stbiLoadCalls,
-            profile.normalMap.stbiLoadFromMemoryCalls,
-            profile.metallicRoughness.stbiLoadCalls +
-                profile.metallicRoughness.stbiLoadFromMemoryCalls,
-            profile.metallicRoughness.stbiLoadCalls,
-            profile.metallicRoughness.stbiLoadFromMemoryCalls,
-            profile.fallbackTextureDecodeCount, profile.totalDecodedRgbaBytes);
+        logLoadSummary(profile, *loadedAsset);
         spdlog::info("Successfully loaded game object model");
         return Result::success();
     } catch (const std::exception& exception) {

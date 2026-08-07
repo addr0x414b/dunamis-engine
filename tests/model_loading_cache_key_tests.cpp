@@ -31,6 +31,12 @@ int main() {
     const model_loading::TextureCacheKey embeddedOne{
         model_loading::embeddedSourceIdentity("model.glb", 1),
         model_loading::TextureUsage::BaseColor};
+    const auto modelKey = model_loading::makeModelAssetCacheKey(
+        "models/../models/example.glb", nullptr);
+    const auto equivalentModelKey = model_loading::makeModelAssetCacheKey(
+        "models/example.glb", nullptr);
+    const auto explicitFallbackKey = model_loading::makeModelAssetCacheKey(
+        "models/example.glb", "textures/fallback.png");
 
     bool passed = true;
     passed &= expect(baseKey == equivalentKey,
@@ -46,5 +52,9 @@ int main() {
     passed &= expect(model_loading::fallbackSourceIdentity() ==
                          model_loading::fallbackSourceIdentity(),
                      "Fallback source identity was not stable");
+    passed &= expect(modelKey == equivalentModelKey,
+                     "Equivalent model paths produced different asset keys");
+    passed &= expect(!(modelKey == explicitFallbackKey),
+                     "Null and explicit fallback overrides shared an asset key");
     return passed ? 0 : 1;
 }
