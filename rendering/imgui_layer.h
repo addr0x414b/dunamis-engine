@@ -1,10 +1,14 @@
 #ifndef IMGUI_LAYER_H
 #define IMGUI_LAYER_H
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include <SDL3/SDL.h>
+#include <glm/vec2.hpp>
 #include <glm/mat4x4.hpp>
 #include <vulkan/vulkan.h>
 
@@ -14,6 +18,8 @@
 class Scene;
 class GameObject;
 class Camera;
+class PointLight;
+class DirectionalLight;
 
 class ImGuiLayer final {
 public:
@@ -77,10 +83,39 @@ private:
                                   SceneRunState runState);
     void drawCameraVisualization(const Camera& camera,
                                  const glm::mat4& editorView,
-                                 const glm::mat4& projection, bool active);
+                                 const glm::mat4& projection,
+                                 const GameObject* selectionTarget,
+                                 bool active);
+    void drawPointLightVisualization(
+        const PointLight& light, const GameObject* selectionTarget,
+        const glm::mat4& editorView, const glm::mat4& projection);
+    void drawDirectionalLightVisualization(
+        const DirectionalLight& light, const GameObject* selectionTarget,
+        const glm::mat4& editorView, const glm::mat4& projection);
     void processWorldSelection(Scene* scene, const glm::mat4& view,
                                const glm::mat4& projection,
                                SceneRunState runState);
+
+    enum class EditorHelperKind {
+        Camera,
+        PointLight,
+        DirectionalLight,
+    };
+
+    struct EditorHelperSegment {
+        glm::vec2 start{0.0f};
+        glm::vec2 end{0.0f};
+    };
+
+    struct EditorHelperGeometry {
+        EditorHelperKind kind = EditorHelperKind::Camera;
+        const GameObject* selectionTarget = nullptr;
+        glm::vec2 point{0.0f};
+        bool pointValid = false;
+        std::array<EditorHelperSegment, 12> segments{};
+        std::size_t segmentCount = 0;
+        float viewDepth = 0.0f;
+    };
 
     struct SceneInteractionRect {
         float x = 0.0f;
@@ -114,6 +149,7 @@ private:
     EditorCommand pendingEditorCommand_ = EditorCommand::None;
     bool sceneInteractionAreaHovered_ = false;
     SceneInteractionRect sceneInteractionRect_;
+    std::vector<EditorHelperGeometry> editorHelperGeometry_;
 };
 
 #endif

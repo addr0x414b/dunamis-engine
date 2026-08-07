@@ -5,6 +5,7 @@
 #include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <vector>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -70,6 +71,46 @@ bool runAabbTests() {
     passed &= expect(!editor_picking::intersectAabb(
                          {glm::vec3(0.0f), {1.0f, 0.0f, 0.0f}}, invalid, distance),
                      "Invalid AABB was accepted");
+    return passed;
+}
+
+bool runScreenSegmentDistanceTests() {
+    const glm::vec2 horizontalStart{0.0f, 0.0f};
+    const glm::vec2 horizontalEnd{10.0f, 0.0f};
+    bool passed = expect(
+        editor_picking::distanceSquaredToSegment(
+            {5.0f, 0.0f}, horizontalStart, horizontalEnd) == 0.0f,
+        "Point on a segment did not have zero distance");
+    passed &= expect(
+        std::abs(editor_picking::distanceSquaredToSegment(
+                     {5.0f, 3.0f}, horizontalStart, horizontalEnd) - 9.0f) <
+            1.0e-5f,
+        "Point near a horizontal segment had the wrong distance");
+    passed &= expect(
+        std::abs(editor_picking::distanceSquaredToSegment(
+                     {14.0f, 0.0f}, horizontalStart, horizontalEnd) - 16.0f) <
+            1.0e-5f,
+        "Point beyond a segment used an unclamped projection");
+    passed &= expect(
+        editor_picking::distanceSquaredToSegment(
+            {2.0f, 3.0f}, {2.0f, -4.0f}, {2.0f, 4.0f}) == 0.0f,
+        "Point on a vertical segment did not have zero distance");
+    passed &= expect(
+        std::abs(editor_picking::distanceSquaredToSegment(
+                     {2.0f, 3.0f}, {0.0f, 0.0f}, {4.0f, 4.0f}) - 0.5f) <
+            1.0e-5f,
+        "Point near a diagonal segment had the wrong distance");
+    passed &= expect(
+        std::abs(editor_picking::distanceSquaredToSegment(
+                     {4.0f, 5.0f}, {1.0f, 1.0f}, {1.0f, 1.0f}) - 25.0f) <
+            1.0e-5f,
+        "Zero-length segment was not treated as a point");
+
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float invalidDistance = editor_picking::distanceSquaredToSegment(
+        {nan, 0.0f}, horizontalStart, horizontalEnd);
+    passed &= expect(!std::isfinite(invalidDistance),
+                     "Nonfinite segment input produced a finite distance");
     return passed;
 }
 
@@ -350,13 +391,36 @@ bool runCameraDiscoveryTests() {
 
     const std::vector<const GameObject*> objects{
         &standaloneCamera, &attachedObject, &secondStandaloneCamera};
+    const std::vector<editor_picking::CameraVisualizationEntry> entries =
+        editor_picking::collectCameraVisualizationEntries(
+            objects, &attachedObject.camera);
+    bool passed = expect(
+        entries.size() == 3 && entries[0].camera == &standaloneCamera &&
+            entries[0].selectionTarget == &standaloneCamera &&
+            !entries[0].active && entries[1].camera == &attachedObject.camera &&
+            entries[1].selectionTarget == &attachedObject && entries[1].active &&
+            entries[2].camera == &secondStandaloneCamera &&
+            entries[2].selectionTarget == &secondStandaloneCamera &&
+            !entries[2].active,
+        "Camera visualization discovery lost selection ownership");
+
     const std::vector<const Camera*> cameras =
         editor_picking::collectCameraPointers(objects, &attachedObject.camera);
-    bool passed = expect(cameras.size() == 3 &&
+    passed &= expect(cameras.size() == 3 &&
                              cameras[0] == &standaloneCamera &&
                              cameras[1] == &attachedObject.camera &&
                              cameras[2] == &secondStandaloneCamera,
                          "Camera discovery did not deduplicate an active attached camera");
+
+    const std::vector<editor_picking::CameraVisualizationEntry>
+        standaloneActiveEntries =
+            editor_picking::collectCameraVisualizationEntries(
+                objects, &standaloneCamera);
+    passed &= expect(
+        standaloneActiveEntries.size() == 3 &&
+            standaloneActiveEntries[0].active &&
+            standaloneActiveEntries[0].selectionTarget == &standaloneCamera,
+        "Active standalone Camera did not retain its selection target");
 
     const std::vector<const GameObject*> partialObjects{&standaloneCamera};
     const std::vector<const Camera*> withFallback =
@@ -371,7 +435,8 @@ bool runCameraDiscoveryTests() {
 }  // namespace
 
 int main() {
-    return runAabbTests() && runTriangleTests() && runTransformedTests() &&
+    return runAabbTests() && runScreenSegmentDistanceTests() &&
+                   runTriangleTests() && runTransformedTests() &&
                    runTriangleScaleToleranceTests() &&
                    runMeshBoundsTests() &&
                    runClosestObjectAndGizmoTests() &&

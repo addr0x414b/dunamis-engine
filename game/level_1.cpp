@@ -69,18 +69,18 @@ void Level1::init() {
     test4->name = "Direc Light";
     test4->scale = glm::vec3(200.0f, 200.0f, 200.0f);
     test4->position = glm::vec3(50.0f, 20.0f, 100.0f);
-    test4->modelPath = "game/assets/models/Avocado.glb";
+    //test4->modelPath = "game/assets/models/Avocado.glb";
     //test4->intensity = 100.0f;
-    requireSuccess(test4->loadModel(), "Failed to load Directional Light Avocado");
+    //requireSuccess(test4->loadModel(), "Failed to load Directional Light Avocado");
     requireSuccess(addGameObject(std::move(test4)), "Failed to add Directional Light");
 
     auto test5 = std::make_unique<PointLight>();
     test5->name = "Point Light";
     test5->scale = glm::vec3(500.0f, 500.0f, 500.0f);
     test5->position = glm::vec3(250.0f, 20.0f, 100.0f);
-    test5->modelPath = "game/assets/models/Avocado.glb";
+    //test5->modelPath = "game/assets/models/Avocado.glb";
     test5->intensity = 100.0f;
-    requireSuccess(test5->loadModel(), "Failed to load Point Light Avocado");
+    //requireSuccess(test5->loadModel(), "Failed to load Point Light Avocado");
     requireSuccess(addGameObject(std::move(test5)), "Failed to add Point Light");
 
     /*

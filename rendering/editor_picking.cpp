@@ -21,6 +21,10 @@ bool isFiniteVector(const glm::vec3& value) noexcept {
            std::isfinite(value.z);
 }
 
+bool isFiniteVector(const glm::vec2& value) noexcept {
+    return std::isfinite(value.x) && std::isfinite(value.y);
+}
+
 bool isFiniteMatrix(const glm::mat4& matrix) noexcept {
     for (int column = 0; column < 4; ++column) {
         for (int row = 0; row < 4; ++row) {
@@ -58,26 +62,89 @@ glm::mat4 makeTranslationMatrix(const glm::vec3& translation) noexcept {
     return glm::translate(glm::mat4(1.0f), translation);
 }
 
-std::vector<const Camera*> collectCameraPointers(
+float distanceSquaredToSegment(const glm::vec2& point,
+                               const glm::vec2& segmentStart,
+                               const glm::vec2& segmentEnd) noexcept {
+    if (!isFiniteVector(point) || !isFiniteVector(segmentStart) ||
+        !isFiniteVector(segmentEnd)) {
+        return std::numeric_limits<float>::infinity();
+    }
+
+    const glm::vec2 segment = segmentEnd - segmentStart;
+    const float segmentLengthSquared = glm::dot(segment, segment);
+    if (!std::isfinite(segmentLengthSquared)) {
+        return std::numeric_limits<float>::infinity();
+    }
+    if (segmentLengthSquared <= 0.0f) {
+        const glm::vec2 difference = point - segmentStart;
+        const float distanceSquared = glm::dot(difference, difference);
+        return std::isfinite(distanceSquared)
+                   ? distanceSquared
+                   : std::numeric_limits<float>::infinity();
+    }
+
+    const float unclampedParameter =
+        glm::dot(point - segmentStart, segment) / segmentLengthSquared;
+    if (!std::isfinite(unclampedParameter)) {
+        return std::numeric_limits<float>::infinity();
+    }
+    const float parameter = std::clamp(unclampedParameter, 0.0f, 1.0f);
+    const glm::vec2 closestPoint = segmentStart + parameter * segment;
+    const glm::vec2 difference = point - closestPoint;
+    const float distanceSquared = glm::dot(difference, difference);
+    return std::isfinite(distanceSquared)
+               ? distanceSquared
+               : std::numeric_limits<float>::infinity();
+}
+
+std::vector<CameraVisualizationEntry> collectCameraVisualizationEntries(
     const std::vector<const GameObject*>& objects,
     const Camera* activeCamera) {
-    std::vector<const Camera*> cameras;
-    const auto appendUnique = [&cameras](const Camera* camera) {
-        if (camera != nullptr &&
-            std::find(cameras.begin(), cameras.end(), camera) ==
-                cameras.end()) {
-            cameras.push_back(camera);
+    std::vector<CameraVisualizationEntry> entries;
+    const auto appendUnique = [&entries, activeCamera](
+                                  const Camera* camera,
+                                  const GameObject* selectionTarget) {
+        if (camera == nullptr) {
+            return;
         }
+
+        for (CameraVisualizationEntry& entry : entries) {
+            if (entry.camera != camera) {
+                continue;
+            }
+            entry.active = entry.active || camera == activeCamera;
+            if (entry.selectionTarget == nullptr) {
+                entry.selectionTarget = selectionTarget;
+            }
+            return;
+        }
+
+        entries.push_back({camera, selectionTarget, camera == activeCamera});
     };
 
     for (const GameObject* object : objects) {
         if (object == nullptr) {
             continue;
         }
-        appendUnique(dynamic_cast<const Camera*>(object));
-        appendUnique(object->attachedCamera());
+        const Camera* standaloneCamera = dynamic_cast<const Camera*>(object);
+        appendUnique(standaloneCamera,
+                     standaloneCamera != nullptr ? object : nullptr);
+        appendUnique(object->attachedCamera(), object);
     }
-    appendUnique(activeCamera);
+    appendUnique(activeCamera, nullptr);
+    return entries;
+}
+
+std::vector<const Camera*> collectCameraPointers(
+    const std::vector<const GameObject*>& objects,
+    const Camera* activeCamera) {
+    std::vector<const Camera*> cameras;
+    const std::vector<CameraVisualizationEntry> entries =
+        collectCameraVisualizationEntries(objects, activeCamera);
+    cameras.reserve(entries.size());
+    for (const CameraVisualizationEntry& entry : entries) {
+        cameras.push_back(entry.camera);
+    }
     return cameras;
 }
 

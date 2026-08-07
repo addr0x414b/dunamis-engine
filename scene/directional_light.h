@@ -15,6 +15,12 @@ class DirectionalLight : public GameObject {
 public:
     DirectionalLight();
 
+    [[nodiscard]] bool calculateDirectionAfterDelta(
+        const glm::mat3& rotationDelta,
+        glm::vec3& updatedDirection) const noexcept;
+    [[nodiscard]] bool applyDirectionDelta(
+        const glm::mat3& rotationDelta) noexcept;
+
     glm::vec3 direction{0.0f, -1.0f, 0.0f};
     glm::vec3 color{1.0f, 1.0f, 1.0f};
     float intensity = 1.0f;

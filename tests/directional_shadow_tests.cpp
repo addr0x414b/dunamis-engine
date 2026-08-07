@@ -26,6 +26,55 @@ bool expectRejected(const DirectionalLight& light, const char* message) {
                   message);
 }
 
+bool sameVector(const glm::vec3& first, const glm::vec3& second) {
+    return glm::length(first - second) < 1.0e-5f;
+}
+
+bool runDirectionDeltaTests() {
+    const glm::vec3 originalDirection{0.0f, -2.0f, 0.0f};
+    DirectionalLight xRotated;
+    xRotated.direction = originalDirection;
+    DirectionalLight yRotated;
+    yRotated.direction = originalDirection;
+    DirectionalLight zRotated;
+    zRotated.direction = originalDirection;
+
+    bool passed = expect(
+        xRotated.applyDirectionDelta(glm::mat3(
+            editor_picking::makeRotationMatrix({90.0f, 0.0f, 0.0f}))) &&
+            sameVector(xRotated.direction, {0.0f, 0.0f, -2.0f}),
+        "Directional light X rotation produced the wrong direction");
+    passed &= expect(
+        yRotated.applyDirectionDelta(glm::mat3(
+            editor_picking::makeRotationMatrix({0.0f, 90.0f, 0.0f}))) &&
+            sameVector(yRotated.direction, originalDirection),
+        "Directional light Y rotation produced the wrong direction");
+    passed &= expect(
+        zRotated.applyDirectionDelta(glm::mat3(
+            editor_picking::makeRotationMatrix({0.0f, 0.0f, 90.0f}))) &&
+            sameVector(zRotated.direction, {2.0f, 0.0f, 0.0f}),
+        "Directional light Z rotation produced the wrong direction");
+    passed &= expect(std::abs(glm::length(xRotated.direction) - 2.0f) <
+                         1.0e-5f &&
+                         std::isfinite(xRotated.direction.x) &&
+                         std::isfinite(xRotated.direction.y) &&
+                         std::isfinite(xRotated.direction.z),
+                     "Directional light rotation did not preserve magnitude");
+
+    const glm::vec3 originalAfterInvalidAttempt = zRotated.direction;
+    glm::mat3 nonfiniteDelta(1.0f);
+    nonfiniteDelta[0][0] = std::numeric_limits<float>::quiet_NaN();
+    passed &= expect(!zRotated.applyDirectionDelta(nonfiniteDelta) &&
+                         sameVector(zRotated.direction,
+                                    originalAfterInvalidAttempt),
+                     "Nonfinite directional rotation partially mutated light");
+    passed &= expect(!zRotated.applyDirectionDelta(glm::mat3(0.0f)) &&
+                         sameVector(zRotated.direction,
+                                    originalAfterInvalidAttempt),
+                     "Degenerate directional rotation was accepted");
+    return passed;
+}
+
 }  // namespace
 
 int main() {
@@ -38,6 +87,7 @@ int main() {
                      "Directional-shadow descriptor-pool requirements are wrong");
     passed &= expect(!directional_shadow::shouldRender(nullptr),
                      "Missing directional light did not disable the shadow pass");
+    passed &= runDirectionDeltaTests();
     DirectionalLight light;
     light.direction = glm::vec3(0.0f, -2.0f, 0.0f);
     directional_shadow::LightMatrices matrices;
