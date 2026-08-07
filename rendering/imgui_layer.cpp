@@ -129,6 +129,55 @@ bool isFiniteMatrix(const glm::mat4& matrix) noexcept {
     return true;
 }
 
+bool extractDunamisRotation(const glm::mat4& matrix,
+                            const glm::vec3& authoredScale,
+                            glm::vec3& rotation) noexcept {
+    rotation = {};
+    if (!isFiniteMatrix(matrix) || !isFiniteVector(authoredScale)) {
+        return false;
+    }
+
+    glm::vec3 basis[3];
+    for (int axis = 0; axis < 3; ++axis) {
+        const glm::vec3 column(matrix[axis]);
+        const float lengthSquared = glm::dot(column, column);
+        if (!std::isfinite(lengthSquared) || lengthSquared <= 1.0e-12f) {
+            return false;
+        }
+
+        const float length = std::sqrt(lengthSquared);
+        if (!std::isfinite(length) || length <= 0.0f) {
+            return false;
+        }
+
+        basis[axis] = column / length;
+        if (authoredScale[axis] < 0.0f) {
+            basis[axis] *= -1.0f;
+        }
+        if (!isFiniteVector(basis[axis])) {
+            return false;
+        }
+    }
+
+    // Dunamis composes Rx * Ry * Rz. ImGuizmo's public decomposition uses
+    // the opposite Euler extraction order, so extract Dunamis' angles from
+    // the normalized manipulated basis directly.
+    const float r00 = basis[0].x;
+    const float r01 = basis[1].x;
+    const float r02 = basis[2].x;
+    const float r12 = basis[2].y;
+    const float r22 = basis[2].z;
+    const float yDenominator = std::sqrt(r00 * r00 + r01 * r01);
+    if (!std::isfinite(yDenominator)) {
+        return false;
+    }
+
+    rotation.x = glm::degrees(std::atan2(-r12, r22));
+    rotation.y = glm::degrees(std::atan2(r02, yDenominator));
+    rotation.z = glm::degrees(std::atan2(-r01, r00));
+    return isFiniteVector(rotation);
+}
+
 bool normalizeFinite(const glm::vec3& value, glm::vec3& normalized) noexcept {
     normalized = {};
     if (!isFiniteVector(value)) {
@@ -296,6 +345,16 @@ bool applyObjectRotation(GameObject& object,
     if (attachedCamera != nullptr) {
         attachedCamera->position = newCameraPosition;
     }
+    return true;
+}
+
+bool applyObjectScale(GameObject& object,
+                      const glm::vec3& newScale) noexcept {
+    if (!isFiniteVector(newScale)) {
+        return false;
+    }
+
+    object.scale = newScale;
     return true;
 }
 
@@ -517,8 +576,9 @@ void ImGuiLayer::drawEditor(Scene* scene, const glm::mat4& view,
         const bool disabled = runState == SceneRunState::Playing;
         drawSceneHierarchy(scene, disabled);
         updateSceneInteractionAreaHovered();
+        processGizmoShortcuts(scene, runState);
         drawCameraVisualizations(scene, view, projection, runState);
-        drawTranslationGizmo(scene, view, projection, runState);
+        drawTransformGizmo(scene, view, projection, runState);
         processWorldSelection(scene, view, projection, runState);
         drawInspector(scene, disabled);
     }
@@ -578,6 +638,7 @@ const GameObject* ImGuiLayer::selectedGameObjectForScene(
 
 void ImGuiLayer::clearSelection() noexcept {
     selectedGameObject_ = nullptr;
+    gizmoMode_ = GizmoMode::Translate;
     inspectorError_.clear();
 }
 
@@ -635,6 +696,9 @@ void ImGuiLayer::selectGameObject(Scene* scene, GameObject* object) noexcept {
 
     for (const auto& owner : scene->gameObjects()) {
         if (owner.get() == object) {
+            if (selectedGameObject_ != object) {
+                gizmoMode_ = GizmoMode::Translate;
+            }
             selectedGameObject_ = object;
             inspectorError_.clear();
             return;
@@ -686,9 +750,27 @@ void ImGuiLayer::drawSceneHierarchy(Scene* scene, bool disabled) {
     ImGui::End();
 }
 
-void ImGuiLayer::drawTranslationGizmo(Scene* scene, const glm::mat4& view,
-                                      const glm::mat4& projection,
-                                      SceneRunState runState) {
+void ImGuiLayer::processGizmoShortcuts(Scene* scene,
+                                       SceneRunState runState) noexcept {
+    if (runState != SceneRunState::Editing || !inputEnabled_ ||
+        selectedGameObjectForScene(scene) == nullptr ||
+        ImGui::GetIO().WantTextInput || ImGui::IsAnyItemActive() ||
+        ImGuizmo::IsUsing()) {
+        return;
+    }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_W, false)) {
+        gizmoMode_ = GizmoMode::Translate;
+    } else if (ImGui::IsKeyPressed(ImGuiKey_E, false)) {
+        gizmoMode_ = GizmoMode::Scale;
+    } else if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
+        gizmoMode_ = GizmoMode::Rotate;
+    }
+}
+
+void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
+                                    const glm::mat4& projection,
+                                    SceneRunState runState) {
     if (runState != SceneRunState::Editing ||
         !sceneInteractionRect_.valid) {
         gizmoDragActive_ = false;
@@ -714,29 +796,87 @@ void ImGuiLayer::drawTranslationGizmo(Scene* scene, const glm::mat4& view,
                       viewport->Size.y);
     const glm::mat4 model = editor_picking::makeModelMatrix(
         selected->position, selected->rotation, selected->scale);
-    const editor_picking::AggregateBounds aggregate =
-        editor_picking::aggregateBounds(selected->meshInstances());
-    const glm::vec3 worldCenter = editor_picking::worldBoundsCenter(
-        aggregate, model, selected->position);
-    glm::mat4 gizmoMatrix = editor_picking::makeTranslationMatrix(worldCenter);
-    const glm::vec3 originalGizmoCenter(gizmoMatrix[3]);
+    glm::mat4 gizmoMatrix = model;
+    glm::vec3 originalGizmoCenter;
+    ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE;
+    ImGuizmo::MODE mode = ImGuizmo::WORLD;
+    switch (gizmoMode_) {
+    case GizmoMode::Translate: {
+        gizmoMatrix =
+            editor_picking::makeTranslationMatrix(selected->position);
+        originalGizmoCenter = glm::vec3(gizmoMatrix[3]);
+        operation = ImGuizmo::TRANSLATE;
+        mode = ImGuizmo::WORLD;
+        break;
+    }
+    case GizmoMode::Scale:
+        operation = ImGuizmo::SCALE;
+        mode = ImGuizmo::LOCAL;
+        break;
+    case GizmoMode::Rotate:
+        operation = ImGuizmo::ROTATE;
+        mode = ImGuizmo::LOCAL;
+        break;
+    }
     glm::mat4 imguizmoProjection = projection;
     imguizmoProjection[1][1] *= -1.0f;
     const bool manipulated = ImGuizmo::Manipulate(
         glm::value_ptr(view), glm::value_ptr(imguizmoProjection),
-        ImGuizmo::TRANSLATE, ImGuizmo::WORLD, glm::value_ptr(gizmoMatrix));
+        operation, mode, glm::value_ptr(gizmoMatrix));
     drawList->PopClipRect();
 
     if (manipulated) {
-        const glm::vec3 manipulatedGizmoCenter(gizmoMatrix[3]);
-        const glm::vec3 worldDelta =
-            manipulatedGizmoCenter - originalGizmoCenter;
-        if (isFiniteVector(manipulatedGizmoCenter) &&
-            isFiniteVector(worldDelta) &&
-            applyObjectPosition(*selected, selected->position + worldDelta)) {
-            inspectorError_.clear();
-        } else {
-            inspectorError_ = "Transform values must be finite.";
+        switch (gizmoMode_) {
+        case GizmoMode::Translate: {
+            const glm::vec3 manipulatedGizmoCenter(gizmoMatrix[3]);
+            const glm::vec3 worldDelta =
+                manipulatedGizmoCenter - originalGizmoCenter;
+            if (isFiniteVector(manipulatedGizmoCenter) &&
+                isFiniteVector(worldDelta) &&
+                applyObjectPosition(*selected,
+                                    selected->position + worldDelta)) {
+                inspectorError_.clear();
+            } else {
+                inspectorError_ = "Transform values must be finite.";
+            }
+            break;
+        }
+        case GizmoMode::Rotate: {
+            glm::vec3 newRotation;
+            if (extractDunamisRotation(gizmoMatrix, selected->scale,
+                                       newRotation) &&
+                applyObjectRotation(*selected, newRotation)) {
+                inspectorError_.clear();
+            } else {
+                inspectorError_ = "Transform values must be finite.";
+            }
+            break;
+        }
+        case GizmoMode::Scale: {
+            if (!isFiniteMatrix(gizmoMatrix)) {
+                inspectorError_ = "Transform values must be finite.";
+                break;
+            }
+
+            float translation[3]{};
+            float rotation[3]{};
+            float scale[3]{};
+            ImGuizmo::DecomposeMatrixToComponents(
+                glm::value_ptr(gizmoMatrix), translation, rotation, scale);
+            glm::vec3 newScale(scale[0], scale[1], scale[2]);
+            for (int axis = 0; axis < 3; ++axis) {
+                if (selected->scale[axis] < 0.0f) {
+                    newScale[axis] *= -1.0f;
+                }
+            }
+            if (isFiniteVector(newScale) && applyObjectScale(*selected,
+                                                              newScale)) {
+                inspectorError_.clear();
+            } else {
+                inspectorError_ = "Transform values must be finite.";
+            }
+            break;
+        }
         }
     }
     gizmoDragActive_ = ImGuizmo::IsUsing() &&
@@ -1013,8 +1153,7 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
 
     glm::vec3 scale = selectedGameObject_->scale;
     if (ImGui::DragFloat3("Scale", &scale.x, 0.01f)) {
-        if (isFiniteVector(scale)) {
-            selectedGameObject_->scale = scale;
+        if (applyObjectScale(*selectedGameObject_, scale)) {
             inspectorError_.clear();
         } else {
             inspectorError_ = "Transform values must be finite.";
@@ -1216,6 +1355,7 @@ void ImGuiLayer::shutdown() noexcept {
     sceneInteractionRect_ = {};
     inputEnabled_ = true;
     gizmoDragActive_ = false;
+    gizmoMode_ = GizmoMode::Translate;
     inspectorError_.clear();
 
     if (vulkanBackendInitialized_) {
@@ -1256,5 +1396,6 @@ void ImGuiLayer::abandon() noexcept {
     sceneInteractionRect_ = {};
     inputEnabled_ = true;
     gizmoDragActive_ = false;
+    gizmoMode_ = GizmoMode::Translate;
     inspectorError_.clear();
 }

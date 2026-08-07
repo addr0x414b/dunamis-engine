@@ -54,6 +54,12 @@ public:
     void abandon() noexcept;
 
 private:
+    enum class GizmoMode {
+        Translate,
+        Scale,
+        Rotate,
+    };
+
     [[nodiscard]] Result initializeVulkanBackend();
     void synchronizeSelection(Scene* scene) noexcept;
     void selectGameObject(Scene* scene, GameObject* object) noexcept;
@@ -61,9 +67,11 @@ private:
     void drawSceneHierarchy(Scene* scene, bool disabled);
     void drawInspector(Scene* scene, bool disabled);
     void updateSceneInteractionAreaHovered() noexcept;
-    void drawTranslationGizmo(Scene* scene, const glm::mat4& view,
-                              const glm::mat4& projection,
-                              SceneRunState runState);
+    void processGizmoShortcuts(Scene* scene,
+                               SceneRunState runState) noexcept;
+    void drawTransformGizmo(Scene* scene, const glm::mat4& view,
+                            const glm::mat4& projection,
+                            SceneRunState runState);
     void drawCameraVisualizations(Scene* scene, const glm::mat4& editorView,
                                   const glm::mat4& projection,
                                   SceneRunState runState);
@@ -99,6 +107,7 @@ private:
     bool drawDataReady_ = false;
     bool inputEnabled_ = true;
     bool gizmoDragActive_ = false;
+    GizmoMode gizmoMode_ = GizmoMode::Translate;
     Scene* selectionScene_ = nullptr;
     GameObject* selectedGameObject_ = nullptr;
     std::string inspectorError_;
