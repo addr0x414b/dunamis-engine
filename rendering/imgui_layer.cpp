@@ -25,6 +25,63 @@ constexpr const char* dunamisDockspaceName =
     "DunamisEditorDockspace_v1";
 constexpr float minDirectionalDirectionLengthSquared = 1.0e-8f;
 
+void applyDunamisEditorStyle() {
+    ImGuiStyle& style = ImGui::GetStyle();
+
+    const ImVec4 darkAccent(0.4196f, 0.1725f, 0.0549f, 1.0f);
+    const ImVec4 normalAccent(0.5608f, 0.2392f, 0.0706f, 1.0f);
+    const ImVec4 hoverAccent(0.7255f, 0.3333f, 0.0863f, 1.0f);
+    const ImVec4 activeAccent(0.8667f, 0.4510f, 0.1216f, 1.0f);
+    const ImVec4 darkNeutral(0.10f, 0.08f, 0.07f, 0.94f);
+    const auto withAlpha = [](const ImVec4& color, float alpha) {
+        return ImVec4(color.x, color.y, color.z, alpha);
+    };
+
+    style.Colors[ImGuiCol_FrameBg] = darkNeutral;
+    style.Colors[ImGuiCol_FrameBgHovered] = withAlpha(darkAccent, 0.45f);
+    style.Colors[ImGuiCol_FrameBgActive] = withAlpha(normalAccent, 0.60f);
+    style.Colors[ImGuiCol_TitleBgActive] = darkNeutral;
+
+    style.Colors[ImGuiCol_Button] = darkAccent;
+    style.Colors[ImGuiCol_ButtonHovered] = hoverAccent;
+    style.Colors[ImGuiCol_ButtonActive] = activeAccent;
+
+    style.Colors[ImGuiCol_Header] = withAlpha(darkAccent, 0.50f);
+    style.Colors[ImGuiCol_HeaderHovered] = withAlpha(hoverAccent, 0.70f);
+    style.Colors[ImGuiCol_HeaderActive] = withAlpha(activeAccent, 0.90f);
+
+    style.Colors[ImGuiCol_Separator] = withAlpha(darkAccent, 0.45f);
+    style.Colors[ImGuiCol_SeparatorHovered] = withAlpha(hoverAccent, 0.80f);
+    style.Colors[ImGuiCol_SeparatorActive] = activeAccent;
+
+    style.Colors[ImGuiCol_CheckMark] = activeAccent;
+    style.Colors[ImGuiCol_CheckboxSelectedBg] =
+        withAlpha(normalAccent, 0.65f);
+    style.Colors[ImGuiCol_SliderGrab] = normalAccent;
+    style.Colors[ImGuiCol_SliderGrabActive] = activeAccent;
+
+    style.Colors[ImGuiCol_ResizeGrip] = withAlpha(darkAccent, 0.35f);
+    style.Colors[ImGuiCol_ResizeGripHovered] =
+        withAlpha(hoverAccent, 0.65f);
+    style.Colors[ImGuiCol_ResizeGripActive] = withAlpha(activeAccent, 0.90f);
+
+    style.Colors[ImGuiCol_Tab] = withAlpha(darkAccent, 0.45f);
+    style.Colors[ImGuiCol_TabHovered] = withAlpha(hoverAccent, 0.80f);
+    style.Colors[ImGuiCol_TabSelected] = withAlpha(normalAccent, 0.85f);
+    style.Colors[ImGuiCol_TabSelectedOverline] = activeAccent;
+    style.Colors[ImGuiCol_TabDimmed] = withAlpha(darkAccent, 0.25f);
+    style.Colors[ImGuiCol_TabDimmedSelected] =
+        withAlpha(normalAccent, 0.55f);
+    style.Colors[ImGuiCol_TabDimmedSelectedOverline] =
+        withAlpha(activeAccent, 0.55f);
+
+    style.Colors[ImGuiCol_DockingPreview] = withAlpha(hoverAccent, 0.45f);
+    style.Colors[ImGuiCol_TextSelectedBg] = withAlpha(normalAccent, 0.45f);
+    style.Colors[ImGuiCol_DragDropTarget] = withAlpha(activeAccent, 0.95f);
+    style.Colors[ImGuiCol_NavCursor] = withAlpha(activeAccent, 0.85f);
+    style.Colors[ImGuiCol_TextLink] = activeAccent;
+}
+
 void buildDefaultDockLayout(ImGuiID dockspaceId,
                             const ImVec2& viewportSize) {
     if (ImGui::DockBuilderGetNode(dockspaceId) != nullptr) {
@@ -155,6 +212,7 @@ Result ImGuiLayer::initialize(
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     ImGui::StyleColorsDark();
+    applyDunamisEditorStyle();
 
     if (!ImGui_ImplSDL3_InitForVulkan(window)) {
         shutdown();
@@ -281,9 +339,23 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
         return;
     }
 
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float toolbarCursorX = ImGui::GetCursorPosX();
+    const float availableWidth = ImGui::GetContentRegionAvail().x;
+    const float playButtonWidth =
+        ImGui::CalcTextSize("Play").x + 2.0f * style.FramePadding.x;
+    const float stopButtonWidth =
+        ImGui::CalcTextSize("Stop").x + 2.0f * style.FramePadding.x;
+    const float buttonGroupWidth =
+        playButtonWidth + style.ItemSpacing.x + stopButtonWidth;
+    const float remainingWidth = availableWidth - buttonGroupWidth;
+    const float groupOffset =
+        remainingWidth > 0.0f ? remainingWidth * 0.5f : 0.0f;
+    ImGui::SetCursorPosX(toolbarCursorX + groupOffset);
+
     const bool editing = runState == SceneRunState::Editing;
     ImGui::BeginDisabled(!editing);
-    if (ImGui::Button("Play") &&
+    if (ImGui::Button("Play", ImVec2(playButtonWidth, 0.0f)) &&
         pendingEditorCommand_ == EditorCommand::None) {
         pendingEditorCommand_ = EditorCommand::Play;
     }
@@ -291,7 +363,7 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
 
     ImGui::SameLine();
     ImGui::BeginDisabled(editing);
-    if (ImGui::Button("Stop") &&
+    if (ImGui::Button("Stop", ImVec2(stopButtonWidth, 0.0f)) &&
         pendingEditorCommand_ == EditorCommand::None) {
         pendingEditorCommand_ = EditorCommand::Stop;
     }
