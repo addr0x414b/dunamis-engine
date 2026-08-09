@@ -167,7 +167,7 @@ bool runAuthoringTransferTests() {
 
     auto editingDirectional = std::make_unique<DirectionalLight>();
     DirectionalLight* editingDirectionalPointer = editingDirectional.get();
-    editingDirectional->direction = {1.0f, -2.0f, 3.0f};
+    editingDirectional->rotation = {23.0f, -41.0f, 17.0f};
     editingDirectional->color = {0.7f, 0.8f, 0.9f};
     editingDirectional->intensity = 12.0f;
     editingDirectional->shadow.focus = {4.0f, 5.0f, 6.0f};
@@ -246,8 +246,17 @@ bool runAuthoringTransferTests() {
     passed &= expect(runtimePointPointer->color == editingPointPointer->color &&
                          runtimePointPointer->intensity == 11.0f,
                      "Point-light authoring state was not transferred");
-    passed &= expect(runtimeDirectionalPointer->direction ==
-                             editingDirectionalPointer->direction &&
+    glm::vec3 editingDirectionalDirection;
+    glm::vec3 runtimeDirectionalDirection;
+    const bool calculatedEditingDirection =
+        editingDirectionalPointer->calculateWorldDirection(
+            editingDirectionalDirection);
+    const bool calculatedRuntimeDirection =
+        runtimeDirectionalPointer->calculateWorldDirection(
+            runtimeDirectionalDirection);
+    passed &= expect(calculatedEditingDirection && calculatedRuntimeDirection &&
+                         sameVector(runtimeDirectionalDirection,
+                                    editingDirectionalDirection) &&
                          runtimeDirectionalPointer->color ==
                              editingDirectionalPointer->color &&
                          runtimeDirectionalPointer->intensity == 12.0f &&
@@ -693,8 +702,13 @@ int main() {
                      "Shared pixel allocation was not released exactly once");
 
     const DirectionalLight defaultDirectionalLight;
-    passed &= expect(defaultDirectionalLight.direction ==
-                         glm::vec3(0.0f, -1.0f, 0.0f),
+    glm::vec3 defaultDirectionalDirection;
+    passed &= expect(defaultDirectionalLight.calculateWorldDirection(
+                         defaultDirectionalDirection) &&
+                         sameVector(defaultDirectionalDirection,
+                                    glm::vec3(0.0f, -1.0f, 0.0f)) &&
+                         nearlyEqual(glm::length(defaultDirectionalDirection),
+                                     1.0f),
                      "Directional lights do not default to downward rays");
     passed &= expect(defaultDirectionalLight.color == glm::vec3(1.0f),
                      "Directional lights do not default to white");
@@ -849,12 +863,9 @@ int main() {
         };
 
     expectInvalidDirectionalState(
-        "A zero directional-light direction passed validation",
-        [](DirectionalLight& light) { light.direction = glm::vec3(0.0f); });
-    expectInvalidDirectionalState(
-        "A non-finite directional-light direction passed validation",
+        "A non-finite directional-light rotation passed validation",
         [](DirectionalLight& light) {
-            light.direction.x = std::numeric_limits<float>::quiet_NaN();
+            light.rotation.x = std::numeric_limits<float>::quiet_NaN();
         });
     expectInvalidDirectionalState(
         "A negative directional-light intensity passed validation",

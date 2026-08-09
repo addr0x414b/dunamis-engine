@@ -7,7 +7,6 @@
 namespace directional_shadow {
 namespace {
 
-constexpr float minDirectionLengthSquared = 1.0e-8f;
 constexpr float parallelUpThreshold = 0.99f;
 
 bool isFiniteVector(const glm::vec3& value) noexcept {
@@ -19,16 +18,6 @@ Result validateSettings(const DirectionalLight& light) {
     const DirectionalShadowSettings& settings = light.shadow;
     if (!isFiniteVector(settings.focus)) {
         return Result::failure("Directional shadow focus must be finite");
-    }
-    if (!isFiniteVector(light.direction)) {
-        return Result::failure("Directional light direction must be finite");
-    }
-    const float directionLengthSquared = glm::dot(light.direction,
-                                                   light.direction);
-    if (!std::isfinite(directionLengthSquared) ||
-        directionLengthSquared <= minDirectionLengthSquared) {
-        return Result::failure(
-            "Directional light direction must be finite and nonzero");
     }
     if (!std::isfinite(settings.halfExtent) ||
         !std::isfinite(settings.lightDistance) ||
@@ -57,8 +46,13 @@ Result calculateLightMatrices(const DirectionalLight& light,
     Result validation = validateSettings(light);
     if (!validation) return validation;
 
+    glm::vec3 direction;
+    if (!light.calculateWorldDirection(direction)) {
+        return Result::failure(
+            "Directional light rotation does not produce a valid direction");
+    }
+
     const DirectionalShadowSettings& settings = light.shadow;
-    const glm::vec3 direction = glm::normalize(light.direction);
     const glm::vec3 lightPosition = settings.focus - direction *
                                                     settings.lightDistance;
     glm::vec3 up(0.0f, 1.0f, 0.0f);

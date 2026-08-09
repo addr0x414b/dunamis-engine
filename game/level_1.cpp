@@ -146,7 +146,7 @@ void Level1::start() {
 void Level1::update() {
     for (const auto& obj : gameObjects()) {
         obj->update();
-        if (obj->name == "Point Light") {
+        if (obj->name == "Direc Light") {
             obj->rotation.x += 0.5f;
             obj->rotation.y += 0.5f;
 

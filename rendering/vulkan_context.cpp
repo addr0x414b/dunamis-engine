@@ -14,30 +14,12 @@
 
 namespace {
 
-constexpr float minDirectionalDirectionLengthSquared = 1.0e-8f;
-
 bool isFiniteVector(const glm::vec3& vector) {
     return std::isfinite(vector.x) && std::isfinite(vector.y) &&
            std::isfinite(vector.z);
 }
 
-Result normalizeDirectionalLightDirection(const DirectionalLight& light,
-                                          glm::vec3& normalizedDirection) {
-    if (!isFiniteVector(light.direction)) {
-        return Result::failure("Directional light direction must be finite");
-    }
-
-    const float directionLengthSquared = glm::dot(
-        light.direction, light.direction);
-    if (!std::isfinite(directionLengthSquared)) {
-        return Result::failure(
-            "Directional light direction must have finite length");
-    }
-    if (directionLengthSquared <= minDirectionalDirectionLengthSquared) {
-        return Result::failure(
-            "Directional light direction must have nonzero length");
-    }
-
+Result validateDirectionalLightProperties(const DirectionalLight& light) {
     if (!isFiniteVector(light.color) || light.color.r < 0.0f ||
         light.color.g < 0.0f || light.color.b < 0.0f) {
         return Result::failure(
@@ -46,13 +28,6 @@ Result normalizeDirectionalLightDirection(const DirectionalLight& light,
     if (!std::isfinite(light.intensity) || light.intensity < 0.0f) {
         return Result::failure(
             "Directional light intensity must be finite and nonnegative");
-    }
-
-    normalizedDirection = light.direction /
-                          std::sqrt(directionLengthSquared);
-    if (!isFiniteVector(normalizedDirection)) {
-        return Result::failure(
-            "Directional light direction could not be normalized");
     }
 
     return Result::success();
@@ -4324,8 +4299,12 @@ Result VulkanContext::updateLightsUniformBuffer(Scene* scene) {
     const DirectionalLight* directionalLight = scene->directionalLight();
     if (directionalLight != nullptr) {
         glm::vec3 normalizedDirection;
-        Result directionalResult = normalizeDirectionalLightDirection(
-            *directionalLight, normalizedDirection);
+        if (!directionalLight->calculateWorldDirection(normalizedDirection)) {
+            return Result::failure(
+                "Directional light rotation does not produce a valid direction");
+        }
+        Result directionalResult = validateDirectionalLightProperties(
+            *directionalLight);
         if (!directionalResult) {
             return directionalResult;
         }

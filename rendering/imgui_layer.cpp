@@ -26,7 +26,6 @@ namespace {
 
 constexpr const char* dunamisDockspaceName =
     "DunamisEditorDockspace_v1";
-constexpr float minDirectionalDirectionLengthSquared = 1.0e-8f;
 constexpr float minCameraBasisLengthSquared = 1.0e-8f;
 constexpr float cameraVisualizationDistance = 8.0f;
 constexpr float directionalVisualizationDistance = 8.0f;
@@ -327,15 +326,6 @@ bool applyObjectRotation(GameObject& object,
         return false;
     }
 
-    DirectionalLight* directionalLight =
-        dynamic_cast<DirectionalLight*>(&object);
-    glm::vec3 newDirectionalDirection;
-    if (directionalLight != nullptr &&
-        !directionalLight->calculateDirectionAfterDelta(
-            glm::mat3(deltaRotation), newDirectionalDirection)) {
-        return false;
-    }
-
     Camera* standaloneCamera = dynamic_cast<Camera*>(&object);
     Camera* attachedCamera =
         standaloneCamera == nullptr ? object.attachedCamera() : nullptr;
@@ -371,9 +361,6 @@ bool applyObjectRotation(GameObject& object,
     }
 
     object.rotation = newRotation;
-    if (directionalLight != nullptr) {
-        directionalLight->direction = newDirectionalDirection;
-    }
     if (attachedCamera != nullptr) {
         attachedCamera->position = newCameraPosition;
     }
@@ -397,16 +384,6 @@ bool isFiniteNonnegativeVector(const glm::vec3& vector) noexcept {
 
 bool isFiniteNonnegative(float value) noexcept {
     return std::isfinite(value) && value >= 0.0f;
-}
-
-bool isValidDirectionalDirection(const glm::vec3& direction) noexcept {
-    if (!isFiniteVector(direction)) {
-        return false;
-    }
-
-    const float lengthSquared = glm::dot(direction, direction);
-    return std::isfinite(lengthSquared) &&
-           lengthSquared > minDirectionalDirectionLengthSquared;
 }
 
 void checkImGuiVulkanResult(VkResult result) noexcept {
@@ -1181,7 +1158,7 @@ void ImGuiLayer::drawDirectionalLightVisualization(
     }
 
     glm::vec3 normalizedDirection;
-    if (normalizeFinite(light.direction, normalizedDirection)) {
+    if (light.calculateWorldDirection(normalizedDirection)) {
         const glm::vec3 arrowEnd =
             light.position + normalizedDirection * directionalVisualizationDistance;
         glm::vec2 arrowEndScreen;
@@ -1481,17 +1458,6 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
     if (directionalLight != nullptr) {
         ImGui::SeparatorText("Directional Light");
 
-        glm::vec3 direction = directionalLight->direction;
-        if (ImGui::DragFloat3("Direction", &direction.x, 0.01f)) {
-            if (isValidDirectionalDirection(direction)) {
-                directionalLight->direction = direction;
-                inspectorError_.clear();
-            } else {
-                inspectorError_ =
-                    "Direction must be finite and nonzero.";
-            }
-        }
-
         glm::vec3 color = directionalLight->color;
         if (ImGui::ColorEdit3("Color", &color.x,
                               ImGuiColorEditFlags_HDR |
@@ -1518,7 +1484,7 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
 
         ImGui::TextWrapped(
             "Directional-light position does not affect lighting; use "
-            "Direction.");
+            "Rotation to aim the light.");
     }
 
     if (!inspectorError_.empty()) {

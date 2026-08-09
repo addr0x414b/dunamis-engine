@@ -2,6 +2,8 @@
 
 #include <cmath>
 
+#include <glm/gtc/matrix_transform.hpp>
+
 namespace {
 
 constexpr float minDirectionLengthSquared = 1.0e-8f;
@@ -11,9 +13,9 @@ bool isFiniteVector(const glm::vec3& value) noexcept {
            std::isfinite(value.z);
 }
 
-bool isFiniteMatrix(const glm::mat3& value) noexcept {
-    for (int column = 0; column < 3; ++column) {
-        for (int row = 0; row < 3; ++row) {
+bool isFiniteMatrix(const glm::mat4& value) noexcept {
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
             if (!std::isfinite(value[column][row])) {
                 return false;
             }
@@ -26,6 +28,7 @@ bool isValidDirection(const glm::vec3& value) noexcept {
     if (!isFiniteVector(value)) {
         return false;
     }
+
     const float lengthSquared = glm::dot(value, value);
     return std::isfinite(lengthSquared) &&
            lengthSquared > minDirectionLengthSquared;
@@ -37,34 +40,44 @@ DirectionalLight::DirectionalLight() {
     name = "DirectionalLight";
 }
 
-bool DirectionalLight::calculateDirectionAfterDelta(
-    const glm::mat3& rotationDelta, glm::vec3& updatedDirection) const noexcept {
-    updatedDirection = {};
-    if (!isFiniteMatrix(rotationDelta) || !isValidDirection(direction)) {
+bool DirectionalLight::calculateWorldDirection(
+    glm::vec3& worldDirection) const noexcept {
+    worldDirection = {};
+    if (!isFiniteVector(rotation)) {
         return false;
     }
 
-    const float determinant = glm::determinant(rotationDelta);
-    if (!std::isfinite(determinant) || std::abs(determinant) <= 1.0e-6f) {
+    // Keep this order and multiplication semantics aligned with
+    // editor_picking::makeRotationMatrix without introducing a scene-to-
+    // rendering dependency.
+    glm::mat4 rotationMatrix(1.0f);
+    rotationMatrix = glm::rotate(rotationMatrix, glm::radians(rotation.x),
+                                 glm::vec3(1.0f, 0.0f, 0.0f));
+    rotationMatrix = glm::rotate(rotationMatrix, glm::radians(rotation.y),
+                                 glm::vec3(0.0f, 1.0f, 0.0f));
+    rotationMatrix = glm::rotate(rotationMatrix, glm::radians(rotation.z),
+                                 glm::vec3(0.0f, 0.0f, 1.0f));
+    if (!isFiniteMatrix(rotationMatrix)) {
         return false;
     }
 
-    const glm::vec3 rotatedDirection = rotationDelta * direction;
+    const glm::vec3 rotatedDirection = glm::vec3(
+        rotationMatrix * glm::vec4(0.0f, -1.0f, 0.0f, 0.0f));
     if (!isValidDirection(rotatedDirection)) {
         return false;
     }
 
-    updatedDirection = rotatedDirection;
-    return true;
-}
-
-bool DirectionalLight::applyDirectionDelta(
-    const glm::mat3& rotationDelta) noexcept {
-    glm::vec3 updatedDirection;
-    if (!calculateDirectionAfterDelta(rotationDelta, updatedDirection)) {
+    const float length = std::sqrt(glm::dot(rotatedDirection,
+                                            rotatedDirection));
+    if (!std::isfinite(length) || length <= 0.0f) {
         return false;
     }
 
-    direction = updatedDirection;
+    const glm::vec3 normalizedDirection = rotatedDirection / length;
+    if (!isFiniteVector(normalizedDirection)) {
+        return false;
+    }
+
+    worldDirection = normalizedDirection;
     return true;
 }

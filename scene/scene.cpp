@@ -8,8 +8,6 @@
 
 namespace {
 
-constexpr float minDirectionalDirectionLengthSquared = 1.0e-8f;
-
 bool isValidColorComponent(float component) {
     return std::isfinite(component) && component >= 0.0f &&
            component <= 1.0f;
@@ -21,19 +19,10 @@ bool isFiniteVector(const glm::vec3& vector) {
 }
 
 Result validateDirectionalLightState(const DirectionalLight& light) {
-    if (!isFiniteVector(light.direction)) {
-        return Result::failure("Directional light direction must be finite");
-    }
-
-    const float directionLengthSquared = glm::dot(
-        light.direction, light.direction);
-    if (!std::isfinite(directionLengthSquared)) {
+    glm::vec3 direction;
+    if (!light.calculateWorldDirection(direction)) {
         return Result::failure(
-            "Directional light direction must have finite length");
-    }
-    if (directionLengthSquared <= minDirectionalDirectionLengthSquared) {
-        return Result::failure(
-            "Directional light direction must have nonzero length");
+            "Directional light rotation does not produce a valid direction");
     }
 
     const DirectionalShadowSettings& shadow = light.shadow;
@@ -257,8 +246,6 @@ Result Scene::copyAuthoringStateTo(Scene& runtimeScene) const {
                        dynamic_cast<const DirectionalLight*>(&editorObject)) {
             auto& runtimeDirectionalLight =
                 static_cast<DirectionalLight&>(runtimeObject);
-            runtimeDirectionalLight.direction =
-                editorDirectionalLight->direction;
             runtimeDirectionalLight.color = editorDirectionalLight->color;
             runtimeDirectionalLight.intensity =
                 editorDirectionalLight->intensity;
