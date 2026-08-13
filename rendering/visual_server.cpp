@@ -237,6 +237,26 @@ bool VisualServer::sceneInteractionAreaHovered() const noexcept {
     return vulkanContext.sceneInteractionAreaHovered();
 }
 
+void VisualServer::setCurrentScenePath(const std::string& path) {
+    vulkanContext.setCurrentScenePath(path);
+}
+
+std::string VisualServer::requestedScenePath() const {
+    return vulkanContext.requestedScenePath();
+}
+
+void VisualServer::requestLoadConfirmation() {
+    vulkanContext.requestLoadConfirmation();
+}
+
+void VisualServer::requestQuitConfirmation() {
+    vulkanContext.requestQuitConfirmation();
+}
+
+void VisualServer::setPersistenceStatus(std::string status, bool error) {
+    vulkanContext.setPersistenceStatus(std::move(status), error);
+}
+
 bool VisualServer::shutdown() noexcept {
     if (!initialized && !currentScene) {
         return vulkanContext.cleanup();

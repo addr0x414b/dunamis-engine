@@ -4,6 +4,7 @@
 #include <exception>
 #include <stdexcept>
 #include <typeinfo>
+#include <unordered_set>
 #include <utility>
 
 namespace {
@@ -16,6 +17,16 @@ bool isValidColorComponent(float component) {
 bool isFiniteVector(const glm::vec3& vector) {
     return std::isfinite(vector.x) && std::isfinite(vector.y) &&
            std::isfinite(vector.z);
+}
+
+bool isValidCameraState(const Camera& camera) {
+    double yaw = 0.0;
+    double pitch = 0.0;
+    const glm::vec3 cross = glm::cross(camera.front, camera.up);
+    return isFiniteVector(camera.position) && isFiniteVector(camera.up) &&
+           camera.deriveYawPitchDegrees(yaw, pitch) &&
+           std::isfinite(glm::dot(cross, cross)) &&
+           glm::dot(cross, cross) > 1.0e-8f;
 }
 
 Result validateDirectionalLightState(const DirectionalLight& light) {
@@ -105,20 +116,57 @@ Result Scene::setActiveCamera(std::shared_ptr<Camera> camera) {
     return Result::success();
 }
 
+Result Scene::setActiveCameraReference(Camera* camera) {
+    if (!camera) return Result::failure("Cannot set a null camera as active");
+    activeCamera_ = std::shared_ptr<Camera>(camera, [](Camera*) {});
+    return Result::success();
+}
+
 Result Scene::validateForActivation() const {
     if (active_) {
         return Result::failure("Scene is already active");
     }
+    return validateAuthoredState();
+}
+
+Result Scene::validateAuthoredState() const {
     if (pointLightCount_ > scene_limits::maxPointLights) {
         return Result::failure(
             "Scene exceeds the maximum point-light count");
     }
 
+    std::unordered_set<std::string> persistentIds;
     for (std::size_t index = 0; index < gameObjects_.size(); ++index) {
         if (!gameObjects_[index]) {
             return Result::failure(
                 "Scene contains a null game object at index " +
                 std::to_string(index));
+        }
+        const std::string& id = gameObjects_[index]->persistentId;
+        if (!id.empty() && !persistentIds.insert(id).second) {
+            return Result::failure("Scene contains duplicate persistent ID '" +
+                                   id + "'");
+        }
+        const GameObject& object = *gameObjects_[index];
+        if (!isFiniteVector(object.position) ||
+            !isFiniteVector(object.rotation) ||
+            !isFiniteVector(object.scale)) {
+            if (dynamic_cast<const DirectionalLight*>(&object) != nullptr &&
+                !isFiniteVector(object.rotation)) {
+                return Result::failure(
+                    "Directional light rotation must be finite");
+            }
+            return Result::failure("GameObject transform must be finite");
+        }
+        if (const auto* camera = dynamic_cast<const Camera*>(&object)) {
+            if (!isValidCameraState(*camera)) {
+                return Result::failure("Camera state must contain a valid finite orientation");
+            }
+        }
+        if (const Camera* attached = object.attachedCamera()) {
+            if (!isValidCameraState(*attached)) {
+                return Result::failure("Attached camera state must contain a valid finite orientation");
+            }
         }
     }
 
@@ -167,6 +215,15 @@ Result Scene::validateForActivation() const {
                 gameObjects_[objectIndex].get()) == nullptr) {
             return Result::failure(
                 "Scene contains an invalid point-light registration");
+        }
+
+        const PointLight& pointLight = static_cast<const PointLight&>(
+            *gameObjects_[objectIndex]);
+        if (!isFiniteVector(pointLight.color) || pointLight.color.r < 0.0f ||
+            pointLight.color.g < 0.0f || pointLight.color.b < 0.0f ||
+            !std::isfinite(pointLight.intensity) || pointLight.intensity < 0.0f) {
+            return Result::failure(
+                "Point light color and intensity must be finite and nonnegative");
         }
 
         for (std::size_t previous = 0; previous < lightIndex; ++previous) {
@@ -301,6 +358,21 @@ const DirectionalLight* Scene::directionalLight() const noexcept {
 
 const Camera* Scene::activeCamera() const noexcept {
     return activeCamera_.get();
+}
+
+GameObject* Scene::findGameObject(const std::string& persistentId) noexcept {
+    for (const auto& object : gameObjects_) {
+        if (object && object->persistentId == persistentId) return object.get();
+    }
+    return nullptr;
+}
+
+const GameObject* Scene::findGameObject(
+    const std::string& persistentId) const noexcept {
+    for (const auto& object : gameObjects_) {
+        if (object && object->persistentId == persistentId) return object.get();
+    }
+    return nullptr;
 }
 
 bool Scene::isActive() const noexcept {

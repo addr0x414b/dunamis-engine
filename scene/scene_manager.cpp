@@ -1,8 +1,15 @@
 #include "scene_manager.h"
 
 #include <exception>
+#include <fstream>
+#include <filesystem>
+#include <system_error>
 #include <string>
 #include <utility>
+
+SceneManager::SceneManager() {
+    registryInitialization_ = registerEngineTypes(typeRegistry_);
+}
 
 Result SceneManager::constructInitializedScene(
     std::unique_ptr<Scene>& scene) const {
@@ -39,6 +46,10 @@ Result SceneManager::constructInitializedScene(
 }
 
 Result SceneManager::initializeEditingScene() {
+    if (!registryInitialization_) {
+        return Result::failure("Engine type registration failed: " +
+                               registryInitialization_.error());
+    }
     if (!inputManager_) {
         return Result::failure(
             "Cannot initialize Scene Manager with a null Input Manager");
@@ -50,6 +61,12 @@ Result SceneManager::initializeEditingScene() {
                                result.error());
     }
     activeScene_ = editingScene_.get();
+    nlohmann::json baseline;
+    result = SceneSerializer::serializeAuthored(*editingScene_, typeRegistry_, baseline);
+    if (result) {
+        authoredBaseline_ = std::move(baseline);
+        authoredBaselineAvailable_ = true;
+    }
     return Result::success();
 }
 
@@ -72,7 +89,13 @@ Result SceneManager::prepareRuntimeScene() {
                                result.error());
     }
 
-    result = editingScene_->copyAuthoringStateTo(*candidate);
+    result = SceneSerializer::copyAuthoredState(
+        *editingScene_, *candidate, typeRegistry_);
+    if (!result) {
+        // Preserve compatibility for intentionally non-persisted test/tool
+        // scenes whose objects have no registered authored metadata.
+        result = editingScene_->copyAuthoringStateTo(*candidate);
+    }
     if (!result) {
         return Result::failure(
             "Failed to transfer editor-authored state: " + result.error());
@@ -87,6 +110,153 @@ Result SceneManager::prepareRuntimeScene() {
     runtimeScene_ = std::move(candidate);
     return Result::success();
 }
+
+Result SceneManager::saveEditingScene(const Camera& editorCamera) {
+    if (!editingScene_) return Result::failure("Editing scene is unavailable");
+    if (currentScenePath_.empty()) return Result::failure("Current scene path is empty");
+    nlohmann::json document;
+    Result result = SceneSerializer::serializeFull(
+        *editingScene_, typeRegistry_, editorCamera, document);
+    if (!result) return Result::failure("Failed to serialize scene: " + result.error());
+
+    std::error_code error;
+    const std::filesystem::path parent = currentScenePath_.parent_path();
+    if (!parent.empty()) {
+        std::filesystem::create_directories(parent, error);
+        if (error) return Result::failure("Failed to create scene directory '" +
+                                          parent.string() + "': " + error.message());
+    }
+    const std::filesystem::path temporary = currentScenePath_.string() + ".tmp";
+    {
+        std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
+        if (!stream) return Result::failure("Failed to open temporary scene file '" +
+                                            temporary.string() + "'");
+        stream << document.dump(2) << '\n';
+        stream.flush();
+        if (!stream) return Result::failure("Failed to write temporary scene file '" +
+                                            temporary.string() + "'");
+    }
+    std::filesystem::rename(temporary, currentScenePath_, error);
+    if (error) {
+        const std::filesystem::path backup = currentScenePath_.string() + ".bak";
+        std::error_code backupError;
+        if (std::filesystem::exists(currentScenePath_)) {
+            std::filesystem::rename(currentScenePath_, backup, backupError);
+        }
+        if (backupError) return Result::failure("Failed to replace scene file '" +
+                                                currentScenePath_.string() + "': " + backupError.message());
+        error.clear();
+        std::filesystem::rename(temporary, currentScenePath_, error);
+        if (error) {
+            std::error_code ignored;
+            if (std::filesystem::exists(backup)) {
+                std::filesystem::rename(backup, currentScenePath_, ignored);
+            }
+            return Result::failure("Failed to replace scene file '" +
+                                   currentScenePath_.string() + "': " + error.message());
+        }
+        std::filesystem::remove(backup, backupError);
+    }
+    result = SceneSerializer::serializeAuthored(
+        *editingScene_, typeRegistry_, authoredBaseline_);
+    if (!result) return Result::failure("Scene was saved but baseline capture failed: " + result.error());
+    authoredBaselineAvailable_ = true;
+    persistenceWarnings_.clear();
+    return Result::success();
+}
+
+Result SceneManager::prepareEditingSceneLoad(const std::filesystem::path& path) {
+    if (!initialized()) return Result::failure("Scene Manager is not initialized");
+    if (isRuntimeSceneActive() || runtimeScene_) {
+        return Result::failure("Scene loading is unavailable during a runtime session");
+    }
+    if (path.empty()) return Result::failure("Scene path is empty");
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) return Result::failure("Failed to open scene file '" + path.string() + "'");
+    nlohmann::json document;
+    try { stream >> document; }
+    catch (const std::exception& exception) {
+        return Result::failure("Failed to parse scene file '" + path.string() + "': " + exception.what());
+    }
+    std::unique_ptr<Scene> candidate;
+    Result result = constructInitializedScene(candidate);
+    if (!result) return Result::failure("Failed to construct candidate scene: " + result.error());
+    SceneLoadData loadData;
+    result = SceneSerializer::applyDocument(document, *candidate, typeRegistry_, loadData);
+    if (!result) return Result::failure("Failed to load scene '" + path.string() + "': " + result.error());
+    preparedEditingScene_ = std::move(candidate);
+    preparedScenePath_ = path;
+    preparedLoadData_ = std::move(loadData);
+    return Result::success();
+}
+
+Scene* SceneManager::preparedEditingScene() noexcept {
+    return preparedEditingScene_.get();
+}
+
+const std::optional<EditorCameraState>&
+SceneManager::preparedEditorCamera() const noexcept {
+    return preparedLoadData_.editorCamera;
+}
+
+Result SceneManager::commitPreparedEditingSceneLoad() {
+    if (!preparedEditingScene_) return Result::failure("No prepared editing scene exists");
+    if (previousEditingScene_) return Result::failure("A previous editing scene is still retained");
+    previousEditingScene_ = std::move(editingScene_);
+    editingScene_ = std::move(preparedEditingScene_);
+    activeScene_ = editingScene_.get();
+    currentScenePath_ = std::move(preparedScenePath_);
+    authoredBaseline_ = std::move(preparedLoadData_.authoredBaseline);
+    authoredBaselineAvailable_ = true;
+    persistenceWarnings_ = std::move(preparedLoadData_.warnings);
+    preparedLoadData_ = {};
+    return Result::success();
+}
+
+void SceneManager::cancelPreparedEditingSceneLoad() noexcept {
+    preparedEditingScene_.reset();
+    preparedScenePath_.clear();
+    preparedLoadData_ = {};
+}
+
+Scene* SceneManager::previousEditingScene() noexcept {
+    return previousEditingScene_.get();
+}
+
+void SceneManager::finishEditingSceneLoad() noexcept {
+    previousEditingScene_.reset();
+}
+
+bool SceneManager::hasUnsavedChanges() const {
+    if (!editingScene_ || !authoredBaselineAvailable_) return false;
+    nlohmann::json current;
+    Result result = SceneSerializer::serializeAuthored(
+        *editingScene_, typeRegistry_, current);
+    return !result || current != authoredBaseline_;
+}
+
+Result SceneManager::captureCurrentAuthoredBaseline() {
+    if (!editingScene_) return Result::failure("Editing scene is unavailable");
+    Result result = SceneSerializer::serializeAuthored(
+        *editingScene_, typeRegistry_, authoredBaseline_);
+    if (result) authoredBaselineAvailable_ = true;
+    return result;
+}
+
+void SceneManager::setCurrentScenePath(std::filesystem::path path) {
+    currentScenePath_ = std::move(path);
+}
+
+const std::filesystem::path& SceneManager::currentScenePath() const noexcept {
+    return currentScenePath_;
+}
+
+const std::vector<std::string>& SceneManager::persistenceWarnings() const noexcept {
+    return persistenceWarnings_;
+}
+
+TypeRegistry& SceneManager::typeRegistry() noexcept { return typeRegistry_; }
+const TypeRegistry& SceneManager::typeRegistry() const noexcept { return typeRegistry_; }
 
 Result SceneManager::commitRuntimeScene() {
     if (!runtimeScene_) {
@@ -159,7 +329,15 @@ void SceneManager::shutdown() noexcept {
     activeScene_ = nullptr;
     runtimeScene_.reset();
     editingScene_.reset();
+    preparedEditingScene_.reset();
+    previousEditingScene_.reset();
     inputManager_.reset();
     sceneConstructor_ = {};
     sceneName_.clear();
+    authoredBaseline_ = {};
+    authoredBaselineAvailable_ = false;
+    currentScenePath_.clear();
+    preparedScenePath_.clear();
+    preparedLoadData_ = {};
+    persistenceWarnings_.clear();
 }

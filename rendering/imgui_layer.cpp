@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -563,6 +564,7 @@ Result ImGuiLayer::beginFrame(SceneRunState runState) {
     ImGui::NewFrame();
     ImGuizmo::BeginFrame();
     drawToolbar(runState);
+    drawPersistenceDialogs();
     const ImGuiID dockspaceId = ImGui::GetID(dunamisDockspaceName);
     const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
     buildDefaultDockLayout(dockspaceId, mainViewport->WorkSize);
@@ -599,8 +601,25 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
     }
 
     const ImGuiStyle& style = ImGui::GetStyle();
-    const float toolbarCursorX = ImGui::GetCursorPosX();
-    const float availableWidth = ImGui::GetContentRegionAvail().x;
+    const bool editing = runState == SceneRunState::Editing;
+    if (ImGui::BeginMenu("File")) {
+        ImGui::BeginDisabled(!editing);
+        if (ImGui::MenuItem("Save", "Ctrl+S") &&
+            pendingEditorCommand_ == EditorCommand::None) {
+            pendingEditorCommand_ = EditorCommand::SaveScene;
+        }
+        if (ImGui::MenuItem("Load...") && !openLoadPathPopup_) {
+            std::snprintf(loadPathBuffer_.data(), loadPathBuffer_.size(), "%s",
+                          currentScenePath_.c_str());
+            openLoadPathPopup_ = true;
+        }
+        ImGui::EndDisabled();
+        ImGui::EndMenu();
+    }
+    if (editing && ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S) &&
+        pendingEditorCommand_ == EditorCommand::None) {
+        pendingEditorCommand_ = EditorCommand::SaveScene;
+    }
     const float playButtonWidth =
         ImGui::CalcTextSize("Play").x + 2.0f * style.FramePadding.x;
     const float simulateButtonWidth =
@@ -610,12 +629,10 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
     const float buttonGroupWidth =
         playButtonWidth + simulateButtonWidth + stopButtonWidth +
         2.0f * style.ItemSpacing.x;
-    const float remainingWidth = availableWidth - buttonGroupWidth;
-    const float groupOffset =
-        remainingWidth > 0.0f ? remainingWidth * 0.5f : 0.0f;
-    ImGui::SetCursorPosX(toolbarCursorX + groupOffset);
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float centeredX = (viewport->Size.x - buttonGroupWidth) * 0.5f;
+    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), centeredX));
 
-    const bool editing = runState == SceneRunState::Editing;
     ImGui::BeginDisabled(!editing);
     if (ImGui::Button("Play", ImVec2(playButtonWidth, 0.0f)) &&
         pendingEditorCommand_ == EditorCommand::None) {
@@ -639,6 +656,105 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
     }
     ImGui::EndDisabled();
     ImGui::EndMainMenuBar();
+}
+
+void ImGuiLayer::drawPersistenceDialogs() {
+    if (openLoadPathPopup_) {
+        ImGui::OpenPopup("Load Scene");
+        openLoadPathPopup_ = false;
+    }
+    if (ImGui::BeginPopupModal("Load Scene", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Scene JSON path");
+        ImGui::SetNextItemWidth(560.0f);
+        ImGui::InputText("##ScenePath", loadPathBuffer_.data(),
+                         loadPathBuffer_.size());
+        if (ImGui::Button("Load") && loadPathBuffer_[0] != '\0') {
+            requestedScenePath_ = loadPathBuffer_.data();
+            if (pendingEditorCommand_ == EditorCommand::None) {
+                pendingEditorCommand_ = EditorCommand::LoadScene;
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
+    if (openLoadConfirmationPopup_) {
+        ImGui::OpenPopup("Unsaved Changes##Load");
+        openLoadConfirmationPopup_ = false;
+    }
+    if (ImGui::BeginPopupModal("Unsaved Changes##Load", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Unsaved changes detected.");
+        if (ImGui::Button("Save and Load")) {
+            pendingEditorCommand_ = EditorCommand::SaveAndLoad;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Don't Save and Load")) {
+            pendingEditorCommand_ = EditorCommand::DiscardAndLoad;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            pendingEditorCommand_ = EditorCommand::Cancel;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    if (openQuitConfirmationPopup_) {
+        ImGui::OpenPopup("Unsaved Changes##Quit");
+        openQuitConfirmationPopup_ = false;
+    }
+    if (ImGui::BeginPopupModal("Unsaved Changes##Quit", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Unsaved changes detected. Save before quitting?");
+        if (ImGui::Button("Save and Quit")) {
+            pendingEditorCommand_ = EditorCommand::SaveAndQuit;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Don't Save and Quit")) {
+            pendingEditorCommand_ = EditorCommand::DiscardAndQuit;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            pendingEditorCommand_ = EditorCommand::Cancel;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    if (!persistenceStatus_.empty()) {
+        const ImVec4 color = persistenceStatusIsError_
+            ? ImVec4(1.0f, 0.35f, 0.25f, 1.0f)
+            : ImVec4(0.45f, 1.0f, 0.45f, 1.0f);
+        ImGui::SetNextWindowBgAlpha(0.9f);
+        ImGui::Begin("Scene Persistence Status", nullptr,
+                     ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoDocking);
+        ImGui::TextColored(color, "%s", persistenceStatus_.c_str());
+        if (ImGui::Button("Dismiss")) persistenceStatus_.clear();
+        ImGui::End();
+    }
+}
+
+void ImGuiLayer::setCurrentScenePath(const std::string& path) {
+    currentScenePath_ = path;
+}
+
+std::string ImGuiLayer::requestedScenePath() const { return requestedScenePath_; }
+
+void ImGuiLayer::requestLoadConfirmation() { openLoadConfirmationPopup_ = true; }
+void ImGuiLayer::requestQuitConfirmation() { openQuitConfirmationPopup_ = true; }
+
+void ImGuiLayer::setPersistenceStatus(std::string status, bool error) {
+    persistenceStatus_ = std::move(status);
+    persistenceStatusIsError_ = error;
 }
 
 const GameObject* ImGuiLayer::selectedGameObjectForScene(

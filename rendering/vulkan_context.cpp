@@ -4409,6 +4409,26 @@ bool VulkanContext::sceneInteractionAreaHovered() const noexcept {
     return imguiLayer.sceneInteractionAreaHovered();
 }
 
+void VulkanContext::setCurrentScenePath(const std::string& path) {
+    imguiLayer.setCurrentScenePath(path);
+}
+
+std::string VulkanContext::requestedScenePath() const {
+    return imguiLayer.requestedScenePath();
+}
+
+void VulkanContext::requestLoadConfirmation() {
+    imguiLayer.requestLoadConfirmation();
+}
+
+void VulkanContext::requestQuitConfirmation() {
+    imguiLayer.requestQuitConfirmation();
+}
+
+void VulkanContext::setPersistenceStatus(std::string status, bool error) {
+    imguiLayer.setPersistenceStatus(std::move(status), error);
+}
+
 Result VulkanContext::drawFrame(Scene* scene, const Camera& renderCamera,
                                 SceneRunState runState) {
     if (!initialized) {

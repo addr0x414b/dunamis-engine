@@ -5,7 +5,9 @@
 #include "spdlog/spdlog.h"
 
 #include <exception>
+#include <filesystem>
 #include <string>
+#include <system_error>
 
 Result Dunamis::initialize() {
     if (initialized) {
@@ -44,6 +46,53 @@ Result Dunamis::initialize() {
                                    result.error());
         }
 
+        sceneManager_.setCurrentScenePath(
+            std::filesystem::path(DUNAMIS_SOURCE_DIR) /
+            "game/scenes/level_1/level_1.scene.json");
+        const std::filesystem::path startupScenePath =
+            sceneManager_.currentScenePath();
+        std::error_code sceneFileQueryError;
+        const bool sceneFileExists = std::filesystem::exists(
+            startupScenePath, sceneFileQueryError);
+        if (sceneFileQueryError) {
+            (void)shutdown();
+            return Result::failure(
+                "Failed to query startup scene file '" +
+                startupScenePath.string() + "': " +
+                sceneFileQueryError.message());
+        }
+        if (sceneFileExists) {
+            result = sceneManager_.prepareEditingSceneLoad(startupScenePath);
+            if (!result) {
+                (void)shutdown();
+                return Result::failure("Startup scene restore failed: " +
+                                       result.error());
+            }
+            const auto restoredCamera = sceneManager_.preparedEditorCamera();
+            result = sceneManager_.commitPreparedEditingSceneLoad();
+            if (!result) {
+                (void)shutdown();
+                return Result::failure("Startup scene commit failed: " +
+                                       result.error());
+            }
+            sceneManager_.finishEditingSceneLoad();
+            if (restoredCamera) {
+                result = editorCameraController.restore(*restoredCamera);
+                if (!result) {
+                    (void)shutdown();
+                    return Result::failure("Startup editor camera restore failed: " +
+                                           result.error());
+                }
+            }
+            for (const std::string& warning : sceneManager_.persistenceWarnings()) {
+                spdlog::warn("{}", warning);
+            }
+        } else {
+            spdlog::warn(
+                "Scene file '{}' was not found; using C++ scene defaults",
+                startupScenePath.string());
+        }
+
         result = visualServer.initialize(platform.window(),
                                          sceneManager_.editingScene());
         if (!result) {
@@ -52,6 +101,8 @@ Result Dunamis::initialize() {
                                    result.error());
         }
         runState = SceneRunState::Editing;
+        visualServer.setCurrentScenePath(
+            sceneManager_.currentScenePath().string());
         synchronizeImGuiInput();
 
         initialized = true;
@@ -83,10 +134,10 @@ Result Dunamis::run() {
 
                 if (e.type == SDL_EVENT_QUIT ||
                     e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
-                    running = false;
+                    requestQuit(running);
                 } else if (e.type == SDL_EVENT_KEY_DOWN) {
                     if (e.key.key == SDLK_ESCAPE) {
-                        running = false;
+                        requestQuit(running);
                     }
                 }
 
@@ -202,6 +253,50 @@ Result Dunamis::run() {
                 result = beginRuntimeSession(SceneRunState::Simulating);
             } else if (command == EditorCommand::Stop) {
                 result = stopRuntimeSession();
+            } else if (command == EditorCommand::SaveScene) {
+                result = sceneManager_.saveEditingScene(
+                    editorCameraController.camera());
+                reportPersistenceResult(result, "Scene saved");
+                result = Result::success();
+            } else if (command == EditorCommand::LoadScene) {
+                pendingLoadPath_ = visualServer.requestedScenePath();
+                if (sceneManager_.hasUnsavedChanges()) {
+                    visualServer.requestLoadConfirmation();
+                    result = Result::success();
+                } else {
+                    result = loadEditingScene(pendingLoadPath_);
+                    reportPersistenceResult(result, "Scene loaded");
+                    if (result) pendingLoadPath_.clear();
+                    result = Result::success();
+                }
+            } else if (command == EditorCommand::SaveAndLoad) {
+                result = sceneManager_.saveEditingScene(
+                    editorCameraController.camera());
+                if (result) result = loadEditingScene(pendingLoadPath_);
+                reportPersistenceResult(result, "Scene saved and loaded");
+                if (result) pendingLoadPath_.clear();
+                result = Result::success();
+            } else if (command == EditorCommand::DiscardAndLoad) {
+                result = loadEditingScene(pendingLoadPath_);
+                reportPersistenceResult(result, "Scene loaded");
+                if (result) pendingLoadPath_.clear();
+                result = Result::success();
+            } else if (command == EditorCommand::SaveAndQuit) {
+                result = sceneManager_.saveEditingScene(
+                    editorCameraController.camera());
+                if (result) running = false;
+                else {
+                    quitConfirmationPending_ = false;
+                    reportPersistenceResult(result, {});
+                }
+                result = Result::success();
+            } else if (command == EditorCommand::DiscardAndQuit) {
+                running = false;
+                result = Result::success();
+            } else if (command == EditorCommand::Cancel) {
+                pendingLoadPath_.clear();
+                quitConfirmationPending_ = false;
+                result = Result::success();
             }
             if (!result) {
                 return Result::failure(
@@ -219,6 +314,86 @@ Result Dunamis::run() {
 
     spdlog::info("Shutting down Dunamis Engine...");
     return Result::success();
+}
+
+Result Dunamis::loadEditingScene(const std::filesystem::path& path) {
+    if (runState != SceneRunState::Editing) {
+        return Result::failure("Scene loading is available only while Editing");
+    }
+    Result result = sceneManager_.prepareEditingSceneLoad(path);
+    if (!result) return result;
+    Scene* candidate = sceneManager_.preparedEditingScene();
+    const auto restoredCamera = sceneManager_.preparedEditorCamera();
+    Scene* oldScene = sceneManager_.editingScene();
+
+    result = visualServer.loadSceneResources(candidate);
+    if (!result) {
+        sceneManager_.cancelPreparedEditingSceneLoad();
+        return Result::failure("Failed to prepare loaded scene rendering: " + result.error());
+    }
+    result = visualServer.switchScene(candidate);
+    if (!result) {
+        (void)visualServer.unloadSceneResources(candidate);
+        sceneManager_.cancelPreparedEditingSceneLoad();
+        return Result::failure("Failed to switch to loaded scene: " + result.error());
+    }
+    result = visualServer.unloadSceneResources(oldScene);
+    if (!result) {
+        (void)visualServer.switchScene(oldScene);
+        (void)visualServer.unloadSceneResources(candidate);
+        sceneManager_.cancelPreparedEditingSceneLoad();
+        return Result::failure(
+            "Failed to retire old scene rendering; load was rolled back: " +
+            result.error());
+    }
+    result = sceneManager_.commitPreparedEditingSceneLoad();
+    if (!result) {
+        (void)visualServer.loadSceneResources(oldScene);
+        (void)visualServer.switchScene(oldScene);
+        (void)visualServer.unloadSceneResources(candidate);
+        sceneManager_.cancelPreparedEditingSceneLoad();
+        return result;
+    }
+    if (restoredCamera) {
+        result = editorCameraController.restore(*restoredCamera);
+        if (!result) return Result::failure("Loaded scene committed but editor camera restore failed: " + result.error());
+    }
+    sceneManager_.finishEditingSceneLoad();
+    visualServer.setCurrentScenePath(sceneManager_.currentScenePath().string());
+    for (const std::string& warning : sceneManager_.persistenceWarnings()) {
+        spdlog::warn("{}", warning);
+    }
+    return Result::success();
+}
+
+void Dunamis::requestQuit(bool& running) {
+    if (quitConfirmationPending_) return;
+    if (!sceneManager_.hasUnsavedChanges()) {
+        running = false;
+        return;
+    }
+    quitConfirmationPending_ = true;
+    if (usesGameplayCamera(runState) && inputManager &&
+        inputManager->inputMode() == InputMode::GameplayCaptured) {
+        const Result release = inputManager->toggleGameplayMouseRelease();
+        if (!release) {
+            spdlog::error("Failed to release gameplay input for quit prompt: {}",
+                          release.error());
+        }
+        synchronizeImGuiInput();
+    }
+    visualServer.requestQuitConfirmation();
+}
+
+void Dunamis::reportPersistenceResult(const Result& result,
+                                      const std::string& successMessage) {
+    if (!result) {
+        spdlog::error("Scene persistence failed: {}", result.error());
+        visualServer.setPersistenceStatus(result.error(), true);
+    } else if (!successMessage.empty()) {
+        spdlog::info("{}", successMessage);
+        visualServer.setPersistenceStatus(successMessage, false);
+    }
 }
 
 Result Dunamis::beginRuntimeSession(SceneRunState targetState) {
@@ -429,6 +604,8 @@ bool Dunamis::shutdown() noexcept {
     platform.shutdown();
     runState = SceneRunState::Editing;
     initialized = false;
+    pendingLoadPath_.clear();
+    quitConfirmationPending_ = false;
     return true;
 }
 

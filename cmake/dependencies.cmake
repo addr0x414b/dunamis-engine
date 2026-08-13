@@ -26,7 +26,14 @@ FetchContent_Declare(
     GIT_TAG 1.0.1
 )
 
-FetchContent_MakeAvailable(spdlog glm assimp)
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+)
+set(JSON_BuildTests OFF CACHE BOOL "Do not build nlohmann/json tests" FORCE)
+
+FetchContent_MakeAvailable(spdlog glm assimp nlohmann_json)
 
 find_package(SDL3 REQUIRED CONFIG)
 find_package(Vulkan REQUIRED)

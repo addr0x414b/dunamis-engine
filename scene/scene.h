@@ -30,7 +30,9 @@ public:
     [[nodiscard]] Result addGameObject(
         std::unique_ptr<GameObject> gameObject);
     [[nodiscard]] Result setActiveCamera(std::shared_ptr<Camera> camera);
+    [[nodiscard]] Result setActiveCameraReference(Camera* camera);
     [[nodiscard]] Result validateForActivation() const;
+    [[nodiscard]] Result validateAuthoredState() const;
     // A future engine property/serialization system will allow arbitrary
     // custom game properties exposed in the editor to transfer to the
     // runtime scene. Runtime reset remains automatic because the disposable
@@ -44,6 +46,9 @@ public:
     [[nodiscard]] const DirectionalLight*
     directionalLight() const noexcept;
     [[nodiscard]] const Camera* activeCamera() const noexcept;
+    [[nodiscard]] GameObject* findGameObject(const std::string& persistentId) noexcept;
+    [[nodiscard]] const GameObject* findGameObject(
+        const std::string& persistentId) const noexcept;
     [[nodiscard]] bool isActive() const noexcept;
     [[nodiscard]] Result setBackgroundColor(const glm::vec4& color);
     [[nodiscard]] Result setAmbientLight(const glm::vec3& color,

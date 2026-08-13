@@ -2,6 +2,8 @@
 
 #include <stdexcept>
 
+#include "../scene/type_registry.h"
+
 namespace {
 
 void requireSuccess(Result result, const std::string& context) {
@@ -11,6 +13,16 @@ void requireSuccess(Result result, const std::string& context) {
 }
 
 }  // namespace
+
+Result Level1::registerTypes(TypeRegistry& registry) {
+    Result result = registry.registerType<Player>(
+        "Player", "GameObject", [] {
+            auto player = std::make_unique<Player>();
+            player->init();
+            return player;
+        });
+    return result;
+}
 
 void Level1::init() {
 
@@ -42,6 +54,7 @@ void Level1::init() {
     (void)addGameObject(std::move(test2));*/
 
     auto test3 = std::make_unique<GameObject>();
+    test3->persistentId = "sponza";
     test3->name = "Sponza";
     test3->scale = glm::vec3(1.0f, 1.0f, 1.0f);
     test3->modelPath = "game/assets/models/glTF-Sample-Assets/Models/Sponza/glTF/Sponza.gltf";
@@ -62,10 +75,12 @@ void Level1::init() {
     (void)test4->loadModel();
     (void)addGameObject(std::move(test4));*/
     auto test6 = std::make_unique<Camera>();
+    test6->persistentId = "game_camera";
     test6->name = "Camera";
     requireSuccess(addGameObject(std::move(test6)), "Fail");
 
     auto test4 = std::make_unique<DirectionalLight>();
+    test4->persistentId = "directional_light";
     test4->name = "Direc Light";
     test4->scale = glm::vec3(200.0f, 200.0f, 200.0f);
     test4->position = glm::vec3(50.0f, 20.0f, 100.0f);
@@ -75,6 +90,7 @@ void Level1::init() {
     requireSuccess(addGameObject(std::move(test4)), "Failed to add Directional Light");
 
     auto test5 = std::make_unique<PointLight>();
+    test5->persistentId = "point_light";
     test5->name = "Point Light";
     test5->scale = glm::vec3(500.0f, 500.0f, 500.0f);
     test5->position = glm::vec3(250.0f, 20.0f, 100.0f);
@@ -118,6 +134,7 @@ void Level1::init() {
     (void)addGameObject(std::move(light2));*/
 
     auto player = std::make_unique<Player>();
+    player->persistentId = "player";
     Player* playerObserver = player.get();
     playerObserver->init();
     requireSuccess(addGameObject(std::move(player)),

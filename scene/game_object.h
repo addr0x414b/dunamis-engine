@@ -23,6 +23,9 @@ public:
     glm::vec3 position = glm::vec3(0.0f);
     glm::vec3 rotation = glm::vec3(0.0f);
     glm::vec3 scale = glm::vec3(1.0f);
+    // Stable authored identity. It is intentionally not exposed by the
+    // inspector; display-name changes must not change persistence identity.
+    std::string persistentId;
 
     virtual void start() {}
     virtual void update() {}
@@ -43,6 +46,10 @@ public:
     // Call after setting modelPath (and texturePath if needed)
     // Loads the model and sets up the mesh and materials
     [[nodiscard]] Result loadModel();
+    [[nodiscard]] std::string authoredModelPath() const;
+    [[nodiscard]] Result setAuthoredModelPath(std::string path);
+    [[nodiscard]] std::string authoredTexturePath() const;
+    [[nodiscard]] Result setAuthoredTexturePath(std::string path);
 
 private:
     friend class Scene;
@@ -63,6 +70,7 @@ private:
     std::vector<MeshInstance> meshInstances_;
     std::deque<std::string> texturePathStorage_;
     std::string modelPathStorage_;
+    std::string authoredTexturePathStorage_;
     std::shared_ptr<const model_loading::CachedCpuModel> loadedModelAsset_;
 };
 

@@ -49,6 +49,11 @@ public:
     void clearSelection() noexcept;
     [[nodiscard]] EditorCommand consumeEditorCommand() noexcept;
     [[nodiscard]] bool sceneInteractionAreaHovered() const noexcept;
+    void setCurrentScenePath(const std::string& path);
+    [[nodiscard]] std::string requestedScenePath() const;
+    void requestLoadConfirmation();
+    void requestQuitConfirmation();
+    void setPersistenceStatus(std::string status, bool error);
 
     [[nodiscard]] Result onSwapchainRecreated(
         VkRenderPass renderPass, VkSampleCountFlagBits msaaSamples,
@@ -70,6 +75,7 @@ private:
     void synchronizeSelection(Scene* scene) noexcept;
     void selectGameObject(Scene* scene, GameObject* object) noexcept;
     void drawToolbar(SceneRunState runState);
+    void drawPersistenceDialogs();
     void drawSceneHierarchy(Scene* scene, bool disabled);
     void drawInspector(Scene* scene, bool disabled);
     void updateSceneInteractionAreaHovered() noexcept;
@@ -150,6 +156,14 @@ private:
     bool sceneInteractionAreaHovered_ = false;
     SceneInteractionRect sceneInteractionRect_;
     std::vector<EditorHelperGeometry> editorHelperGeometry_;
+    std::array<char, 1024> loadPathBuffer_{};
+    std::string currentScenePath_;
+    std::string requestedScenePath_;
+    std::string persistenceStatus_;
+    bool persistenceStatusIsError_ = false;
+    bool openLoadPathPopup_ = false;
+    bool openLoadConfirmationPopup_ = false;
+    bool openQuitConfirmationPopup_ = false;
 };
 
 #endif

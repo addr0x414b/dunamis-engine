@@ -12,6 +12,13 @@ enum class EditorCommand {
     Play,
     Simulate,
     Stop,
+    SaveScene,
+    LoadScene,
+    SaveAndLoad,
+    DiscardAndLoad,
+    SaveAndQuit,
+    DiscardAndQuit,
+    Cancel,
 };
 
 [[nodiscard]] constexpr bool editorToolsEnabled(

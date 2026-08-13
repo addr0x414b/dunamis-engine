@@ -6,6 +6,8 @@
 #include "editor_camera_controller.h"
 #include "editor_state.h"
 
+#include <filesystem>
+
 #include "../input/input_manager.h"
 #include "../rendering/visual_server.h"
 #include "../scene/scene_manager.h"
@@ -29,6 +31,11 @@ private:
     [[nodiscard]] Result stopRuntimeSession();
     [[nodiscard]] const Camera& renderCamera() const noexcept;
     void synchronizeImGuiInput() noexcept;
+    [[nodiscard]] Result loadEditingScene(
+        const std::filesystem::path& path);
+    void requestQuit(bool& running);
+    void reportPersistenceResult(const Result& result,
+                                 const std::string& successMessage);
 
     EditorCameraController editorCameraController;
     Platform platform;
@@ -38,6 +45,8 @@ private:
     bool initializationAttempted = false;
     bool initialized = false;
     SceneRunState runState = SceneRunState::Editing;
+    std::filesystem::path pendingLoadPath_;
+    bool quitConfirmationPending_ = false;
 };
 
 #endif

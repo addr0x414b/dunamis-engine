@@ -6,8 +6,11 @@
 #include "player.h"
 #include "../scene/scene.h"
 
+class TypeRegistry;
+
 class Level1 : public Scene {
 public:
+    [[nodiscard]] static Result registerTypes(TypeRegistry& registry);
     void init() override;
     void start() override;
     void update() override;

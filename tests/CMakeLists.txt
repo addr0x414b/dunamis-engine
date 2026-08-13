@@ -97,6 +97,12 @@ add_executable(EditorStateTests editor_state_tests.cpp)
 target_include_directories(EditorStateTests PRIVATE ${CMAKE_SOURCE_DIR})
 add_test(NAME editor_state_semantics COMMAND EditorStateTests)
 
+add_executable(ScenePersistenceTests scene_persistence_tests.cpp)
+target_include_directories(ScenePersistenceTests PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(ScenePersistenceTests PRIVATE
+        Scene GameObject Camera InputManager glm spdlog nlohmann_json::nlohmann_json)
+add_test(NAME scene_persistence COMMAND ScenePersistenceTests)
+
 add_executable(EditorPickingTests editor_picking_tests.cpp)
 target_include_directories(EditorPickingTests PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_definitions(EditorPickingTests PRIVATE

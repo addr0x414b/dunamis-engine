@@ -1103,6 +1103,50 @@ void logLoadSummary(const LoadModelProfile& profile,
 
 GameObject::~GameObject() = default;
 
+std::string GameObject::authoredModelPath() const {
+    return modelPath ? std::string(modelPath) : std::string{};
+}
+
+Result GameObject::setAuthoredModelPath(std::string path) {
+    if (path == authoredModelPath()) {
+        return Result::success();
+    }
+    if (!renderTopologyMutable()) {
+        return Result::failure(
+            "Cannot change a model path while render resources are attached");
+    }
+
+    meshInstances_.clear();
+    texturePathStorage_.clear();
+    loadedModelAsset_.reset();
+    modelPathStorage_ = std::move(path);
+    modelPath = modelPathStorage_.empty() ? nullptr : modelPathStorage_.c_str();
+    if (!modelPath) {
+        return Result::success();
+    }
+    return loadModel();
+}
+
+std::string GameObject::authoredTexturePath() const {
+    return texturePath ? std::string(texturePath) : std::string{};
+}
+
+Result GameObject::setAuthoredTexturePath(std::string path) {
+    if (path == authoredTexturePath()) return Result::success();
+    if (!renderTopologyMutable()) {
+        return Result::failure(
+            "Cannot change a texture path while render resources are attached");
+    }
+    meshInstances_.clear();
+    texturePathStorage_.clear();
+    loadedModelAsset_.reset();
+    authoredTexturePathStorage_ = std::move(path);
+    texturePath = authoredTexturePathStorage_.empty()
+                      ? nullptr
+                      : authoredTexturePathStorage_.c_str();
+    return modelPath ? loadModel() : Result::success();
+}
+
 Result GameObject::loadModel() {
     LoadModelProfile profile;
     if (!renderTopologyMutable()) {
@@ -1118,10 +1162,15 @@ Result GameObject::loadModel() {
         spdlog::error("Model path is null. Cannot load model.");
         return Result::failure("Model path is null");
     }
-    spdlog::info("Loading game object model from path {}...", modelPath);
+    const std::string requestedModelPath(modelPath);
+    const std::string requestedTexturePath =
+        texturePath ? std::string(texturePath) : std::string{};
+    spdlog::info("Loading game object model from path {}...", requestedModelPath);
 
     const ModelAssetCacheKey cacheKey =
-        model_loading::makeModelAssetCacheKey(modelPath, texturePath);
+        model_loading::makeModelAssetCacheKey(
+            requestedModelPath.c_str(),
+            requestedTexturePath.empty() ? nullptr : requestedTexturePath.c_str());
     const auto lookupStart = LoadModelProfile::Clock::now();
     const CacheLookupResult lookup = findCachedCpuModel(cacheKey);
     profile.cacheLookupTime = LoadModelProfile::Clock::now() - lookupStart;
@@ -1141,12 +1190,20 @@ Result GameObject::loadModel() {
         const auto finalCommitStart = LoadModelProfile::Clock::now();
         const std::size_t originalTexturePathCount = texturePathStorage_.size();
         std::string originalModelPath = modelPathStorage_;
+        const char* originalModelPathPointer = modelPath;
+        std::string originalAuthoredTexturePath = authoredTexturePathStorage_;
+        const char* originalTexturePathPointer = texturePath;
         try {
             for (std::string& path : pendingTexturePaths) {
                 texturePathStorage_.push_back(std::move(path));
             }
-            modelPathStorage_ = modelPath;
+            modelPathStorage_ = requestedModelPath;
+            authoredTexturePathStorage_ = requestedTexturePath;
             const char* stableModelPath = modelPathStorage_.c_str();
+            modelPath = stableModelPath;
+            texturePath = authoredTexturePathStorage_.empty()
+                              ? nullptr
+                              : authoredTexturePathStorage_.c_str();
             for (std::size_t i = 0; i < pendingMeshes.size(); ++i) {
                 pendingMeshes[i].material.texturePath =
                     texturePathStorage_[originalTexturePathCount + i].c_str();
@@ -1157,14 +1214,28 @@ Result GameObject::loadModel() {
         } catch (const std::exception& exception) {
             texturePathStorage_.resize(originalTexturePathCount);
             modelPathStorage_.swap(originalModelPath);
+            authoredTexturePathStorage_.swap(originalAuthoredTexturePath);
+            modelPath = modelPathStorage_.empty()
+                            ? originalModelPathPointer
+                            : modelPathStorage_.c_str();
+            texturePath = authoredTexturePathStorage_.empty()
+                              ? originalTexturePathPointer
+                              : authoredTexturePathStorage_.c_str();
             return Result::failure("Failed to commit meshes from model " +
-                                   std::string(modelPath) + ": " +
+                                   requestedModelPath + ": " +
                                    exception.what());
         } catch (...) {
             texturePathStorage_.resize(originalTexturePathCount);
             modelPathStorage_.swap(originalModelPath);
+            authoredTexturePathStorage_.swap(originalAuthoredTexturePath);
+            modelPath = modelPathStorage_.empty()
+                            ? originalModelPathPointer
+                            : modelPathStorage_.c_str();
+            texturePath = authoredTexturePathStorage_.empty()
+                              ? originalTexturePathPointer
+                              : authoredTexturePathStorage_.c_str();
             return Result::failure("Failed to commit meshes from model " +
-                                   std::string(modelPath) +
+                                   requestedModelPath +
                                    ": unknown error");
         }
         profile.finalCommitTime =
