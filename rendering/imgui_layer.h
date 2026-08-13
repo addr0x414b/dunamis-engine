@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -20,10 +21,11 @@ class GameObject;
 class Camera;
 class PointLight;
 class DirectionalLight;
+struct NativeFileDialogState;
 
 class ImGuiLayer final {
 public:
-    ImGuiLayer() = default;
+    ImGuiLayer();
     ~ImGuiLayer() noexcept;
 
     ImGuiLayer(const ImGuiLayer&) = delete;
@@ -51,9 +53,10 @@ public:
     [[nodiscard]] bool sceneInteractionAreaHovered() const noexcept;
     void setCurrentScenePath(const std::string& path);
     [[nodiscard]] std::string requestedScenePath() const;
+    [[nodiscard]] std::string requestedSaveAsPath() const;
     void requestLoadConfirmation();
+    void requestSaveAsOverwriteConfirmation(const std::string& path);
     void requestQuitConfirmation();
-    void setPersistenceStatus(std::string status, bool error);
 
     [[nodiscard]] Result onSwapchainRecreated(
         VkRenderPass renderPass, VkSampleCountFlagBits msaaSamples,
@@ -76,6 +79,10 @@ private:
     void selectGameObject(Scene* scene, GameObject* object) noexcept;
     void drawToolbar(SceneRunState runState);
     void drawPersistenceDialogs();
+    [[nodiscard]] bool requestNativeFileDialog(bool saveAs);
+    void consumeNativeFileDialogResult();
+    [[nodiscard]] bool nativeFileDialogBusy() const;
+    void stopNativeFileDialog() noexcept;
     void drawSceneHierarchy(Scene* scene, bool disabled);
     void drawInspector(Scene* scene, bool disabled);
     void updateSceneInteractionAreaHovered() noexcept;
@@ -140,6 +147,7 @@ private:
     VkSampleCountFlagBits msaaSamples_ = VK_SAMPLE_COUNT_1_BIT;
     std::uint32_t minimumImageCount_ = 0;
     std::uint32_t imageCount_ = 0;
+    SDL_Window* window_ = nullptr;
 
     bool contextCreated_ = false;
     bool sdlBackendInitialized_ = false;
@@ -153,15 +161,15 @@ private:
     GameObject* selectedGameObject_ = nullptr;
     std::string inspectorError_;
     EditorCommand pendingEditorCommand_ = EditorCommand::None;
+    std::shared_ptr<NativeFileDialogState> nativeFileDialogState_;
     bool sceneInteractionAreaHovered_ = false;
     SceneInteractionRect sceneInteractionRect_;
     std::vector<EditorHelperGeometry> editorHelperGeometry_;
-    std::array<char, 1024> loadPathBuffer_{};
     std::string currentScenePath_;
     std::string requestedScenePath_;
-    std::string persistenceStatus_;
-    bool persistenceStatusIsError_ = false;
-    bool openLoadPathPopup_ = false;
+    std::string requestedSaveAsPath_;
+    std::string saveAsOverwritePath_;
+    bool openSaveAsOverwritePopup_ = false;
     bool openLoadConfirmationPopup_ = false;
     bool openQuitConfirmationPopup_ = false;
 };

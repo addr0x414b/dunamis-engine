@@ -6,13 +6,20 @@
 #include <imgui_impl_vulkan.h>
 #include <ImGuizmo.h>
 #include <spdlog/spdlog.h>
+#include <SDL3/SDL_dialog.h>
 
 #include <array>
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <limits>
-#include <cstdio>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <iterator>
 #include <string>
+#include <system_error>
+#include <utility>
 #include <vector>
 
 #include <glm/gtc/type_ptr.hpp>
@@ -23,7 +30,91 @@
 #include "../scene/point_light.h"
 #include "../scene/scene.h"
 
+struct NativeFileDialogState {
+    enum class Kind {
+        Load,
+        SaveAs,
+    };
+
+    struct Result {
+        Kind kind = Kind::Load;
+        bool cancelled = false;
+        std::string path;
+        std::string error;
+    };
+
+    std::mutex mutex;
+    bool outstanding = false;
+    bool shuttingDown = false;
+    std::string defaultLocation;
+    std::optional<Result> pendingResult;
+};
+
 namespace {
+
+constexpr SDL_DialogFileFilter sceneFileFilters[] = {
+    {"Dunamis Scene", "scene.json"},
+    {"All Files", "*"},
+};
+
+struct NativeFileDialogCallbackContext {
+    std::shared_ptr<NativeFileDialogState> state;
+    NativeFileDialogState::Kind kind = NativeFileDialogState::Kind::Load;
+};
+
+void SDLCALL nativeFileDialogCallback(
+    void* userdata, const char* const* filelist, int /*filter*/) noexcept {
+    auto* context = static_cast<NativeFileDialogCallbackContext*>(userdata);
+    if (!context) {
+        return;
+    }
+
+    std::shared_ptr<NativeFileDialogState> state = std::move(context->state);
+    const NativeFileDialogState::Kind kind = context->kind;
+    delete context;
+    if (!state) {
+        return;
+    }
+
+    NativeFileDialogState::Result result;
+    result.kind = kind;
+    try {
+        if (filelist == nullptr) {
+            const char* error = SDL_GetError();
+            if (error && error[0] != '\0') {
+                result.error = error;
+            } else {
+                result.error = "SDL file dialog failed";
+            }
+        } else if (filelist[0] == nullptr) {
+            result.cancelled = true;
+        } else {
+            result.path = filelist[0];
+        }
+    } catch (...) {
+        result.cancelled = false;
+        result.path.clear();
+        result.error.clear();
+        try {
+            result.error = "Failed to capture SDL file dialog result";
+        } catch (...) {
+            // Keep the callback exception-safe even if result capture cannot
+            // allocate memory.
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(state->mutex);
+    state->outstanding = false;
+    if (state->shuttingDown) {
+        state->pendingResult.reset();
+        return;
+    }
+    try {
+        state->pendingResult = std::move(result);
+    } catch (...) {
+        state->pendingResult.reset();
+    }
+}
 
 constexpr const char* dunamisDockspaceName =
     "DunamisEditorDockspace_v1";
@@ -412,6 +503,9 @@ Result invalidInitializationValue(const char* value) {
 
 }  // namespace
 
+ImGuiLayer::ImGuiLayer()
+    : nativeFileDialogState_(std::make_shared<NativeFileDialogState>()) {}
+
 ImGuiLayer::~ImGuiLayer() noexcept {
     shutdown();
 }
@@ -447,6 +541,8 @@ Result ImGuiLayer::initialize(
             "image count no smaller than the minimum");
     }
 
+    nativeFileDialogState_ = std::make_shared<NativeFileDialogState>();
+    window_ = window;
     instance_ = instance;
     physicalDevice_ = physicalDevice;
     device_ = device;
@@ -563,6 +659,7 @@ Result ImGuiLayer::beginFrame(SceneRunState runState) {
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
     ImGuizmo::BeginFrame();
+    consumeNativeFileDialogResult();
     drawToolbar(runState);
     drawPersistenceDialogs();
     const ImGuiID dockspaceId = ImGui::GetID(dunamisDockspaceName);
@@ -608,15 +705,24 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
             pendingEditorCommand_ == EditorCommand::None) {
             pendingEditorCommand_ = EditorCommand::SaveScene;
         }
-        if (ImGui::MenuItem("Load...") && !openLoadPathPopup_) {
-            std::snprintf(loadPathBuffer_.data(), loadPathBuffer_.size(), "%s",
-                          currentScenePath_.c_str());
-            openLoadPathPopup_ = true;
+        ImGui::BeginDisabled(nativeFileDialogBusy() ||
+                             pendingEditorCommand_ != EditorCommand::None);
+        if (ImGui::MenuItem("Save As...")) {
+            (void)requestNativeFileDialog(true);
         }
+        if (ImGui::MenuItem("Load...")) {
+            (void)requestNativeFileDialog(false);
+        }
+        ImGui::EndDisabled();
         ImGui::EndDisabled();
         ImGui::EndMenu();
     }
-    if (editing && ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S) &&
+    const bool editorShortcutAvailable =
+        editing && !ImGui::GetIO().WantTextInput &&
+        !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
+    if (editorShortcutAvailable &&
+        ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S,
+                        ImGuiInputFlags_RouteGlobal) &&
         pendingEditorCommand_ == EditorCommand::None) {
         pendingEditorCommand_ = EditorCommand::SaveScene;
     }
@@ -659,25 +765,25 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
 }
 
 void ImGuiLayer::drawPersistenceDialogs() {
-    if (openLoadPathPopup_) {
-        ImGui::OpenPopup("Load Scene");
-        openLoadPathPopup_ = false;
+    if (openSaveAsOverwritePopup_) {
+        ImGui::OpenPopup("Overwrite Scene##SaveAs");
+        openSaveAsOverwritePopup_ = false;
     }
-    if (ImGui::BeginPopupModal("Load Scene", nullptr,
+    if (ImGui::BeginPopupModal("Overwrite Scene##SaveAs", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted("Scene JSON path");
-        ImGui::SetNextItemWidth(560.0f);
-        ImGui::InputText("##ScenePath", loadPathBuffer_.data(),
-                         loadPathBuffer_.size());
-        if (ImGui::Button("Load") && loadPathBuffer_[0] != '\0') {
-            requestedScenePath_ = loadPathBuffer_.data();
-            if (pendingEditorCommand_ == EditorCommand::None) {
-                pendingEditorCommand_ = EditorCommand::LoadScene;
-                ImGui::CloseCurrentPopup();
-            }
+        ImGui::TextUnformatted("File already exists. Overwrite it?");
+        ImGui::Text("%s", saveAsOverwritePath_.c_str());
+        if (ImGui::Button("Overwrite") &&
+            pendingEditorCommand_ == EditorCommand::None) {
+            pendingEditorCommand_ = EditorCommand::ConfirmSaveSceneAsOverwrite;
+            ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+        if (ImGui::Button("Cancel") &&
+            pendingEditorCommand_ == EditorCommand::None) {
+            pendingEditorCommand_ = EditorCommand::CancelSaveSceneAs;
+            ImGui::CloseCurrentPopup();
+        }
         ImGui::EndPopup();
     }
 
@@ -729,33 +835,164 @@ void ImGuiLayer::drawPersistenceDialogs() {
         ImGui::EndPopup();
     }
 
-    if (!persistenceStatus_.empty()) {
-        const ImVec4 color = persistenceStatusIsError_
-            ? ImVec4(1.0f, 0.35f, 0.25f, 1.0f)
-            : ImVec4(0.45f, 1.0f, 0.45f, 1.0f);
-        ImGui::SetNextWindowBgAlpha(0.9f);
-        ImGui::Begin("Scene Persistence Status", nullptr,
-                     ImGuiWindowFlags_AlwaysAutoResize |
-                     ImGuiWindowFlags_NoDocking);
-        ImGui::TextColored(color, "%s", persistenceStatus_.c_str());
-        if (ImGui::Button("Dismiss")) persistenceStatus_.clear();
-        ImGui::End();
-    }
 }
 
 void ImGuiLayer::setCurrentScenePath(const std::string& path) {
     currentScenePath_ = path;
 }
 
+bool ImGuiLayer::requestNativeFileDialog(bool saveAs) {
+    if (!window_ || !nativeFileDialogState_) {
+        return false;
+    }
+
+    const auto kind = saveAs ? NativeFileDialogState::Kind::SaveAs
+                             : NativeFileDialogState::Kind::Load;
+    const std::shared_ptr<NativeFileDialogState> state =
+        nativeFileDialogState_;
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        if (state->shuttingDown || state->outstanding ||
+            state->pendingResult.has_value()) {
+            return false;
+        }
+    }
+
+    auto* callbackContext =
+        new NativeFileDialogCallbackContext{state, kind};
+    const char* defaultLocation = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        if (state->shuttingDown || state->outstanding ||
+            state->pendingResult.has_value()) {
+            delete callbackContext;
+            return false;
+        }
+        state->defaultLocation.clear();
+        if (saveAs) {
+            state->defaultLocation = currentScenePath_;
+        } else {
+            const std::filesystem::path gameDirectory =
+                std::filesystem::path(DUNAMIS_SOURCE_DIR) / "game";
+            std::error_code directoryQueryError;
+            const bool directoryExists = std::filesystem::exists(
+                gameDirectory, directoryQueryError);
+            if (directoryQueryError) {
+                spdlog::warn(
+                    "Failed to query Load dialog default directory '{}': "
+                    "{}; using SDL's default location",
+                    gameDirectory.string(), directoryQueryError.message());
+            } else if (!directoryExists) {
+                spdlog::warn(
+                    "Load dialog default directory '{}' does not exist; "
+                    "using SDL's default location",
+                    gameDirectory.string());
+            } else if (!std::filesystem::is_directory(
+                           gameDirectory, directoryQueryError)) {
+                if (directoryQueryError) {
+                    spdlog::warn(
+                        "Failed to query Load dialog default directory '{}': "
+                        "{}; using SDL's default location",
+                        gameDirectory.string(),
+                        directoryQueryError.message());
+                } else {
+                    spdlog::warn(
+                        "Load dialog default path '{}' is not a directory; "
+                        "using SDL's default location",
+                        gameDirectory.string());
+                }
+            } else {
+                state->defaultLocation = gameDirectory.string();
+            }
+        }
+        state->outstanding = true;
+        if (!state->defaultLocation.empty()) {
+            defaultLocation = state->defaultLocation.c_str();
+        }
+    }
+
+    if (saveAs) {
+        SDL_ShowSaveFileDialog(
+            nativeFileDialogCallback, callbackContext, window_,
+            sceneFileFilters,
+            static_cast<int>(std::size(sceneFileFilters)), defaultLocation);
+    } else {
+        SDL_ShowOpenFileDialog(
+            nativeFileDialogCallback, callbackContext, window_,
+            sceneFileFilters,
+            static_cast<int>(std::size(sceneFileFilters)), defaultLocation,
+            false);
+    }
+    return true;
+}
+
+void ImGuiLayer::consumeNativeFileDialogResult() {
+    if (!nativeFileDialogState_) {
+        return;
+    }
+
+    std::optional<NativeFileDialogState::Result> result;
+    {
+        std::lock_guard<std::mutex> lock(nativeFileDialogState_->mutex);
+        if (!nativeFileDialogState_->pendingResult.has_value()) {
+            return;
+        }
+        result = std::move(nativeFileDialogState_->pendingResult);
+        nativeFileDialogState_->pendingResult.reset();
+    }
+
+    if (!result || result->cancelled) {
+        return;
+    }
+    if (!result->error.empty()) {
+        spdlog::error("Native file dialog failed: {}", result->error);
+        return;
+    }
+    if (result->path.empty()) {
+        spdlog::error("Native file dialog returned an empty path");
+        return;
+    }
+
+    if (result->kind == NativeFileDialogState::Kind::SaveAs) {
+        requestedSaveAsPath_ = std::move(result->path);
+        pendingEditorCommand_ = EditorCommand::SaveSceneAs;
+    } else {
+        requestedScenePath_ = std::move(result->path);
+        pendingEditorCommand_ = EditorCommand::LoadScene;
+    }
+}
+
+bool ImGuiLayer::nativeFileDialogBusy() const {
+    if (!nativeFileDialogState_) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(nativeFileDialogState_->mutex);
+    return nativeFileDialogState_->outstanding ||
+           nativeFileDialogState_->pendingResult.has_value();
+}
+
+void ImGuiLayer::stopNativeFileDialog() noexcept {
+    if (!nativeFileDialogState_) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(nativeFileDialogState_->mutex);
+    nativeFileDialogState_->shuttingDown = true;
+    nativeFileDialogState_->outstanding = false;
+    nativeFileDialogState_->pendingResult.reset();
+}
+
 std::string ImGuiLayer::requestedScenePath() const { return requestedScenePath_; }
 
-void ImGuiLayer::requestLoadConfirmation() { openLoadConfirmationPopup_ = true; }
-void ImGuiLayer::requestQuitConfirmation() { openQuitConfirmationPopup_ = true; }
-
-void ImGuiLayer::setPersistenceStatus(std::string status, bool error) {
-    persistenceStatus_ = std::move(status);
-    persistenceStatusIsError_ = error;
+std::string ImGuiLayer::requestedSaveAsPath() const {
+    return requestedSaveAsPath_;
 }
+
+void ImGuiLayer::requestLoadConfirmation() { openLoadConfirmationPopup_ = true; }
+void ImGuiLayer::requestSaveAsOverwriteConfirmation(const std::string& path) {
+    saveAsOverwritePath_ = path;
+    openSaveAsOverwritePopup_ = true;
+}
+void ImGuiLayer::requestQuitConfirmation() { openQuitConfirmationPopup_ = true; }
 
 const GameObject* ImGuiLayer::selectedGameObjectForScene(
     const Scene* scene) const noexcept {
@@ -1718,6 +1955,7 @@ bool ImGuiLayer::initialized() const noexcept {
 }
 
 void ImGuiLayer::shutdown() noexcept {
+    stopNativeFileDialog();
     frameStarted_ = false;
     drawDataReady_ = false;
     selectionScene_ = nullptr;
@@ -1729,6 +1967,12 @@ void ImGuiLayer::shutdown() noexcept {
     gizmoDragActive_ = false;
     gizmoMode_ = GizmoMode::Translate;
     inspectorError_.clear();
+    requestedScenePath_.clear();
+    requestedSaveAsPath_.clear();
+    saveAsOverwritePath_.clear();
+    openSaveAsOverwritePopup_ = false;
+    openLoadConfirmationPopup_ = false;
+    openQuitConfirmationPopup_ = false;
 
     if (vulkanBackendInitialized_) {
         ImGui_ImplVulkan_Shutdown();
@@ -1747,6 +1991,7 @@ void ImGuiLayer::shutdown() noexcept {
 }
 
 void ImGuiLayer::abandon() noexcept {
+    stopNativeFileDialog();
     contextCreated_ = false;
     sdlBackendInitialized_ = false;
     vulkanBackendInitialized_ = false;
@@ -1770,4 +2015,11 @@ void ImGuiLayer::abandon() noexcept {
     gizmoDragActive_ = false;
     gizmoMode_ = GizmoMode::Translate;
     inspectorError_.clear();
+    requestedScenePath_.clear();
+    requestedSaveAsPath_.clear();
+    saveAsOverwritePath_.clear();
+    openSaveAsOverwritePopup_ = false;
+    openLoadConfirmationPopup_ = false;
+    openQuitConfirmationPopup_ = false;
+    window_ = nullptr;
 }

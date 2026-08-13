@@ -28,6 +28,8 @@ add_library(VulkanContext STATIC
         ${IMGUI_DIR}/imgui_demo.cpp
         ${IMGUI_DIR}/backends/imgui_impl_sdl3.cpp
         ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp)
+target_compile_definitions(VulkanContext PRIVATE
+        DUNAMIS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_include_directories(VulkanContext PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(VulkanContext SYSTEM PRIVATE
         ${IMGUI_DIR}

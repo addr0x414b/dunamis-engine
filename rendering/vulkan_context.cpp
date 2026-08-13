@@ -4417,16 +4417,20 @@ std::string VulkanContext::requestedScenePath() const {
     return imguiLayer.requestedScenePath();
 }
 
+std::string VulkanContext::requestedSaveAsPath() const {
+    return imguiLayer.requestedSaveAsPath();
+}
+
 void VulkanContext::requestLoadConfirmation() {
     imguiLayer.requestLoadConfirmation();
 }
 
-void VulkanContext::requestQuitConfirmation() {
-    imguiLayer.requestQuitConfirmation();
+void VulkanContext::requestSaveAsOverwriteConfirmation(const std::string& path) {
+    imguiLayer.requestSaveAsOverwriteConfirmation(path);
 }
 
-void VulkanContext::setPersistenceStatus(std::string status, bool error) {
-    imguiLayer.setPersistenceStatus(std::move(status), error);
+void VulkanContext::requestQuitConfirmation() {
+    imguiLayer.requestQuitConfirmation();
 }
 
 Result VulkanContext::drawFrame(Scene* scene, const Camera& renderCamera,

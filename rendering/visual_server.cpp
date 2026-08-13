@@ -245,16 +245,20 @@ std::string VisualServer::requestedScenePath() const {
     return vulkanContext.requestedScenePath();
 }
 
+std::string VisualServer::requestedSaveAsPath() const {
+    return vulkanContext.requestedSaveAsPath();
+}
+
 void VisualServer::requestLoadConfirmation() {
     vulkanContext.requestLoadConfirmation();
 }
 
-void VisualServer::requestQuitConfirmation() {
-    vulkanContext.requestQuitConfirmation();
+void VisualServer::requestSaveAsOverwriteConfirmation(const std::string& path) {
+    vulkanContext.requestSaveAsOverwriteConfirmation(path);
 }
 
-void VisualServer::setPersistenceStatus(std::string status, bool error) {
-    vulkanContext.setPersistenceStatus(std::move(status), error);
+void VisualServer::requestQuitConfirmation() {
+    vulkanContext.requestQuitConfirmation();
 }
 
 bool VisualServer::shutdown() noexcept {

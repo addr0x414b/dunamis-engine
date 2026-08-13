@@ -63,6 +63,8 @@ public:
     [[nodiscard]] Result destroyRuntimeScene();
 
     [[nodiscard]] Result saveEditingScene(const Camera& editorCamera);
+    [[nodiscard]] Result saveEditingSceneAs(
+        const std::filesystem::path& path, const Camera& editorCamera);
     [[nodiscard]] Result prepareEditingSceneLoad(
         const std::filesystem::path& path);
     [[nodiscard]] Scene* preparedEditingScene() noexcept;
@@ -96,6 +98,8 @@ private:
     [[nodiscard]] Result initializeEditingScene();
     [[nodiscard]] Result constructInitializedScene(
         std::unique_ptr<Scene>& scene) const;
+    [[nodiscard]] Result saveEditingSceneTo(
+        const std::filesystem::path& path, const Camera& editorCamera);
 
     SceneConstructor sceneConstructor_;
     std::unique_ptr<Scene> editingScene_;

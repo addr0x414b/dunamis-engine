@@ -258,6 +258,94 @@ Result Dunamis::run() {
                     editorCameraController.camera());
                 reportPersistenceResult(result, "Scene saved");
                 result = Result::success();
+            } else if (command == EditorCommand::SaveSceneAs) {
+                pendingSaveAsPath_ = visualServer.requestedSaveAsPath();
+                if (runState != SceneRunState::Editing) {
+                    reportPersistenceResult(
+                        Result::failure("Scene Save As is available only while Editing"),
+                        {});
+                    pendingSaveAsPath_.clear();
+                } else if (pendingSaveAsPath_.empty()) {
+                    reportPersistenceResult(
+                        Result::failure("Save As path is empty"), {});
+                    pendingSaveAsPath_.clear();
+                } else {
+                    std::error_code pathQueryError;
+                    const bool destinationExists = std::filesystem::exists(
+                        pendingSaveAsPath_, pathQueryError);
+                    if (pathQueryError) {
+                        reportPersistenceResult(
+                            Result::failure(
+                                "Failed to query Save As destination '" +
+                                pendingSaveAsPath_.string() + "': " +
+                                pathQueryError.message()),
+                            {});
+                        pendingSaveAsPath_.clear();
+                    } else if (destinationExists) {
+                        const bool destinationIsDirectory =
+                            std::filesystem::is_directory(
+                                pendingSaveAsPath_, pathQueryError);
+                        if (pathQueryError) {
+                            reportPersistenceResult(
+                                Result::failure(
+                                    "Failed to query Save As destination '" +
+                                    pendingSaveAsPath_.string() + "': " +
+                                    pathQueryError.message()),
+                                {});
+                            pendingSaveAsPath_.clear();
+                        } else if (destinationIsDirectory) {
+                            reportPersistenceResult(
+                                Result::failure(
+                                    "Save As destination '" +
+                                    pendingSaveAsPath_.string() +
+                                    "' is an existing directory"),
+                                {});
+                            pendingSaveAsPath_.clear();
+                        } else {
+                            visualServer.requestSaveAsOverwriteConfirmation(
+                                pendingSaveAsPath_.string());
+                        }
+                    } else {
+                        result = sceneManager_.saveEditingSceneAs(
+                            pendingSaveAsPath_,
+                            editorCameraController.camera());
+                        if (result) {
+                            visualServer.setCurrentScenePath(
+                                sceneManager_.currentScenePath().string());
+                        }
+                        reportPersistenceResult(
+                            result,
+                            "Scene saved as '" +
+                                pendingSaveAsPath_.string() + "'");
+                        pendingSaveAsPath_.clear();
+                    }
+                }
+                result = Result::success();
+            } else if (command == EditorCommand::ConfirmSaveSceneAsOverwrite) {
+                if (runState != SceneRunState::Editing) {
+                    reportPersistenceResult(
+                        Result::failure("Scene Save As is available only while Editing"),
+                        {});
+                } else if (pendingSaveAsPath_.empty()) {
+                    reportPersistenceResult(
+                        Result::failure("No Save As destination is pending"),
+                        {});
+                } else {
+                    result = sceneManager_.saveEditingSceneAs(
+                        pendingSaveAsPath_, editorCameraController.camera());
+                    if (result) {
+                        visualServer.setCurrentScenePath(
+                            sceneManager_.currentScenePath().string());
+                    }
+                    reportPersistenceResult(
+                        result,
+                        "Scene saved as '" + pendingSaveAsPath_.string() + "'");
+                    pendingSaveAsPath_.clear();
+                }
+                result = Result::success();
+            } else if (command == EditorCommand::CancelSaveSceneAs) {
+                pendingSaveAsPath_.clear();
+                result = Result::success();
             } else if (command == EditorCommand::LoadScene) {
                 pendingLoadPath_ = visualServer.requestedScenePath();
                 if (sceneManager_.hasUnsavedChanges()) {
@@ -389,10 +477,8 @@ void Dunamis::reportPersistenceResult(const Result& result,
                                       const std::string& successMessage) {
     if (!result) {
         spdlog::error("Scene persistence failed: {}", result.error());
-        visualServer.setPersistenceStatus(result.error(), true);
     } else if (!successMessage.empty()) {
         spdlog::info("{}", successMessage);
-        visualServer.setPersistenceStatus(successMessage, false);
     }
 }
 
@@ -605,6 +691,7 @@ bool Dunamis::shutdown() noexcept {
     runState = SceneRunState::Editing;
     initialized = false;
     pendingLoadPath_.clear();
+    pendingSaveAsPath_.clear();
     quitConfirmationPending_ = false;
     return true;
 }

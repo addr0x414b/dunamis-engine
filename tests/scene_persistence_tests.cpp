@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -114,6 +115,21 @@ public:
 bool expect(bool condition, const std::string& message) {
     if (!condition) std::cerr << message << '\n';
     return condition;
+}
+
+nlohmann::json readSceneDocument(const std::filesystem::path& path) {
+    std::ifstream stream(path, std::ios::binary);
+    nlohmann::json document;
+    stream >> document;
+    return document;
+}
+
+const nlohmann::json* findObjectRecord(
+    const nlohmann::json& document, const std::string& persistentId) {
+    for (const auto& object : document.at("objects")) {
+        if (object.at("id") == persistentId) return &object;
+    }
+    return nullptr;
 }
 
 TypeRegistry makeRegistry(bool& passed) {
@@ -383,9 +399,112 @@ bool managerDirtyTests() {
     return passed;
 }
 
+bool managerSavePathTests() {
+    bool passed = true;
+    SceneManager manager;
+    Result result = manager.initialize<PersistenceScene>(
+        "Persistence Save Path Test", std::make_shared<InputManager>());
+    passed &= expect(static_cast<bool>(result),
+                     "save-path manager initialization failed");
+
+    const auto directory = std::filesystem::temp_directory_path() /
+        ("dunamis-save-path-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto pathA = directory / "a.scene.json";
+    const auto pathB = directory / "b.scene.json";
+    const auto pathC = directory / "camera.scene.json";
+    const auto blockingParent = directory / "blocking-file";
+    const auto invalidPath = blockingParent / "failed.scene.json";
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    passed &= expect(!error, "save-path test directory could not be created");
+    {
+        std::ofstream stream(blockingParent, std::ios::binary);
+        stream << "not a directory";
+    }
+
+    manager.setCurrentScenePath(pathA);
+    Camera editor;
+    editor.position = {4.0f, 5.0f, 6.0f};
+    result = manager.saveEditingScene(editor);
+    passed &= expect(result && std::filesystem::exists(pathA) &&
+                         manager.currentScenePath() == pathA &&
+                         !manager.hasUnsavedChanges(),
+                     "normal save did not remain current-path based");
+
+    manager.editingScene()->findGameObject("point")->position.x += 2.0f;
+    passed &= expect(manager.hasUnsavedChanges(),
+                     "failed Save As precondition was not dirty");
+    result = manager.saveEditingSceneAs(invalidPath, editor);
+    passed &= expect(!result && manager.currentScenePath() == pathA &&
+                         manager.hasUnsavedChanges(),
+                     "failed Save As changed the current path or dirty state");
+    result = manager.saveEditingSceneAs(directory, editor);
+    passed &= expect(!result && manager.currentScenePath() == pathA,
+                     "directory Save As destination was not rejected");
+    result = manager.saveEditingScene(editor);
+    passed &= expect(result && !manager.hasUnsavedChanges(),
+                     "scene could not be cleaned before Save As");
+
+    const Scene* editingScene = manager.editingScene();
+    result = manager.saveEditingSceneAs(pathB, editor);
+    const nlohmann::json documentB = result
+        ? readSceneDocument(pathB)
+        : nlohmann::json{};
+    const nlohmann::json* customB = result
+        ? findObjectRecord(documentB, "custom")
+        : nullptr;
+    passed &= expect(result && std::filesystem::exists(pathB) &&
+                         manager.currentScenePath() == pathB &&
+                         manager.editingScene() == editingScene &&
+                         !manager.hasUnsavedChanges() &&
+                         documentB.contains("editor") &&
+                         documentB.at("editor").at("camera").at("position")[0] == 4.0f &&
+                         customB != nullptr,
+                     "Save As did not write the full scene or establish the new current path");
+
+    auto* custom = static_cast<CustomObject*>(
+        manager.editingScene()->findGameObject("custom"));
+    custom->spinSpeed = 321.0f;
+    passed &= expect(manager.hasUnsavedChanges(),
+                     "Save As follow-up authored modification was not dirty");
+    result = manager.saveEditingScene(editor);
+    const nlohmann::json documentAAfterSave = readSceneDocument(pathA);
+    const nlohmann::json documentBAfterSave = readSceneDocument(pathB);
+    const nlohmann::json* customAAfterSave =
+        findObjectRecord(documentAAfterSave, "custom");
+    const nlohmann::json* customBAfterSave =
+        findObjectRecord(documentBAfterSave, "custom");
+    passed &= expect(result && !manager.hasUnsavedChanges() &&
+                         customAAfterSave != nullptr &&
+                         customBAfterSave != nullptr &&
+                         customAAfterSave->at("properties").at("spinSpeed") != 321.0f &&
+                         customBAfterSave->at("properties").at("spinSpeed") == 321.0f,
+                     "normal save after Save As did not target the new path");
+
+    editor.position.x = 123.0f;
+    passed &= expect(!manager.hasUnsavedChanges(),
+                     "editor camera movement made authored state dirty before Save As");
+    result = manager.saveEditingSceneAs(pathC, editor);
+    const nlohmann::json documentC = result
+        ? readSceneDocument(pathC)
+        : nlohmann::json{};
+    passed &= expect(result && manager.currentScenePath() == pathC &&
+                         !manager.hasUnsavedChanges() &&
+                         documentC.at("editor").at("camera").at("position")[0] == 123.0f,
+                     "camera-only Save As did not preserve the editor camera or clean state");
+
+    manager.shutdown();
+    std::filesystem::remove_all(directory, error);
+    return passed;
+}
+
 }  // namespace
 
 int main() {
-    const bool passed = registryTests() && serializerTests() && managerDirtyTests();
+    bool passed = registryTests();
+    passed &= serializerTests();
+    passed &= managerDirtyTests();
+    passed &= managerSavePathTests();
     return passed ? 0 : 1;
 }

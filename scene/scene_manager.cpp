@@ -114,19 +114,54 @@ Result SceneManager::prepareRuntimeScene() {
 Result SceneManager::saveEditingScene(const Camera& editorCamera) {
     if (!editingScene_) return Result::failure("Editing scene is unavailable");
     if (currentScenePath_.empty()) return Result::failure("Current scene path is empty");
+    return saveEditingSceneTo(currentScenePath_, editorCamera);
+}
+
+Result SceneManager::saveEditingSceneAs(
+    const std::filesystem::path& path, const Camera& editorCamera) {
+    if (path.empty()) return Result::failure("Save As path is empty");
+    Result result = saveEditingSceneTo(path, editorCamera);
+    if (!result) return result;
+    currentScenePath_ = path;
+    return Result::success();
+}
+
+Result SceneManager::saveEditingSceneTo(
+    const std::filesystem::path& path, const Camera& editorCamera) {
+    if (!editingScene_) return Result::failure("Editing scene is unavailable");
+    if (path.empty()) return Result::failure("Scene path is empty");
+
+    std::error_code error;
+    const bool destinationExists = std::filesystem::exists(path, error);
+    if (error) {
+        return Result::failure("Failed to query scene destination '" +
+                               path.string() + "': " + error.message());
+    }
+    if (destinationExists) {
+        const bool destinationIsDirectory =
+            std::filesystem::is_directory(path, error);
+        if (error) {
+            return Result::failure("Failed to query scene destination '" +
+                                   path.string() + "': " + error.message());
+        }
+        if (destinationIsDirectory) {
+            return Result::failure("Scene destination '" + path.string() +
+                                   "' is an existing directory");
+        }
+    }
+
     nlohmann::json document;
     Result result = SceneSerializer::serializeFull(
         *editingScene_, typeRegistry_, editorCamera, document);
     if (!result) return Result::failure("Failed to serialize scene: " + result.error());
 
-    std::error_code error;
-    const std::filesystem::path parent = currentScenePath_.parent_path();
+    const std::filesystem::path parent = path.parent_path();
     if (!parent.empty()) {
         std::filesystem::create_directories(parent, error);
         if (error) return Result::failure("Failed to create scene directory '" +
                                           parent.string() + "': " + error.message());
     }
-    const std::filesystem::path temporary = currentScenePath_.string() + ".tmp";
+    const std::filesystem::path temporary = path.string() + ".tmp";
     {
         std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
         if (!stream) return Result::failure("Failed to open temporary scene file '" +
@@ -136,30 +171,40 @@ Result SceneManager::saveEditingScene(const Camera& editorCamera) {
         if (!stream) return Result::failure("Failed to write temporary scene file '" +
                                             temporary.string() + "'");
     }
-    std::filesystem::rename(temporary, currentScenePath_, error);
+    std::filesystem::rename(temporary, path, error);
     if (error) {
-        const std::filesystem::path backup = currentScenePath_.string() + ".bak";
+        const std::filesystem::path backup = path.string() + ".bak";
         std::error_code backupError;
-        if (std::filesystem::exists(currentScenePath_)) {
-            std::filesystem::rename(currentScenePath_, backup, backupError);
+        const bool destinationStillExists =
+            std::filesystem::exists(path, backupError);
+        if (backupError) {
+            return Result::failure("Failed to query existing scene file '" +
+                                   path.string() + "': " + backupError.message());
+        }
+        if (destinationStillExists) {
+            std::filesystem::rename(path, backup, backupError);
         }
         if (backupError) return Result::failure("Failed to replace scene file '" +
-                                                currentScenePath_.string() + "': " + backupError.message());
+                                                path.string() + "': " + backupError.message());
         error.clear();
-        std::filesystem::rename(temporary, currentScenePath_, error);
+        std::filesystem::rename(temporary, path, error);
         if (error) {
             std::error_code ignored;
-            if (std::filesystem::exists(backup)) {
-                std::filesystem::rename(backup, currentScenePath_, ignored);
+            if (destinationStillExists) {
+                std::filesystem::rename(backup, path, ignored);
             }
             return Result::failure("Failed to replace scene file '" +
-                                   currentScenePath_.string() + "': " + error.message());
+                                   path.string() + "': " + error.message());
         }
-        std::filesystem::remove(backup, backupError);
+        if (destinationStillExists) {
+            std::filesystem::remove(backup, backupError);
+        }
     }
+    nlohmann::json authoredBaseline;
     result = SceneSerializer::serializeAuthored(
-        *editingScene_, typeRegistry_, authoredBaseline_);
+        *editingScene_, typeRegistry_, authoredBaseline);
     if (!result) return Result::failure("Scene was saved but baseline capture failed: " + result.error());
+    authoredBaseline_ = std::move(authoredBaseline);
     authoredBaselineAvailable_ = true;
     persistenceWarnings_.clear();
     return Result::success();

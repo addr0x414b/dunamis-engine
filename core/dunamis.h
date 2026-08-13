@@ -46,6 +46,7 @@ private:
     bool initialized = false;
     SceneRunState runState = SceneRunState::Editing;
     std::filesystem::path pendingLoadPath_;
+    std::filesystem::path pendingSaveAsPath_;
     bool quitConfirmationPending_ = false;
 };
 

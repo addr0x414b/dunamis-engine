@@ -25,9 +25,10 @@ public:
     [[nodiscard]] bool sceneInteractionAreaHovered() const noexcept;
     void setCurrentScenePath(const std::string& path);
     [[nodiscard]] std::string requestedScenePath() const;
+    [[nodiscard]] std::string requestedSaveAsPath() const;
     void requestLoadConfirmation();
+    void requestSaveAsOverwriteConfirmation(const std::string& path);
     void requestQuitConfirmation();
-    void setPersistenceStatus(std::string status, bool error);
     [[nodiscard]] Result loadSceneResources(Scene* scene);
     [[nodiscard]] Result unloadSceneResources(Scene* scene);
     [[nodiscard]] Result switchScene(Scene* scene);
