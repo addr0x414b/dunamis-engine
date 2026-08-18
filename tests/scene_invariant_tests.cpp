@@ -143,6 +143,10 @@ bool runAuthoringTransferTests() {
     editingObject->position = {1.0f, 2.0f, 3.0f};
     editingObject->rotation = {4.0f, 5.0f, 6.0f};
     editingObject->scale = {7.0f, 8.0f, 9.0f};
+    editingObject->physics.enabled = true;
+    editingObject->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
+    editingObject->physics.colliderType = GameObject::PhysicsColliderType::Sphere;
+    editingObject->physics.sphereRadius = 0.75f;
     auto runtimeObject = std::make_unique<GameObject>();
     GameObject* runtimeObjectPointer = runtimeObject.get();
     passed &= expect(static_cast<bool>(
@@ -241,7 +245,13 @@ bool runAuthoringTransferTests() {
     passed &= expect(runtimeObjectPointer->name == "Edited object" &&
                          runtimeObjectPointer->position == glm::vec3(1.0f, 2.0f, 3.0f) &&
                          runtimeObjectPointer->rotation == glm::vec3(4.0f, 5.0f, 6.0f) &&
-                         runtimeObjectPointer->scale == glm::vec3(7.0f, 8.0f, 9.0f),
+                         runtimeObjectPointer->scale == glm::vec3(7.0f, 8.0f, 9.0f) &&
+                         runtimeObjectPointer->physics.enabled &&
+                         runtimeObjectPointer->physics.motionType ==
+                             GameObject::PhysicsMotionType::Dynamic &&
+                         runtimeObjectPointer->physics.colliderType ==
+                             GameObject::PhysicsColliderType::Sphere &&
+                         nearlyEqual(runtimeObjectPointer->physics.sphereRadius, 0.75f),
                      "GameObject authoring transform was not transferred");
     passed &= expect(runtimePointPointer->color == editingPointPointer->color &&
                          runtimePointPointer->intensity == 11.0f,

@@ -58,9 +58,28 @@ void Level1::init() {
     test3->persistentId = "sponza";
     test3->name = "Sponza";
     test3->scale = glm::vec3(1.0f, 1.0f, 1.0f);
+    test3->physics.enabled = true;
+    test3->physics.motionType = GameObject::PhysicsMotionType::Static;
+    test3->physics.colliderType = GameObject::PhysicsColliderType::Mesh;
     test3->modelPath = "game/assets/models/glTF-Sample-Assets/Models/Sponza/glTF/Sponza.gltf";
     requireSuccess(test3->loadModel(), "Failed to load Sponza");
     requireSuccess(addGameObject(std::move(test3)), "Failed to add Sponza");
+
+    // The loaded CPU Sponza mesh has a horizontal surface at (x=0, z=0,
+    // y≈-2.5). This starts the avocado more than ten world units above it.
+    auto avocado = std::make_unique<GameObject>();
+    avocado->persistentId = "physics_test_avocado";
+    avocado->name = "Physics Test Avocado";
+    avocado->position = glm::vec3(0.0f, 8.0f, 0.0f);
+    avocado->scale = glm::vec3(20.0f);
+    avocado->physics.enabled = true;
+    avocado->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
+    avocado->physics.colliderType = GameObject::PhysicsColliderType::Sphere;
+    avocado->physics.sphereRadius = 0.5f;
+    avocado->modelPath = "game/assets/models/Avocado.glb";
+    requireSuccess(avocado->loadModel(), "Failed to load physics test Avocado");
+    requireSuccess(addGameObject(std::move(avocado)),
+                   "Failed to add physics test Avocado");
 
     /*auto test4 = std::make_unique<PointLight>();
     test4->name = "GLTF test";

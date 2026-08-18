@@ -27,6 +27,17 @@ public:
     // inspector; display-name changes must not change persistence identity.
     std::string persistentId;
 
+    // Authoring metadata only. PhysicsServer creates its Jolt bodies solely
+    // for the disposable runtime scene; no backend state lives here.
+    enum class PhysicsMotionType { Static, Dynamic };
+    enum class PhysicsColliderType { Mesh, Sphere };
+    struct PhysicsBodySettings {
+        bool enabled = false;
+        PhysicsMotionType motionType = PhysicsMotionType::Static;
+        PhysicsColliderType colliderType = PhysicsColliderType::Mesh;
+        float sphereRadius = 0.5f;
+    } physics;
+
     virtual void start() {}
     virtual void update() {}
     virtual Camera* attachedCamera() noexcept { return nullptr; }

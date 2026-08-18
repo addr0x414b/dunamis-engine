@@ -33,7 +33,30 @@ FetchContent_Declare(
 )
 set(JSON_BuildTests OFF CACHE BOOL "Do not build nlohmann/json tests" FORCE)
 
-FetchContent_MakeAvailable(spdlog glm assimp nlohmann_json)
+# Jolt's standalone defaults configure broad tooling and may modify compiler
+# flags in its own directory. Keep this embedded rigid-body backend narrow and
+# do not let it select project-wide optimization policy.
+set(OVERRIDE_CXX_FLAGS OFF CACHE BOOL "Keep Dunamis compiler flags" FORCE)
+set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "Disable Jolt LTO" FORCE)
+set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "Do not enable Jolt warnings as errors" FORCE)
+set(ENABLE_INSTALL OFF CACHE BOOL "Do not add Jolt install targets" FORCE)
+set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "Disable Jolt debug renderer" FORCE)
+set(DEBUG_RENDERER_IN_DISTRIBUTION OFF CACHE BOOL "Disable Jolt debug renderer" FORCE)
+set(PROFILER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "Disable Jolt profiler" FORCE)
+set(PROFILER_IN_DISTRIBUTION OFF CACHE BOOL "Disable Jolt profiler" FORCE)
+set(JPH_USE_DX12 OFF CACHE BOOL "Disable Jolt DX12 compute" FORCE)
+set(JPH_USE_VK OFF CACHE BOOL "Disable Jolt Vulkan compute" FORCE)
+set(JPH_USE_MTL OFF CACHE BOOL "Disable Jolt Metal compute" FORCE)
+set(JPH_USE_CPU_COMPUTE OFF CACHE BOOL "Disable Jolt CPU compute" FORCE)
+
+FetchContent_Declare(
+    JoltPhysics
+    GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
+    GIT_TAG v5.6.0
+    SOURCE_SUBDIR Build
+)
+
+FetchContent_MakeAvailable(spdlog glm assimp nlohmann_json JoltPhysics)
 
 find_package(SDL3 REQUIRED CONFIG)
 find_package(Vulkan REQUIRED)

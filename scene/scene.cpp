@@ -292,6 +292,7 @@ Result Scene::copyAuthoringStateTo(Scene& runtimeScene) const {
         runtimeObject.position = editorObject.position;
         runtimeObject.rotation = editorObject.rotation;
         runtimeObject.scale = editorObject.scale;
+        runtimeObject.physics = editorObject.physics;
 
         if (const auto* editorPointLight =
                 dynamic_cast<const PointLight*>(&editorObject)) {

@@ -5,6 +5,7 @@
 #include "result.h"
 #include "editor_camera_controller.h"
 #include "editor_state.h"
+#include "../physics/physics_server.h"
 
 #include <filesystem>
 
@@ -41,6 +42,7 @@ private:
     Platform platform;
     SceneManager sceneManager_;
     VisualServer visualServer;
+    PhysicsServer physicsServer_;
     std::shared_ptr<InputManager> inputManager;
     bool initializationAttempted = false;
     bool initialized = false;

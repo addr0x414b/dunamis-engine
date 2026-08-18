@@ -1,0 +1,235 @@
+{
+  "activeCamera": {
+    "kind": "attached",
+    "ownerId": "player"
+  },
+  "editor": {
+    "camera": {
+      "front": [
+        0.9640113115310669,
+        -0.16504761576652527,
+        0.20842665433883667
+      ],
+      "position": [
+        -485.2262268066406,
+        90.61483764648438,
+        -146.6265106201172
+      ],
+      "up": [
+        0.0,
+        1.0,
+        0.0
+      ]
+    }
+  },
+  "formatVersion": 1,
+  "objects": [
+    {
+      "id": "sponza",
+      "properties": {
+        "modelPath": "game/assets/models/glTF-Sample-Assets/Models/Sponza/glTF/Sponza.gltf",
+        "name": "Sponza",
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "type": "GameObject"
+    },
+    {
+      "id": "physics_test_avocado",
+      "properties": {
+        "modelPath": "game/assets/models/Avocado.glb",
+        "name": "Physics Test Avocado",
+        "position": [
+          0.0,
+          59.674041748046875,
+          -45.65052032470703
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          500.0,
+          500.0,
+          500.0
+        ],
+        "texturePath": ""
+      },
+      "type": "GameObject"
+    },
+    {
+      "id": "game_camera",
+      "properties": {
+        "front": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "modelPath": "",
+        "name": "Camera",
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": "",
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "type": "Camera"
+    },
+    {
+      "id": "directional_light",
+      "properties": {
+        "color": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "intensity": 1.0,
+        "modelPath": "",
+        "name": "Direc Light",
+        "position": [
+          50.0,
+          20.0,
+          100.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          200.0,
+          200.0,
+          200.0
+        ],
+        "shadowFarPlane": 1000.0,
+        "shadowFocus": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "shadowHalfExtent": 500.0,
+        "shadowLightDistance": 500.0,
+        "shadowNearPlane": 1.0,
+        "texturePath": ""
+      },
+      "type": "DirectionalLight"
+    },
+    {
+      "id": "point_light",
+      "properties": {
+        "color": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "intensity": 100.0,
+        "modelPath": "",
+        "name": "Point Light",
+        "position": [
+          250.0,
+          20.0,
+          100.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          500.0,
+          500.0,
+          500.0
+        ],
+        "texturePath": ""
+      },
+      "type": "PointLight"
+    },
+    {
+      "attachedCamera": {
+        "front": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "id": "player",
+      "properties": {
+        "modelPath": "",
+        "name": "Player",
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "type": "Player"
+    }
+  ],
+  "scene": {
+    "ambientColor": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "ambientIntensity": 0.10000000149011612,
+    "backgroundColor": [
+      0.6389999985694885,
+      0.9649999737739563,
+      1.0,
+      1.0
+    ],
+    "name": "Level 1"
+  }
+}

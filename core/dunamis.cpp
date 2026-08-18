@@ -48,6 +48,13 @@ Result Dunamis::initialize() {
                                    result.error());
         }
 
+        result = physicsServer_.initialize();
+        if (!result) {
+            (void)shutdown();
+            return Result::failure("Physics Server initialization failed: " +
+                                   result.error());
+        }
+
         sceneManager_.setCurrentScenePath(
             std::filesystem::path(DUNAMIS_SOURCE_DIR) /
             "game/scenes/level_1/level_1.scene.json");
@@ -238,6 +245,7 @@ Result Dunamis::run() {
                         "Runtime execution requires an active runtime scene");
                 }
                 runtimeScene->update();
+                physicsServer_.update();
             }
 
             Scene* activeScene = sceneManager_.activeScene();
@@ -500,6 +508,9 @@ Result Dunamis::beginRuntimeSession(SceneRunState targetState) {
     const auto rollbackRuntimeSession = [this](const std::string& error) {
         runState = SceneRunState::Editing;
         Scene* runtimeScene = sceneManager_.runtimeScene();
+        // Runtime bodies retain GameObject pointers; clear them before this
+        // transactional path can release the disposable runtime Scene.
+        physicsServer_.endRuntimeSession();
         if (runtimeScene && visualServer.renderScene() == runtimeScene) {
             const Result switchResult = visualServer.switchScene(
                 sceneManager_.editingScene());
@@ -547,6 +558,12 @@ Result Dunamis::beginRuntimeSession(SceneRunState targetState) {
     }
 
     Scene* runtimeScene = sceneManager_.runtimeScene();
+    result = physicsServer_.beginRuntimeSession(*runtimeScene);
+    if (!result) {
+        return rollbackRuntimeSession(
+            "Failed to prepare runtime physics: " + result.error());
+    }
+
     result = visualServer.loadSceneResources(runtimeScene);
     if (!result) {
         return rollbackRuntimeSession(
@@ -632,6 +649,9 @@ Result Dunamis::stopRuntimeSession() {
     }
 
     runState = SceneRunState::Editing;
+    // The runtime scene remains alive until after renderer resources unload.
+    // Release its Jolt body-to-GameObject mappings first.
+    physicsServer_.endRuntimeSession();
     result = visualServer.unloadSceneResources(runtimeScene);
     if (!result) {
         synchronizeImGuiInput();
@@ -669,6 +689,9 @@ void Dunamis::synchronizeImGuiInput() noexcept {
 }
 
 bool Dunamis::shutdown() noexcept {
+    // This is harmless for Editing/partial initialization and guarantees no
+    // physics mapping survives the later SceneManager teardown.
+    physicsServer_.endRuntimeSession();
     bool inputReleased = true;
     if (inputManager) {
         const Result result = inputManager->enterEditorInteractive();
@@ -690,6 +713,7 @@ bool Dunamis::shutdown() noexcept {
         inputManager->window = nullptr;
     }
     sceneManager_.shutdown();
+    physicsServer_.shutdown();
     inputManager.reset();
 
     platform.shutdown();
