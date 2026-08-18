@@ -1,9 +1,8 @@
 #include "physics_mesh_builder.h"
+#include "physics_units.h"
 
 #include <cmath>
 #include <limits>
-
-#include <glm/gtc/matrix_transform.hpp>
 
 namespace physics {
 namespace {
@@ -11,14 +10,6 @@ namespace {
 bool isFinite(const glm::vec3& value) noexcept {
     return std::isfinite(value.x) && std::isfinite(value.y) &&
            std::isfinite(value.z);
-}
-
-glm::mat4 makeModelMatrix(const glm::vec3& position,
-                          const glm::vec3& rotation,
-                          const glm::vec3& scale) noexcept {
-    glm::mat4 model(1.0f);
-    model = glm::translate(model, position);
-    return glm::scale(model * makeDunamisRotationMatrix(rotation), scale);
 }
 
 }  // namespace
@@ -84,11 +75,11 @@ Result buildScaledLocalConvexHull(const std::vector<MeshInstance>& instances,
             if (!isFinite(vertex.pos)) {
                 return Result::failure("Mesh contains a non-finite vertex position");
             }
-            const glm::vec3 scaled = vertex.pos * scale;
-            if (!isFinite(scaled)) {
+            const glm::vec3 scaledDunamisUnits = vertex.pos * scale;
+            if (!isFinite(scaledDunamisUnits)) {
                 return Result::failure("Scale produced a non-finite convex hull point");
             }
-            output.points.push_back(scaled);
+            output.points.push_back(dunamisToMeters(scaledDunamisUnits));
         }
     }
     if (output.points.empty()) {
@@ -125,17 +116,13 @@ Result buildScaledLocalConvexHull(const std::vector<MeshInstance>& instances,
     return Result::success();
 }
 
-Result buildWorldTriangleMesh(const std::vector<MeshInstance>& instances,
-                              const glm::vec3& position,
-                              const glm::vec3& rotation,
-                              const glm::vec3& scale,
-                              WorldTriangleMesh& output) {
+Result buildScaledLocalTriangleMesh(
+    const std::vector<MeshInstance>& instances, const glm::vec3& scale,
+    ScaledLocalTriangleMesh& output) {
     output = {};
-    if (!isFinite(position) || !isFinite(rotation) || !isFinite(scale)) {
-        return Result::failure("GameObject transform contains a non-finite value");
+    if (!isFinite(scale)) {
+        return Result::failure("GameObject scale contains a non-finite value");
     }
-
-    const glm::mat4 model = makeModelMatrix(position, rotation, scale);
     for (const MeshInstance& instance : instances) {
         const Mesh& mesh = instance.mesh;
         if (mesh.vertices.empty()) {
@@ -153,11 +140,11 @@ Result buildWorldTriangleMesh(const std::vector<MeshInstance>& instances,
             if (!isFinite(vertex.pos)) {
                 return Result::failure("Mesh contains a non-finite vertex position");
             }
-            const glm::vec3 transformed(model * glm::vec4(vertex.pos, 1.0f));
-            if (!isFinite(transformed)) {
-                return Result::failure("Mesh transform produced a non-finite vertex position");
+            const glm::vec3 scaledDunamisUnits = vertex.pos * scale;
+            if (!isFinite(scaledDunamisUnits)) {
+                return Result::failure("Mesh scale produced a non-finite vertex position");
             }
-            output.vertices.push_back(transformed);
+            output.vertices.push_back(dunamisToMeters(scaledDunamisUnits));
         }
         for (const uint32_t index : mesh.indices) {
             if (index >= mesh.vertices.size()) {

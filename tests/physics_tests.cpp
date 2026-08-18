@@ -23,6 +23,7 @@
 #include "../core/time.h"
 #include "../physics/physics_mesh_builder.h"
 #include "../physics/physics_server.h"
+#include "../physics/physics_units.h"
 #include "../scene/game_object.h"
 #include "../scene/scene.h"
 
@@ -113,53 +114,38 @@ void testAccumulator() {
            "0.1 seconds must respect the six-step bound");
 }
 
-void testMeshTransforms() {
-    physics::WorldTriangleMesh output;
-    const glm::vec3 zero(0.0f);
+void testPhysicsUnits() {
+    expect(near(physics::dunamisToMeters(0.0f), 0.0f), "0 DU conversion failed");
+    expect(near(physics::dunamisToMeters(1.0f), 0.01f), "1 DU conversion failed");
+    expect(near(physics::dunamisToMeters(100.0f), 1.0f), "100 DU conversion failed");
+    expect(near(physics::dunamisToMeters(250.0f), 2.5f), "250 DU conversion failed");
+    expect(near(physics::dunamisToMeters(-100.0f), -1.0f), "negative DU conversion failed");
+    const glm::vec3 authored(250.0f, -100.0f, 1.0f);
+    const glm::vec3 meters = physics::dunamisToMeters(authored);
+    expect(meters == glm::vec3(2.5f, -1.0f, 0.01f), "vector DU conversion failed");
+    const glm::vec3 roundTrip = physics::metersToDunamis(meters);
+    expect(near(roundTrip.x, authored.x) && near(roundTrip.y, authored.y) &&
+               near(roundTrip.z, authored.z),
+           "DU to meters round trip failed");
+}
+
+void testScaledLocalTriangleMesh() {
+    physics::ScaledLocalTriangleMesh output;
     const glm::vec3 one(1.0f);
-    MeshInstance instance = triangleInstance(glm::vec3(0.0f));
-    expect(static_cast<bool>(physics::buildWorldTriangleMesh(
-               {instance}, glm::vec3(3.0f, -2.0f, 5.0f), zero, one, output)),
-           "translation conversion failed");
-    expect(near(output.vertices[0].x, 3.0f) && near(output.vertices[0].y, -2.0f) &&
-               near(output.vertices[0].z, 5.0f),
-           "translation conversion is incorrect");
-
-    instance = triangleInstance(glm::vec3(0.0f, 1.0f, 0.0f));
-    expect(static_cast<bool>(physics::buildWorldTriangleMesh(
-               {instance}, zero, glm::vec3(90.0f, 0.0f, 0.0f), one, output)),
-           "X rotation conversion failed");
-    expect(near(output.vertices[0].z, 1.0f), "X rotation is incorrect");
-    instance = triangleInstance(glm::vec3(1.0f, 0.0f, 0.0f));
-    expect(static_cast<bool>(physics::buildWorldTriangleMesh(
-               {instance}, zero, glm::vec3(0.0f, 90.0f, 0.0f), one, output)),
-           "Y rotation conversion failed");
-    expect(near(output.vertices[0].z, -1.0f), "Y rotation is incorrect");
-    expect(static_cast<bool>(physics::buildWorldTriangleMesh(
-               {instance}, zero, glm::vec3(0.0f, 0.0f, 90.0f), one, output)),
-           "Z rotation conversion failed");
-    expect(near(output.vertices[0].y, 1.0f), "Z rotation is incorrect");
-    expect(static_cast<bool>(physics::buildWorldTriangleMesh(
-               {instance}, zero, zero, glm::vec3(2.0f, 3.0f, 4.0f), output)),
-           "scale conversion failed");
-    expect(near(output.vertices[0].x, 2.0f), "scale conversion is incorrect");
-
-    expect(static_cast<bool>(physics::buildWorldTriangleMesh(
-               {instance}, glm::vec3(4.0f, 5.0f, 6.0f),
-               glm::vec3(90.0f, 90.0f, 90.0f), glm::vec3(2.0f, 3.0f, 1.0f),
-               output)),
-           "combined transform conversion failed");
-    expect(near(output.vertices[0].x, 4.0f) && near(output.vertices[0].y, 5.0f) &&
-               near(output.vertices[0].z, 8.0f),
-           "T * Rx * Ry * Rz * S conversion is incorrect");
-
+    MeshInstance instance = triangleInstance(glm::vec3(1.0f, 2.0f, 3.0f));
+    expect(static_cast<bool>(physics::buildScaledLocalTriangleMesh(
+               {instance}, glm::vec3(2.0f, 3.0f, 4.0f), output)),
+           "scaled local triangle conversion failed");
+    expect(output.vertices[0] == glm::vec3(0.02f, 0.06f, 0.12f),
+           "static mesh must apply scale and DU-to-meter conversion locally");
+    // Position and rotation are intentionally not inputs: the static body,
+    // rather than the mesh vertices, owns their world placement.
     instance.mesh.indices = {0, 1, 3};
-    expect(!physics::buildWorldTriangleMesh({instance}, zero, zero, one, output),
+    expect(!physics::buildScaledLocalTriangleMesh({instance}, one, output),
            "invalid mesh index was accepted");
     instance = triangleInstance(glm::vec3(0.0f));
-    expect(!physics::buildWorldTriangleMesh({instance},
-                                            glm::vec3(NAN, 0.0f, 0.0f), zero,
-                                            one, output),
+    expect(!physics::buildScaledLocalTriangleMesh(
+               {instance}, glm::vec3(NAN, 0.0f, 0.0f), output),
            "non-finite transform was accepted");
 }
 
@@ -174,8 +160,8 @@ void testConvexHullInputAndRotation() {
     expect(static_cast<bool>(physics::buildScaledLocalConvexHull(
                {instance}, glm::vec3(2.0f, 3.0f, 4.0f), hull)),
            "scaled convex hull conversion failed");
-    expect(hull.points.size() == 4 && hull.points[0] == glm::vec3(2.0f, 6.0f, 12.0f),
-           "convex hull points do not preserve scaled local coordinates");
+    expect(hull.points.size() == 4 && hull.points[0] == glm::vec3(0.02f, 0.06f, 0.12f),
+           "convex hull points do not preserve scaled local meter coordinates");
     expect(!physics::buildScaledLocalConvexHull({instance}, glm::vec3(0.0f), hull),
            "near-zero convex scale was accepted");
     expect(!physics::buildScaledLocalConvexHull({}, glm::vec3(1.0f), hull),
@@ -352,6 +338,107 @@ void testPhysicsServerEditorRelease() {
     server.shutdown();
 }
 
+void testDynamicPositionAndGravityWorldScale() {
+    JPH::RegisterDefaultAllocator();
+    JPH::Factory::sInstance = new JPH::Factory();
+    JPH::RegisterTypes();
+    BroadPhaseInterface broadPhaseInterface;
+    ObjectVsBroadPhaseFilter objectVsBroadPhaseFilter;
+    PairFilter pairFilter;
+    JPH::PhysicsSystem system;
+    system.Init(32, 0, 64, 32, broadPhaseInterface, objectVsBroadPhaseFilter,
+                pairFilter);
+    system.SetGravity(JPH::Vec3(0.0f, -9.81f, 0.0f));
+    JPH::TempAllocatorImpl allocator(2U * 1024U * 1024U);
+    JPH::JobSystemThreadPool jobs(JPH::cMaxPhysicsJobs,
+                                  JPH::cMaxPhysicsBarriers, 1);
+    JPH::BodyInterface& bodies = system.GetBodyInterface();
+
+    const glm::vec3 authoredPosition(0.0f, 300.0f, 0.0f);
+    const glm::vec3 physicalPosition = physics::dunamisToMeters(authoredPosition);
+    JPH::BodyCreationSettings settings(
+        new JPH::SphereShape(0.05f),
+        JPH::RVec3(physicalPosition.x, physicalPosition.y, physicalPosition.z),
+        JPH::Quat::sIdentity(), JPH::EMotionType::Dynamic, 1);
+    const JPH::BodyID body =
+        bodies.CreateAndAddBody(settings, JPH::EActivation::Activate);
+    expect(!body.IsInvalid(), "failed to create world-scale dynamic body");
+    expect(near(static_cast<float>(bodies.GetPosition(body).GetY()), 3.0f),
+           "300 authored DU was not represented as 3 Jolt meters");
+    for (int step = 0; step < 60; ++step) {
+        (void)system.Update(1.0f / 60.0f, 1, &allocator, &jobs);
+    }
+    const float resultingDunamisY = physics::metersToDunamis(
+        static_cast<float>(bodies.GetPosition(body).GetY()));
+    const float displacementDunamisY = resultingDunamisY - authoredPosition.y;
+    expect(displacementDunamisY < -450.0f && displacementDunamisY > -550.0f,
+           "one second of -9.81 m/s^2 did not produce meter-scaled DU fall");
+    bodies.RemoveBody(body);
+    bodies.DestroyBody(body);
+    JPH::UnregisterTypes();
+    delete JPH::Factory::sInstance;
+    JPH::Factory::sInstance = nullptr;
+}
+
+void testStaticTransformAndWake() {
+    JPH::RegisterDefaultAllocator();
+    JPH::Factory::sInstance = new JPH::Factory();
+    JPH::RegisterTypes();
+    BroadPhaseInterface broadPhaseInterface;
+    ObjectVsBroadPhaseFilter objectVsBroadPhaseFilter;
+    PairFilter pairFilter;
+    JPH::PhysicsSystem system;
+    system.Init(32, 0, 64, 32, broadPhaseInterface, objectVsBroadPhaseFilter,
+                pairFilter);
+    system.SetGravity(JPH::Vec3(0.0f, -9.81f, 0.0f));
+    JPH::TempAllocatorImpl allocator(2U * 1024U * 1024U);
+    JPH::JobSystemThreadPool jobs(JPH::cMaxPhysicsJobs,
+                                  JPH::cMaxPhysicsBarriers, 1);
+    JPH::BodyInterface& bodies = system.GetBodyInterface();
+    JPH::BodyCreationSettings floorSettings(
+        new JPH::BoxShape(JPH::Vec3(10.0f, 0.5f, 10.0f)),
+        JPH::RVec3(0.0f, -0.5f, 0.0f), JPH::Quat::sIdentity(),
+        JPH::EMotionType::Static, 0);
+    const JPH::BodyID floor = bodies.CreateAndAddBody(
+        floorSettings, JPH::EActivation::DontActivate);
+    JPH::BodyCreationSettings propSettings(
+        new JPH::SphereShape(0.5f), JPH::RVec3(0.0f, 3.0f, 0.0f),
+        JPH::Quat::sIdentity(), JPH::EMotionType::Dynamic, 1);
+    const JPH::BodyID prop = bodies.CreateAndAddBody(
+        propSettings, JPH::EActivation::Activate);
+    expect(!floor.IsInvalid() && !prop.IsInvalid(),
+           "failed to create static transform regression bodies");
+    for (int step = 0; step < 360; ++step) {
+        (void)system.Update(1.0f / 60.0f, 1, &allocator, &jobs);
+    }
+    const float restedY = static_cast<float>(bodies.GetPosition(prop).GetY());
+    expect(restedY >= 0.45f && restedY <= 0.60f,
+           "dynamic body did not settle on static floor");
+
+    const JPH::RVec3 loweredFloor(0.0f, -3.0f, 0.0f);
+    const JPH::Quat rotatedFloor =
+        JPH::Quat::sRotation(JPH::Vec3::sAxisZ(), 0.35f);
+    bodies.SetPositionAndRotation(floor, loweredFloor, rotatedFloor,
+                                  JPH::EActivation::DontActivate);
+    const JPH::BodyID dynamicBodies[] = {prop};
+    bodies.ActivateBodies(dynamicBodies, 1);
+    expect(bodies.GetPosition(floor).IsClose(loweredFloor, 1.0e-5f) &&
+               bodies.GetRotation(floor).IsClose(rotatedFloor, 1.0e-5f),
+           "static body did not retain runtime translation and rotation");
+    for (int step = 0; step < 30; ++step) {
+        (void)system.Update(1.0f / 60.0f, 1, &allocator, &jobs);
+    }
+    expect(static_cast<float>(bodies.GetPosition(prop).GetY()) < restedY - 0.5f,
+           "woken dynamic body did not fall after static floor moved");
+    bodies.RemoveBody(prop);
+    bodies.DestroyBody(prop);
+    bodies.RemoveBody(floor);
+    bodies.DestroyBody(floor);
+    JPH::UnregisterTypes();
+    delete JPH::Factory::sInstance;
+    JPH::Factory::sInstance = nullptr;
+}
+
 void testFloorSphere() {
     JPH::RegisterDefaultAllocator();
     JPH::Factory::sInstance = new JPH::Factory();
@@ -405,11 +492,14 @@ void testFloorSphere() {
 
 int main() {
     testAccumulator();
-    testMeshTransforms();
+    testPhysicsUnits();
+    testScaledLocalTriangleMesh();
     testConvexHullInputAndRotation();
     testOffOriginBodyPivot();
     testDynamicConvexRotationIntegration();
     testFloorSphere();
     testPhysicsServerEditorRelease();
+    testDynamicPositionAndGravityWorldScale();
+    testStaticTransformAndWake();
     return EXIT_SUCCESS;
 }

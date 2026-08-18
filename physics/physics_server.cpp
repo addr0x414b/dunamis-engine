@@ -35,6 +35,7 @@
 #include "../scene/game_object.h"
 #include "../scene/scene.h"
 #include "physics_mesh_builder.h"
+#include "physics_units.h"
 
 namespace {
 
@@ -125,8 +126,10 @@ std::string objectDescription(const GameObject& object) {
            object.persistentId + "')";
 }
 
-JPH::RVec3 toJoltPosition(const glm::vec3& position) {
-    return JPH::RVec3(position.x, position.y, position.z);
+JPH::RVec3 toJoltPosition(const glm::vec3& positionDunamisUnits) {
+    const glm::vec3 positionMeters =
+        physics::dunamisToMeters(positionDunamisUnits);
+    return JPH::RVec3(positionMeters.x, positionMeters.y, positionMeters.z);
 }
 
 JPH::Quat toJoltRotation(const glm::vec3& rotation) {
@@ -153,7 +156,7 @@ struct PhysicsServer::Impl {
     struct RuntimeBody {
         JPH::BodyID id;
         GameObject* object = nullptr;
-        bool dynamic = false;
+        bool isDynamic = false;
         bool editorOverride = false;
     };
 
@@ -283,11 +286,10 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
 
             JPH::BodyID bodyId;
             if (settings.motionType == GameObject::PhysicsMotionType::Static) {
-                physics::WorldTriangleMesh mesh;
+                physics::ScaledLocalTriangleMesh mesh;
                 const Clock::time_point conversionStart = Clock::now();
-                Result meshResult = physics::buildWorldTriangleMesh(
-                    object.meshInstances(), object.position, object.rotation,
-                    object.scale, mesh);
+                Result meshResult = physics::buildScaledLocalTriangleMesh(
+                    object.meshInstances(), object.scale, mesh);
                 staticMeshConversion += Clock::now() - conversionStart;
                 if (!meshResult) {
                     endRuntimeSession();
@@ -317,8 +319,8 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                                            shapeResult.GetError().c_str());
                 }
                 JPH::BodyCreationSettings bodySettings(
-                    shapeResult.Get(), JPH::RVec3::sZero(),
-                    JPH::Quat::sIdentity(), JPH::EMotionType::Static,
+                    shapeResult.Get(), toJoltPosition(object.position),
+                    toJoltRotation(object.rotation), JPH::EMotionType::Static,
                     layers::nonMoving);
                 const Clock::time_point creationStart = Clock::now();
                 bodyId = bodies.CreateAndAddBody(bodySettings,
@@ -339,7 +341,8 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                         return Result::failure("Dynamic sphere radius must be finite and positive for " +
                                                objectDescription(object));
                     }
-                    shape = new JPH::SphereShape(settings.sphereRadius);
+                    shape = new JPH::SphereShape(
+                        physics::dunamisToMeters(settings.sphereRadius));
                 } else {
                     physics::LocalConvexHull hull;
                     Result hullResult = physics::buildScaledLocalConvexHull(
@@ -420,17 +423,32 @@ void PhysicsServer::applyRuntimeTransformEdit(const RuntimeTransformEdit& edit) 
     }
     JPH::BodyInterface& bodies = impl_->physicsSystem->GetBodyInterface();
     for (Impl::RuntimeBody& body : impl_->runtimeBodies) {
-        if (!body.dynamic || body.object != edit.object) {
+        if (body.object != edit.object) {
             continue;
         }
         bodies.SetPositionAndRotation(body.id, toJoltPosition(edit.position),
                                       toJoltRotation(edit.rotation),
-                                      JPH::EActivation::Activate);
-        bodies.SetLinearAndAngularVelocity(body.id, JPH::Vec3::sZero(),
-                                           JPH::Vec3::sZero());
+                                      body.isDynamic ? JPH::EActivation::Activate
+                                                     : JPH::EActivation::DontActivate);
+        if (body.isDynamic) {
+            bodies.SetLinearAndAngularVelocity(body.id, JPH::Vec3::sZero(),
+                                               JPH::Vec3::sZero());
+        } else {
+            std::vector<JPH::BodyID> dynamicBodyIds;
+            dynamicBodyIds.reserve(impl_->runtimeBodies.size());
+            for (const Impl::RuntimeBody& runtimeBody : impl_->runtimeBodies) {
+                if (runtimeBody.isDynamic && !runtimeBody.id.IsInvalid()) {
+                    dynamicBodyIds.push_back(runtimeBody.id);
+                }
+            }
+            if (!dynamicBodyIds.empty()) {
+                bodies.ActivateBodies(dynamicBodyIds.data(),
+                                     static_cast<int>(dynamicBodyIds.size()));
+            }
+        }
         body.object->position = edit.position;
         body.object->rotation = edit.rotation;
-        body.editorOverride = edit.manipulating;
+        body.editorOverride = body.isDynamic && edit.manipulating;
         return;
     }
 }
@@ -447,13 +465,13 @@ void PhysicsServer::update() {
     }
     JPH::BodyInterface& bodies = impl_->physicsSystem->GetBodyInterface();
     for (const Impl::RuntimeBody& body : impl_->runtimeBodies) {
-        if (!body.dynamic || body.object == nullptr || body.editorOverride) {
+        if (!body.isDynamic || body.object == nullptr || body.editorOverride) {
             continue;
         }
         const JPH::RVec3 position = bodies.GetPosition(body.id);
-        body.object->position = glm::vec3(static_cast<float>(position.GetX()),
-                                          static_cast<float>(position.GetY()),
-                                          static_cast<float>(position.GetZ()));
+        body.object->position = physics::metersToDunamis(glm::vec3(
+            static_cast<float>(position.GetX()), static_cast<float>(position.GetY()),
+            static_cast<float>(position.GetZ())));
         glm::vec3 rotation;
         if (fromJoltRotation(bodies.GetRotation(body.id), rotation)) {
             body.object->rotation = rotation;

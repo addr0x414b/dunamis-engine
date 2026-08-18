@@ -66,12 +66,13 @@ void Level1::init() {
     requireSuccess(addGameObject(std::move(test3)), "Failed to add Sponza");
 
     // The loaded CPU Sponza mesh has a horizontal surface at (x=0, z=0,
-    // y≈-2.5). This starts the avocado more than ten world units above it.
+    // y≈-2.5). At 100 Dunamis units per meter, this gives the test body a
+    // visible three-meter drop before it reaches the floor.
     auto avocado = std::make_unique<GameObject>();
     avocado->persistentId = "physics_test_avocado";
     avocado->name = "Physics Test Avocado";
-    avocado->position = glm::vec3(0.0f, 8.0f, 0.0f);
-    avocado->scale = glm::vec3(20.0f);
+    avocado->position = glm::vec3(0.0f, 300.0f, 0.0f);
+    avocado->scale = glm::vec3(500.0f);
     avocado->physics.enabled = true;
     avocado->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
     avocado->physics.colliderType = GameObject::PhysicsColliderType::ConvexHull;

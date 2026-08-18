@@ -1212,10 +1212,9 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
         break;
     }
     case GizmoMode::Scale:
-        if (runState == SceneRunState::Simulating && selected->physics.enabled &&
-            selected->physics.motionType == GameObject::PhysicsMotionType::Dynamic) {
+        if (runState == SceneRunState::Simulating && selected->physics.enabled) {
             gizmoDragActive_ = false;
-            inspectorError_ = "Runtime Scale is unavailable for dynamic physics bodies.";
+            inspectorError_ = "Runtime Scale is unavailable for physics bodies.";
             drawList->PopClipRect();
             return;
         }
@@ -1290,12 +1289,11 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
     }
     gizmoDragActive_ = ImGuizmo::IsUsing() &&
                        ImGui::IsMouseDown(ImGuiMouseButton_Left);
-    const bool runtimeDynamic =
-        runState == SceneRunState::Simulating && selected->physics.enabled &&
-        selected->physics.motionType == GameObject::PhysicsMotionType::Dynamic;
+    const bool runtimePhysicsBacked =
+        runState == SceneRunState::Simulating && selected->physics.enabled;
     const bool runtimeTransformMode = gizmoMode_ == GizmoMode::Translate ||
                                       gizmoMode_ == GizmoMode::Rotate;
-    const bool activeNow = runtimeDynamic && runtimeTransformMode && gizmoDragActive_;
+    const bool activeNow = runtimePhysicsBacked && runtimeTransformMode && gizmoDragActive_;
     if (activeNow) {
         runtimeTransformDragActive_ = true;
         runtimeTransformObject_ = selected;

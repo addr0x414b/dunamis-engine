@@ -11,13 +11,15 @@
 
 namespace physics {
 
-struct WorldTriangleMesh {
+// Local collision geometry in Jolt meters. Authored position and rotation are
+// deliberately excluded; they belong to the static body's transform.
+struct ScaledLocalTriangleMesh {
     std::vector<glm::vec3> vertices;
     std::vector<uint32_t> indices;
 };
 
-// Points remain in the authored GameObject coordinate space. Position and
-// rotation deliberately do not participate in this conversion.
+// Local collision points in Jolt meters. Position and rotation deliberately
+// do not participate in this conversion.
 struct LocalConvexHull {
     std::vector<glm::vec3> points;
 };
@@ -32,11 +34,11 @@ struct LocalConvexHull {
 [[nodiscard]] bool extractDunamisRotation(const glm::mat4& matrix,
                                            glm::vec3& rotation) noexcept;
 
-// Uses Dunamis' canonical T * Rx * Ry * Rz * S transform convention.
-[[nodiscard]] Result buildWorldTriangleMesh(
-    const std::vector<MeshInstance>& instances, const glm::vec3& position,
-    const glm::vec3& rotation, const glm::vec3& scale,
-    WorldTriangleMesh& output);
+// Applies authored scale and converts the resulting local geometry from
+// Dunamis units to Jolt meters.
+[[nodiscard]] Result buildScaledLocalTriangleMesh(
+    const std::vector<MeshInstance>& instances, const glm::vec3& scale,
+    ScaledLocalTriangleMesh& output);
 
 }  // namespace physics
 
