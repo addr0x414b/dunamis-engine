@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,7 @@
 
 #include "../core/result.h"
 #include "../core/editor_state.h"
+#include "../scene/runtime_transform_edit.h"
 
 class Scene;
 class GameObject;
@@ -50,6 +52,8 @@ public:
     selectedGameObjectForScene(const Scene* scene) const noexcept;
     void clearSelection() noexcept;
     [[nodiscard]] EditorCommand consumeEditorCommand() noexcept;
+    [[nodiscard]] std::optional<RuntimeTransformEdit>
+    consumeRuntimeTransformEdit() noexcept;
     [[nodiscard]] bool sceneInteractionAreaHovered() const noexcept;
     void setCurrentScenePath(const std::string& path);
     [[nodiscard]] std::string requestedScenePath() const;
@@ -156,6 +160,9 @@ private:
     bool drawDataReady_ = false;
     bool inputEnabled_ = true;
     bool gizmoDragActive_ = false;
+    bool runtimeTransformDragActive_ = false;
+    GameObject* runtimeTransformObject_ = nullptr;
+    std::optional<RuntimeTransformEdit> pendingRuntimeTransformEdit_;
     GizmoMode gizmoMode_ = GizmoMode::Translate;
     Scene* selectionScene_ = nullptr;
     GameObject* selectedGameObject_ = nullptr;

@@ -6,8 +6,10 @@
 
 #include "spdlog/spdlog.h"
 
+#include <chrono>
 #include <exception>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <system_error>
 
@@ -243,6 +245,10 @@ Result Dunamis::run() {
                     sceneManager_.activeScene() != runtimeScene) {
                     return Result::failure(
                         "Runtime execution requires an active runtime scene");
+                }
+                if (const std::optional<RuntimeTransformEdit> edit =
+                        visualServer.consumeRuntimeTransformEdit()) {
+                    physicsServer_.applyRuntimeTransformEdit(*edit);
                 }
                 runtimeScene->update();
                 physicsServer_.update();
@@ -504,6 +510,15 @@ Result Dunamis::beginRuntimeSession(SceneRunState targetState) {
         return Result::failure("Invalid runtime session target state");
     }
 
+    using Clock = std::chrono::steady_clock;
+    const Clock::time_point totalStart = Clock::now();
+    Clock::duration scenePreparation{};
+    Clock::duration physicsCreation{};
+    Clock::duration renderingResources{};
+    Clock::duration inputTransition{};
+    Clock::duration sceneSwitch{};
+    Clock::duration sceneCommit{};
+    Clock::duration runtimeStart{};
     visualServer.clearEditorSelection();
     const auto rollbackRuntimeSession = [this](const std::string& error) {
         runState = SceneRunState::Editing;
@@ -551,30 +566,38 @@ Result Dunamis::beginRuntimeSession(SceneRunState targetState) {
         return Result::failure(error);
     };
 
+    Clock::time_point stageStart = Clock::now();
     Result result = sceneManager_.prepareRuntimeScene();
+    scenePreparation = Clock::now() - stageStart;
     if (!result) {
         return rollbackRuntimeSession(
             "Failed to prepare runtime scene: " + result.error());
     }
 
     Scene* runtimeScene = sceneManager_.runtimeScene();
+    stageStart = Clock::now();
     result = physicsServer_.beginRuntimeSession(*runtimeScene);
+    physicsCreation = Clock::now() - stageStart;
     if (!result) {
         return rollbackRuntimeSession(
             "Failed to prepare runtime physics: " + result.error());
     }
 
+    stageStart = Clock::now();
     result = visualServer.loadSceneResources(runtimeScene);
+    renderingResources = Clock::now() - stageStart;
     if (!result) {
         return rollbackRuntimeSession(
             "Failed to prepare runtime rendering: " + result.error());
     }
 
+    stageStart = Clock::now();
     if (targetState == SceneRunState::Playing) {
         result = inputManager->beginGameplaySession();
     } else {
         result = inputManager->enterEditorInteractive();
     }
+    inputTransition = Clock::now() - stageStart;
     if (!result) {
         return rollbackRuntimeSession(
             std::string(targetState == SceneRunState::Playing
@@ -584,19 +607,24 @@ Result Dunamis::beginRuntimeSession(SceneRunState targetState) {
     }
 
     synchronizeImGuiInput();
+    stageStart = Clock::now();
     result = visualServer.switchScene(runtimeScene);
+    sceneSwitch = Clock::now() - stageStart;
     if (!result) {
         return rollbackRuntimeSession(
             "Failed to switch rendering to the runtime scene: " +
             result.error());
     }
 
+    stageStart = Clock::now();
     result = sceneManager_.commitRuntimeScene();
+    sceneCommit = Clock::now() - stageStart;
     if (!result) {
         return rollbackRuntimeSession(
             "Failed to commit the runtime scene: " + result.error());
     }
 
+    stageStart = Clock::now();
     try {
         runtimeScene->start();
     } catch (const std::exception& exception) {
@@ -606,9 +634,19 @@ Result Dunamis::beginRuntimeSession(SceneRunState targetState) {
         return rollbackRuntimeSession(
             "Failed to start runtime scene with an unknown error");
     }
+    runtimeStart = Clock::now() - stageStart;
 
     runState = targetState;
     synchronizeImGuiInput();
+    const auto asMilliseconds = [](Clock::duration duration) {
+        return std::chrono::duration<double, std::milli>(duration).count();
+    };
+    spdlog::info("Runtime startup: scene preparation {:.2f} ms, physics creation {:.2f} ms, rendering resources {:.2f} ms, input transition {:.2f} ms, scene switch {:.2f} ms, scene commit {:.2f} ms, runtime start {:.2f} ms, total {:.2f} ms",
+                 asMilliseconds(scenePreparation), asMilliseconds(physicsCreation),
+                 asMilliseconds(renderingResources), asMilliseconds(inputTransition),
+                 asMilliseconds(sceneSwitch), asMilliseconds(sceneCommit),
+                 asMilliseconds(runtimeStart),
+                 asMilliseconds(Clock::now() - totalStart));
     return Result::success();
 }
 

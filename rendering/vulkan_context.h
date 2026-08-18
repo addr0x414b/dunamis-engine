@@ -98,6 +98,8 @@ private:
     void setImGuiInputEnabled(bool enabled) noexcept;
     void clearEditorSelection() noexcept;
     [[nodiscard]] EditorCommand consumeEditorCommand() noexcept;
+    [[nodiscard]] std::optional<RuntimeTransformEdit>
+    consumeRuntimeTransformEdit() noexcept;
     [[nodiscard]] bool sceneInteractionAreaHovered() const noexcept;
     void setCurrentScenePath(const std::string& path);
     [[nodiscard]] std::string requestedScenePath() const;

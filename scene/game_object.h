@@ -30,7 +30,7 @@ public:
     // Authoring metadata only. PhysicsServer creates its Jolt bodies solely
     // for the disposable runtime scene; no backend state lives here.
     enum class PhysicsMotionType { Static, Dynamic };
-    enum class PhysicsColliderType { Mesh, Sphere };
+    enum class PhysicsColliderType { Mesh, Sphere, ConvexHull };
     struct PhysicsBodySettings {
         bool enabled = false;
         PhysicsMotionType motionType = PhysicsMotionType::Static;

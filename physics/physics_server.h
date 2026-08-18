@@ -5,6 +5,7 @@
 #include <memory>
 
 #include "../core/result.h"
+#include "../scene/runtime_transform_edit.h"
 
 class Scene;
 
@@ -29,6 +30,7 @@ public:
 
     [[nodiscard]] Result initialize();
     [[nodiscard]] Result beginRuntimeSession(Scene& runtimeScene);
+    void applyRuntimeTransformEdit(const RuntimeTransformEdit& edit);
     void update();
     void endRuntimeSession() noexcept;
     void shutdown() noexcept;

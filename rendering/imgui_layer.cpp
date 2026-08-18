@@ -621,6 +621,9 @@ void ImGuiLayer::processEvent(const SDL_Event& event) noexcept {
 void ImGuiLayer::setInputEnabled(bool enabled) noexcept {
     inputEnabled_ = enabled;
     gizmoDragActive_ = false;
+    runtimeTransformDragActive_ = false;
+    runtimeTransformObject_ = nullptr;
+    pendingRuntimeTransformEdit_.reset();
     if (!contextCreated_) {
         return;
     }
@@ -1010,6 +1013,13 @@ const GameObject* ImGuiLayer::selectedGameObjectForScene(
 }
 
 void ImGuiLayer::clearSelection() noexcept {
+    if (runtimeTransformDragActive_ && runtimeTransformObject_ != nullptr) {
+        pendingRuntimeTransformEdit_ = RuntimeTransformEdit{
+            runtimeTransformObject_, runtimeTransformObject_->position,
+            runtimeTransformObject_->rotation, false};
+    }
+    runtimeTransformDragActive_ = false;
+    runtimeTransformObject_ = nullptr;
     selectedGameObject_ = nullptr;
     gizmoMode_ = GizmoMode::Translate;
     inspectorError_.clear();
@@ -1019,6 +1029,13 @@ EditorCommand ImGuiLayer::consumeEditorCommand() noexcept {
     const EditorCommand command = pendingEditorCommand_;
     pendingEditorCommand_ = EditorCommand::None;
     return command;
+}
+
+std::optional<RuntimeTransformEdit>
+ImGuiLayer::consumeRuntimeTransformEdit() noexcept {
+    std::optional<RuntimeTransformEdit> edit = pendingRuntimeTransformEdit_;
+    pendingRuntimeTransformEdit_.reset();
+    return edit;
 }
 
 bool ImGuiLayer::sceneInteractionAreaHovered() const noexcept {
@@ -1070,6 +1087,14 @@ void ImGuiLayer::selectGameObject(Scene* scene, GameObject* object) noexcept {
     for (const auto& owner : scene->gameObjects()) {
         if (owner.get() == object) {
             if (selectedGameObject_ != object) {
+                if (runtimeTransformDragActive_ &&
+                    runtimeTransformObject_ != nullptr) {
+                    pendingRuntimeTransformEdit_ = RuntimeTransformEdit{
+                        runtimeTransformObject_, runtimeTransformObject_->position,
+                        runtimeTransformObject_->rotation, false};
+                    runtimeTransformDragActive_ = false;
+                    runtimeTransformObject_ = nullptr;
+                }
                 gizmoMode_ = GizmoMode::Translate;
             }
             selectedGameObject_ = object;
@@ -1147,6 +1172,8 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
     if (!editorToolsEnabled(runState) ||
         !sceneInteractionRect_.valid) {
         gizmoDragActive_ = false;
+        runtimeTransformDragActive_ = false;
+        runtimeTransformObject_ = nullptr;
         return;
     }
     GameObject* selected = const_cast<GameObject*>(
@@ -1155,6 +1182,8 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
     if (selected == nullptr || viewport == nullptr || viewport->Size.x <= 0.0f ||
         viewport->Size.y <= 0.0f) {
         gizmoDragActive_ = false;
+        runtimeTransformDragActive_ = false;
+        runtimeTransformObject_ = nullptr;
         return;
     }
 
@@ -1183,6 +1212,13 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
         break;
     }
     case GizmoMode::Scale:
+        if (runState == SceneRunState::Simulating && selected->physics.enabled &&
+            selected->physics.motionType == GameObject::PhysicsMotionType::Dynamic) {
+            gizmoDragActive_ = false;
+            inspectorError_ = "Runtime Scale is unavailable for dynamic physics bodies.";
+            drawList->PopClipRect();
+            return;
+        }
         operation = ImGuizmo::SCALE;
         mode = ImGuizmo::LOCAL;
         break;
@@ -1254,6 +1290,25 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
     }
     gizmoDragActive_ = ImGuizmo::IsUsing() &&
                        ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    const bool runtimeDynamic =
+        runState == SceneRunState::Simulating && selected->physics.enabled &&
+        selected->physics.motionType == GameObject::PhysicsMotionType::Dynamic;
+    const bool runtimeTransformMode = gizmoMode_ == GizmoMode::Translate ||
+                                      gizmoMode_ == GizmoMode::Rotate;
+    const bool activeNow = runtimeDynamic && runtimeTransformMode && gizmoDragActive_;
+    if (activeNow) {
+        runtimeTransformDragActive_ = true;
+        runtimeTransformObject_ = selected;
+    }
+    if (runtimeTransformDragActive_ && runtimeTransformObject_ != nullptr) {
+        pendingRuntimeTransformEdit_ = RuntimeTransformEdit{
+            runtimeTransformObject_, runtimeTransformObject_->position,
+            runtimeTransformObject_->rotation, activeNow};
+        if (!activeNow) {
+            runtimeTransformDragActive_ = false;
+            runtimeTransformObject_ = nullptr;
+        }
+    }
 }
 
 void ImGuiLayer::drawCameraVisualizations(
@@ -1965,6 +2020,9 @@ void ImGuiLayer::shutdown() noexcept {
     sceneInteractionRect_ = {};
     inputEnabled_ = true;
     gizmoDragActive_ = false;
+    runtimeTransformDragActive_ = false;
+    runtimeTransformObject_ = nullptr;
+    pendingRuntimeTransformEdit_.reset();
     gizmoMode_ = GizmoMode::Translate;
     inspectorError_.clear();
     requestedScenePath_.clear();

@@ -4405,6 +4405,11 @@ EditorCommand VulkanContext::consumeEditorCommand() noexcept {
     return imguiLayer.consumeEditorCommand();
 }
 
+std::optional<RuntimeTransformEdit>
+VulkanContext::consumeRuntimeTransformEdit() noexcept {
+    return imguiLayer.consumeRuntimeTransformEdit();
+}
+
 bool VulkanContext::sceneInteractionAreaHovered() const noexcept {
     return imguiLayer.sceneInteractionAreaHovered();
 }

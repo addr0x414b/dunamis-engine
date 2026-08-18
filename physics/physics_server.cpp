@@ -11,11 +11,13 @@
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdarg>
 #include <cmath>
 #include <cstdio>
@@ -26,6 +28,8 @@
 #include <vector>
 
 #include <spdlog/spdlog.h>
+
+#include <glm/gtc/quaternion.hpp>
 
 #include "../core/time.h"
 #include "../scene/game_object.h"
@@ -125,6 +129,24 @@ JPH::RVec3 toJoltPosition(const glm::vec3& position) {
     return JPH::RVec3(position.x, position.y, position.z);
 }
 
+JPH::Quat toJoltRotation(const glm::vec3& rotation) {
+    const glm::quat quaternion = glm::quat_cast(
+        physics::makeDunamisRotationMatrix(rotation));
+    return JPH::Quat(quaternion.x, quaternion.y, quaternion.z, quaternion.w)
+        .Normalized();
+}
+
+bool fromJoltRotation(const JPH::Quat& quaternion, glm::vec3& rotation) {
+    const glm::quat glmQuaternion(quaternion.GetW(), quaternion.GetX(),
+                                  quaternion.GetY(), quaternion.GetZ());
+    return physics::extractDunamisRotation(glm::mat4_cast(glmQuaternion),
+                                           rotation);
+}
+
+double milliseconds(std::chrono::steady_clock::duration duration) {
+    return std::chrono::duration<double, std::milli>(duration).count();
+}
+
 }  // namespace
 
 struct PhysicsServer::Impl {
@@ -132,6 +154,7 @@ struct PhysicsServer::Impl {
         JPH::BodyID id;
         GameObject* object = nullptr;
         bool dynamic = false;
+        bool editorOverride = false;
     };
 
     // These filters outlive physicsSystem because Jolt retains references.
@@ -218,6 +241,13 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
 
     accumulator_.reset();
     try {
+        using Clock = std::chrono::steady_clock;
+        const Clock::time_point totalStart = Clock::now();
+        Clock::duration staticMeshConversion{};
+        Clock::duration staticShapeCooking{};
+        Clock::duration convexCooking{};
+        Clock::duration bodyCreation{};
+        Clock::duration broadPhaseOptimization{};
         impl_->physicsSystem = std::make_unique<JPH::PhysicsSystem>();
         // Engine-v1 capacity: supports large static levels and many dynamic
         // bodies without the intentionally tiny HelloWorld limits.
@@ -244,18 +274,21 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                                        objectDescription(object));
             }
             if (settings.motionType == GameObject::PhysicsMotionType::Dynamic &&
-                settings.colliderType != GameObject::PhysicsColliderType::Sphere) {
+                settings.colliderType != GameObject::PhysicsColliderType::Sphere &&
+                settings.colliderType != GameObject::PhysicsColliderType::ConvexHull) {
                 endRuntimeSession();
-                return Result::failure("Dynamic physics requires a sphere collider for " +
+                return Result::failure("Dynamic physics requires a sphere or convex-hull collider for " +
                                        objectDescription(object));
             }
 
             JPH::BodyID bodyId;
             if (settings.motionType == GameObject::PhysicsMotionType::Static) {
                 physics::WorldTriangleMesh mesh;
+                const Clock::time_point conversionStart = Clock::now();
                 Result meshResult = physics::buildWorldTriangleMesh(
                     object.meshInstances(), object.position, object.rotation,
                     object.scale, mesh);
+                staticMeshConversion += Clock::now() - conversionStart;
                 if (!meshResult) {
                     endRuntimeSession();
                     return Result::failure("Failed to build static collision for " +
@@ -272,10 +305,11 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                                            JPH::Vec3(b.x, b.y, b.z),
                                            JPH::Vec3(c.x, c.y, c.z));
                 }
+                const Clock::time_point cookingStart = Clock::now();
                 JPH::MeshShapeSettings shapeSettings(std::move(triangles));
                 shapeSettings.SetEmbedded();
-                JPH::ShapeSettings::ShapeResult shapeResult =
-                    shapeSettings.Create();
+                JPH::ShapeSettings::ShapeResult shapeResult = shapeSettings.Create();
+                staticShapeCooking += Clock::now() - cookingStart;
                 if (shapeResult.HasError()) {
                     endRuntimeSession();
                     return Result::failure("Failed to create mesh shape for " +
@@ -286,29 +320,63 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                     shapeResult.Get(), JPH::RVec3::sZero(),
                     JPH::Quat::sIdentity(), JPH::EMotionType::Static,
                     layers::nonMoving);
+                const Clock::time_point creationStart = Clock::now();
                 bodyId = bodies.CreateAndAddBody(bodySettings,
                                                   JPH::EActivation::DontActivate);
+                bodyCreation += Clock::now() - creationStart;
                 if (bodyId.IsInvalid()) {
                     endRuntimeSession();
                     return Result::failure("Failed to create static body for " +
                                            objectDescription(object));
                 }
                 ++staticCount;
-                spdlog::info("{} collider: {} triangles", object.name,
-                             mesh.indices.size() / 3);
             } else {
-                if (!(settings.sphereRadius > 0.0f) ||
-                    !std::isfinite(settings.sphereRadius)) {
-                    endRuntimeSession();
-                    return Result::failure("Dynamic sphere radius must be finite and positive for " +
-                                           objectDescription(object));
+                JPH::ShapeRefC shape;
+                if (settings.colliderType == GameObject::PhysicsColliderType::Sphere) {
+                    if (!(settings.sphereRadius > 0.0f) ||
+                        !std::isfinite(settings.sphereRadius)) {
+                        endRuntimeSession();
+                        return Result::failure("Dynamic sphere radius must be finite and positive for " +
+                                               objectDescription(object));
+                    }
+                    shape = new JPH::SphereShape(settings.sphereRadius);
+                } else {
+                    physics::LocalConvexHull hull;
+                    Result hullResult = physics::buildScaledLocalConvexHull(
+                        object.meshInstances(), object.scale, hull);
+                    if (!hullResult) {
+                        endRuntimeSession();
+                        return Result::failure("Failed to build dynamic convex hull for " +
+                                               objectDescription(object) + ": " + hullResult.error());
+                    }
+                    JPH::Array<JPH::Vec3> points;
+                    points.reserve(hull.points.size());
+                    for (const glm::vec3& point : hull.points) {
+                        points.emplace_back(point.x, point.y, point.z);
+                    }
+                    const Clock::time_point cookingStart = Clock::now();
+                    JPH::ConvexHullShapeSettings shapeSettings(points);
+                    JPH::ShapeSettings::ShapeResult shapeResult = shapeSettings.Create();
+                    convexCooking += Clock::now() - cookingStart;
+                    if (shapeResult.HasError()) {
+                        endRuntimeSession();
+                        return Result::failure("Failed to create dynamic convex hull for " +
+                                               objectDescription(object) + " (" +
+                                               std::to_string(hull.points.size()) + " input points): " +
+                                               shapeResult.GetError().c_str());
+                    }
+                    shape = shapeResult.Get();
+                    spdlog::info("{} convex hull collider: {} local scaled input points",
+                                 object.name, hull.points.size());
                 }
                 JPH::BodyCreationSettings bodySettings(
-                    new JPH::SphereShape(settings.sphereRadius),
-                    toJoltPosition(object.position), JPH::Quat::sIdentity(),
-                    JPH::EMotionType::Dynamic, layers::moving);
+                    shape.GetPtr(), toJoltPosition(object.position),
+                    toJoltRotation(object.rotation), JPH::EMotionType::Dynamic,
+                    layers::moving);
+                const Clock::time_point creationStart = Clock::now();
                 bodyId = bodies.CreateAndAddBody(bodySettings,
                                                   JPH::EActivation::Activate);
+                bodyCreation += Clock::now() - creationStart;
                 if (bodyId.IsInvalid()) {
                     endRuntimeSession();
                     return Result::failure("Failed to create dynamic body for " +
@@ -320,9 +388,16 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                 {bodyId, &object,
                  settings.motionType == GameObject::PhysicsMotionType::Dynamic});
         }
+        const Clock::time_point broadPhaseStart = Clock::now();
         impl_->physicsSystem->OptimizeBroadPhase();
+        broadPhaseOptimization += Clock::now() - broadPhaseStart;
         spdlog::info("Runtime physics world created: {} static, {} dynamic",
                      staticCount, dynamicCount);
+        spdlog::info("Physics startup: static mesh conversion {:.2f} ms, static shape cooking {:.2f} ms, dynamic convex cooking {:.2f} ms, body creation {:.2f} ms, broadphase optimization {:.2f} ms, total {:.2f} ms",
+                     milliseconds(staticMeshConversion), milliseconds(staticShapeCooking),
+                     milliseconds(convexCooking), milliseconds(bodyCreation),
+                     milliseconds(broadPhaseOptimization),
+                     milliseconds(Clock::now() - totalStart));
         return Result::success();
     } catch (const std::exception& exception) {
         endRuntimeSession();
@@ -331,6 +406,32 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
     } catch (...) {
         endRuntimeSession();
         return Result::failure("Runtime physics setup failed unexpectedly");
+    }
+}
+
+void PhysicsServer::applyRuntimeTransformEdit(const RuntimeTransformEdit& edit) {
+    if (!impl_ || !impl_->physicsSystem || edit.object == nullptr) {
+        return;
+    }
+    if (!std::isfinite(edit.position.x) || !std::isfinite(edit.position.y) ||
+        !std::isfinite(edit.position.z) || !std::isfinite(edit.rotation.x) ||
+        !std::isfinite(edit.rotation.y) || !std::isfinite(edit.rotation.z)) {
+        return;
+    }
+    JPH::BodyInterface& bodies = impl_->physicsSystem->GetBodyInterface();
+    for (Impl::RuntimeBody& body : impl_->runtimeBodies) {
+        if (!body.dynamic || body.object != edit.object) {
+            continue;
+        }
+        bodies.SetPositionAndRotation(body.id, toJoltPosition(edit.position),
+                                      toJoltRotation(edit.rotation),
+                                      JPH::EActivation::Activate);
+        bodies.SetLinearAndAngularVelocity(body.id, JPH::Vec3::sZero(),
+                                           JPH::Vec3::sZero());
+        body.object->position = edit.position;
+        body.object->rotation = edit.rotation;
+        body.editorOverride = edit.manipulating;
+        return;
     }
 }
 
@@ -346,13 +447,17 @@ void PhysicsServer::update() {
     }
     JPH::BodyInterface& bodies = impl_->physicsSystem->GetBodyInterface();
     for (const Impl::RuntimeBody& body : impl_->runtimeBodies) {
-        if (!body.dynamic || body.object == nullptr) {
+        if (!body.dynamic || body.object == nullptr || body.editorOverride) {
             continue;
         }
         const JPH::RVec3 position = bodies.GetPosition(body.id);
         body.object->position = glm::vec3(static_cast<float>(position.GetX()),
                                           static_cast<float>(position.GetY()),
                                           static_cast<float>(position.GetZ()));
+        glm::vec3 rotation;
+        if (fromJoltRotation(bodies.GetRotation(body.id), rotation)) {
+            body.object->rotation = rotation;
+        }
     }
 }
 

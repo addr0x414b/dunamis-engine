@@ -2,11 +2,13 @@
 #define VISUAL_SERVER_H
 
 #include <SDL3/SDL.h>
+#include <optional>
 #include <SDL3/SDL_vulkan.h>
 #include "spdlog/spdlog.h"
 #include "../core/editor_state.h"
 #include "../core/result.h"
 #include "../scene/camera.h"
+#include "../scene/runtime_transform_edit.h"
 #include "../scene/scene.h"
 
 #include "vulkan_context.h"
@@ -22,6 +24,8 @@ public:
     void setImGuiInputEnabled(bool enabled) noexcept;
     void clearEditorSelection() noexcept;
     [[nodiscard]] EditorCommand consumeEditorCommand() noexcept;
+    [[nodiscard]] std::optional<RuntimeTransformEdit>
+    consumeRuntimeTransformEdit() noexcept;
     [[nodiscard]] bool sceneInteractionAreaHovered() const noexcept;
     void setCurrentScenePath(const std::string& path);
     [[nodiscard]] std::string requestedScenePath() const;

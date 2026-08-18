@@ -233,6 +233,11 @@ EditorCommand VisualServer::consumeEditorCommand() noexcept {
     return vulkanContext.consumeEditorCommand();
 }
 
+std::optional<RuntimeTransformEdit>
+VisualServer::consumeRuntimeTransformEdit() noexcept {
+    return vulkanContext.consumeRuntimeTransformEdit();
+}
+
 bool VisualServer::sceneInteractionAreaHovered() const noexcept {
     return vulkanContext.sceneInteractionAreaHovered();
 }

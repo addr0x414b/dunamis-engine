@@ -74,8 +74,7 @@ void Level1::init() {
     avocado->scale = glm::vec3(20.0f);
     avocado->physics.enabled = true;
     avocado->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
-    avocado->physics.colliderType = GameObject::PhysicsColliderType::Sphere;
-    avocado->physics.sphereRadius = 0.5f;
+    avocado->physics.colliderType = GameObject::PhysicsColliderType::ConvexHull;
     avocado->modelPath = "game/assets/models/Avocado.glb";
     requireSuccess(avocado->loadModel(), "Failed to load physics test Avocado");
     requireSuccess(addGameObject(std::move(avocado)),
