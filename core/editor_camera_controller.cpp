@@ -6,6 +6,7 @@
 #include <glm/glm.hpp>
 
 #include "../input/input_manager.h"
+#include "time.h"
 
 EditorCameraController::EditorCameraController() {
     camera_.position = glm::vec3(0.0f, 0.0f, 300.0f);
@@ -18,32 +19,34 @@ void EditorCameraController::update(const InputManager& input) {
         return;
     }
 
-    float speed = 1.0f;
+    float movementSpeedUnitsPerSecond = 60.0f;
     if (input.isKeyDown(SDLK_LSHIFT)) {
-        speed = 5.0f;
+        movementSpeedUnitsPerSecond = 300.0f;
     } else if (input.isKeyDown(SDLK_LCTRL)) {
-        speed = 0.3f;
+        movementSpeedUnitsPerSecond = 18.0f;
     }
 
+    const float movementDistance =
+        movementSpeedUnitsPerSecond * Time::deltaTime();
     const glm::vec3 right =
         glm::normalize(glm::cross(camera_.front, camera_.up));
     if (input.isKeyDown(SDLK_W)) {
-        camera_.position += speed * camera_.front;
+        camera_.position += movementDistance * camera_.front;
     }
     if (input.isKeyDown(SDLK_S)) {
-        camera_.position -= speed * camera_.front;
+        camera_.position -= movementDistance * camera_.front;
     }
     if (input.isKeyDown(SDLK_D)) {
-        camera_.position += speed * right;
+        camera_.position += movementDistance * right;
     }
     if (input.isKeyDown(SDLK_A)) {
-        camera_.position -= speed * right;
+        camera_.position -= movementDistance * right;
     }
     if (input.isKeyDown(SDLK_E)) {
-        camera_.position += speed * camera_.up;
+        camera_.position += movementDistance * camera_.up;
     }
     if (input.isKeyDown(SDLK_Q)) {
-        camera_.position -= speed * camera_.up;
+        camera_.position -= movementDistance * camera_.up;
     }
 
     constexpr float sensitivity = 0.1f;

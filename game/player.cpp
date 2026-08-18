@@ -6,6 +6,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include "../core/time.h"
+
 namespace {
 
 const glm::vec3 playerWorldUp{0.0f, 1.0f, 0.0f};
@@ -76,14 +78,14 @@ void Player::update(std::shared_ptr<InputManager> input) {
         return;
     }
 
+    float movementSpeedUnitsPerSecond = 60.0f;
     if (input->isKeyDown(SDLK_LSHIFT)) {
-        speed = 5.0f;
-    }else if (input->isKeyDown(SDLK_LCTRL)) {
-        speed = 0.3f;
+        movementSpeedUnitsPerSecond = 300.0f;
+    } else if (input->isKeyDown(SDLK_LCTRL)) {
+        movementSpeedUnitsPerSecond = 18.0f;
     }
-    else {
-        speed = 1.0f;
-    }
+    const float movementDistance =
+        movementSpeedUnitsPerSecond * Time::deltaTime();
 
     glm::vec3 right = glm::cross(camera->front, playerWorldUp);
     const float rightLength = glm::length(right);
@@ -99,27 +101,27 @@ void Player::update(std::shared_ptr<InputManager> input) {
     }
 
     if (input->isKeyDown(SDLK_W)) {
-        applyMovementDelta(speed * camera->front);
+        applyMovementDelta(movementDistance * camera->front);
     }
 
     if (input->isKeyDown(SDLK_D)) {
-        applyMovementDelta(speed * right);
+        applyMovementDelta(movementDistance * right);
     }
 
     if (input->isKeyDown(SDLK_A)) {
-        applyMovementDelta(-speed * right);
+        applyMovementDelta(-movementDistance * right);
     }
 
     if (input->isKeyDown(SDLK_S)) {
-        applyMovementDelta(-speed * camera->front);
+        applyMovementDelta(-movementDistance * camera->front);
     }
 
     if (input->isKeyDown(SDLK_E)) {
-        applyMovementDelta(speed * playerWorldUp);
+        applyMovementDelta(movementDistance * playerWorldUp);
     }
 
     if (input->isKeyDown(SDLK_Q)) {
-        applyMovementDelta(-speed * playerWorldUp);
+        applyMovementDelta(-movementDistance * playerWorldUp);
     }
 
     double xPos = input->getMouseRelX();

@@ -2,6 +2,7 @@
 
 #include <stdexcept>
 
+#include "../core/time.h"
 #include "../scene/type_registry.h"
 
 namespace {
@@ -161,11 +162,15 @@ void Level1::start() {
 }
 
 void Level1::update() {
+    constexpr float directionalLightRotationSpeedDegreesPerSecond = 30.0f;
     for (const auto& obj : gameObjects()) {
         obj->update();
         if (obj->name == "Direc Light") {
-            obj->rotation.x += 0.5f;
-            obj->rotation.y += 0.5f;
+            const float rotationDelta =
+                directionalLightRotationSpeedDegreesPerSecond *
+                Time::deltaTime();
+            obj->rotation.x += rotationDelta;
+            obj->rotation.y += rotationDelta;
 
         }
     }

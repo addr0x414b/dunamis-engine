@@ -2,6 +2,8 @@
 
 #include "../game/level_1.h"
 
+#include "time.h"
+
 #include "spdlog/spdlog.h"
 
 #include <exception>
@@ -127,7 +129,10 @@ Result Dunamis::run() {
     bool running = true;
 
     try {
+        Time::initialize();
         while (running) {
+            Time::update();
+
             SDL_Event e;
             while (SDL_PollEvent(&e)) {
                 visualServer.processEvent(e);

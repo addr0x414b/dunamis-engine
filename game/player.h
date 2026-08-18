@@ -26,7 +26,6 @@ private:
 
     void applyMovementDelta(const glm::vec3& delta) noexcept;
 
-    float speed = 1.0f;
     double yaw = -90.0f;
     double pitch = 0.0f;
 };

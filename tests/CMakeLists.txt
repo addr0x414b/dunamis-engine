@@ -37,6 +37,11 @@ target_include_directories(CameraTests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(CameraTests PRIVATE Camera glm spdlog)
 add_test(NAME camera_math COMMAND CameraTests)
 
+add_executable(TimeTests time_tests.cpp)
+target_include_directories(TimeTests PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(TimeTests PRIVATE Time)
+add_test(NAME time_semantics COMMAND TimeTests)
+
 add_executable(VulkanPartialCleanupTests vulkan_partial_cleanup_tests.cpp)
 add_dependencies(VulkanPartialCleanupTests DunamisEngine)
 
