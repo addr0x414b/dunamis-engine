@@ -41,6 +41,7 @@ build/
 
 .vscode/
 game/assets/
+/game/.cache/
 
 AGENTS.md
 .codex/

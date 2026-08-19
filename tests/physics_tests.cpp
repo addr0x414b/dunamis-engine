@@ -7,6 +7,7 @@
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
@@ -15,6 +16,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -22,6 +25,7 @@
 
 #include "../core/time.h"
 #include "../physics/physics_mesh_builder.h"
+#include "../physics/physics_shape_cache.h"
 #include "../physics/physics_server.h"
 #include "../physics/physics_units.h"
 #include "../scene/game_object.h"
@@ -191,6 +195,121 @@ JPH::ShapeRefC makeOffOriginHull() {
     JPH::ShapeSettings::ShapeResult result = settings.Create();
     expect(!result.HasError(), "failed to create off-origin convex hull");
     return result.Get();
+}
+
+JPH::ShapeRefC makeCachedMeshShape() {
+    JPH::TriangleList triangles;
+    triangles.emplace_back(JPH::Vec3(0.0f, 0.0f, 0.0f),
+                           JPH::Vec3(1.0f, 0.0f, 0.0f),
+                           JPH::Vec3(0.0f, 0.0f, 1.0f));
+    JPH::MeshShapeSettings settings(std::move(triangles));
+    settings.SetEmbedded();
+    JPH::ShapeSettings::ShapeResult result = settings.Create();
+    expect(!result.HasError(), "failed to create cache test mesh shape");
+    return result.Get();
+}
+
+void testCookedShapeCache() {
+    JPH::RegisterDefaultAllocator();
+    JPH::Factory::sInstance = new JPH::Factory();
+    JPH::RegisterTypes();
+
+    std::error_code error;
+    const std::filesystem::path directory =
+        std::filesystem::temp_directory_path() / "dunamis-physics-shape-cache-tests";
+    std::filesystem::remove_all(directory, error);
+    const std::vector<MeshInstance> geometry = {triangleInstance(glm::vec3(0.0f))};
+    const physics::StaticMeshShapeCacheKey key =
+        physics::makeStaticMeshShapeCacheKey("test-model", geometry, glm::vec3(1.0f));
+    const physics::StaticMeshShapeCacheKey sameKey =
+        physics::makeStaticMeshShapeCacheKey("test-model", geometry, glm::vec3(1.0f));
+    expect(key.stableHash == sameKey.stableHash,
+           "persistent cache key is not stable for identical input");
+
+    std::vector<MeshInstance> changedGeometry = geometry;
+    changedGeometry[0].mesh.vertices[0].pos.x = 2.0f;
+    const physics::StaticMeshShapeCacheKey changedGeometryKey =
+        physics::makeStaticMeshShapeCacheKey("test-model", changedGeometry, glm::vec3(1.0f));
+    expect(key.geometryFingerprint != changedGeometryKey.geometryFingerprint &&
+               key.stableHash != changedGeometryKey.stableHash,
+           "geometry changes did not invalidate persistent cache identity");
+    const physics::StaticMeshShapeCacheKey changedScaleKey =
+        physics::makeStaticMeshShapeCacheKey("test-model", geometry, glm::vec3(2.0f, 1.0f, 1.0f));
+    expect(key.stableHash != changedScaleKey.stableHash,
+           "scale changes did not invalidate persistent cache identity");
+    GameObject firstObject;
+    firstObject.position = glm::vec3(10.0f, 20.0f, 30.0f);
+    firstObject.rotation = glm::vec3(5.0f, 15.0f, 25.0f);
+    expect(static_cast<bool>(firstObject.addMeshInstance(triangleInstance(glm::vec3(0.0f)))),
+           "failed to create first position/rotation cache-key object");
+    GameObject secondObject;
+    secondObject.position = glm::vec3(-70.0f, 80.0f, -90.0f);
+    secondObject.rotation = glm::vec3(-45.0f, 90.0f, 180.0f);
+    expect(static_cast<bool>(secondObject.addMeshInstance(triangleInstance(glm::vec3(0.0f)))),
+           "failed to create second position/rotation cache-key object");
+    // Position and rotation are deliberately body state, not key inputs.
+    const physics::StaticMeshShapeCacheKey firstObjectKey =
+        physics::makeStaticMeshShapeCacheKey("test-model", firstObject.meshInstances(),
+                                              glm::vec3(1.0f));
+    const physics::StaticMeshShapeCacheKey secondObjectKey =
+        physics::makeStaticMeshShapeCacheKey("test-model", secondObject.meshInstances(),
+                                              glm::vec3(1.0f));
+    expect(firstObjectKey == secondObjectKey,
+           "position or rotation changed persistent cache identity");
+
+    physics::PhysicsShapeCache firstCache(directory);
+    const physics::ShapeCacheLoadResult missing = firstCache.load(key);
+    expect(missing.status == physics::ShapeCacheLoadStatus::Miss,
+           "missing cooked shape cache entry was not a miss");
+    JPH::ShapeRefC original = makeCachedMeshShape();
+    std::string saveError;
+    expect(firstCache.save(key, *original, saveError),
+           "failed to write cooked shape cache entry");
+    const std::filesystem::path cachePath = firstCache.pathFor(key);
+    expect(std::filesystem::exists(cachePath), "cooked cache final file missing");
+    expect(!std::filesystem::exists(cachePath.string() + ".tmp"),
+           "cooked cache temporary file remained after successful write");
+    original = nullptr;
+
+    physics::PhysicsShapeCache secondCache(directory);
+    const physics::ShapeCacheLoadResult restored = secondCache.load(key);
+    expect(restored.status == physics::ShapeCacheLoadStatus::Hit && restored.shape,
+           "second cache instance did not restore cooked shape");
+    expect(restored.shape->GetType() == JPH::EShapeType::Mesh,
+           "restored cooked shape is not a mesh");
+    expect(restored.shape->GetLocalBounds().Contains(JPH::Vec3(0.0f, 0.0f, 0.0f)),
+           "restored cooked mesh bounds are invalid");
+
+    const physics::StaticMeshShapeCacheKey corruptKey =
+        physics::makeStaticMeshShapeCacheKey("corrupt-model", geometry, glm::vec3(1.0f));
+    const std::filesystem::path corruptPath = secondCache.pathFor(corruptKey);
+    std::filesystem::create_directories(directory, error);
+    {
+        std::ofstream corrupt(corruptPath, std::ios::binary | std::ios::trunc);
+        corrupt << "garbage";
+    }
+    expect(secondCache.load(corruptKey).status == physics::ShapeCacheLoadStatus::Invalid,
+           "corrupt cooked cache entry was accepted");
+
+    const physics::StaticMeshShapeCacheKey versionKey =
+        physics::makeStaticMeshShapeCacheKey("version-model", geometry, glm::vec3(1.0f));
+    expect(secondCache.save(versionKey, *restored.shape, saveError),
+           "failed to create version cache entry");
+    {
+        std::fstream versionFile(secondCache.pathFor(versionKey),
+                                 std::ios::binary | std::ios::in | std::ios::out);
+        const std::uint32_t incompatibleVersion = physics::physicsShapeCacheVersion + 1;
+        versionFile.seekp(8);
+        versionFile.write(reinterpret_cast<const char*>(&incompatibleVersion),
+                          sizeof(incompatibleVersion));
+    }
+    expect(secondCache.load(versionKey).status == physics::ShapeCacheLoadStatus::Invalid,
+           "incompatible cooked cache version was accepted");
+
+    std::filesystem::remove_all(directory, error);
+    JPH::UnregisterTypes();
+    delete JPH::Factory::sInstance;
+    JPH::Factory::sInstance = nullptr;
 }
 
 void testOffOriginBodyPivot() {
@@ -495,6 +614,7 @@ int main() {
     testPhysicsUnits();
     testScaledLocalTriangleMesh();
     testConvexHullInputAndRotation();
+    testCookedShapeCache();
     testOffOriginBodyPivot();
     testDynamicConvexRotationIntegration();
     testFloorSphere();
