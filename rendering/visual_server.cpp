@@ -1,5 +1,7 @@
 #include "visual_server.h"
 
+#include <chrono>
+
 Result VisualServer::initialize(SDL_Window* window, Scene* scene) {
     spdlog::info("Initializing Visual Server...");
 
@@ -100,34 +102,72 @@ Result VisualServer::loadSceneResources(Scene* scene) {
         return Result::failure(
             "Failed to begin scene resource loading: " + result.error());
     }
+    result = vulkanContext.beginSceneUploadBatch();
+    if (!result) {
+        (void)vulkanContext.cancelSceneResourceLoad();
+        return Result::failure("Failed to begin scene upload batch: " +
+                               result.error());
+    }
+
+    using Clock = std::chrono::steady_clock;
+    Clock::duration textureImages{};
+    Clock::duration imageViews{};
+    Clock::duration samplers{};
+    Clock::duration vertexBuffers{};
+    Clock::duration indexBuffers{};
+    Clock::duration uniformBuffers{};
+    Clock::duration descriptorSets{};
+    Clock::duration uploadCompletion{};
+    Clock::duration commit{};
+    const Clock::time_point totalStart = Clock::now();
+    const auto measure = [](Clock::duration& total, auto&& operation) {
+        const Clock::time_point start = Clock::now();
+        Result measured = operation();
+        total += Clock::now() - start;
+        return measured;
+    };
 
     spdlog::info("Initializing scene game object visual data...");
     for (const auto& gameObject : scene->gameObjects()) {
-        result = vulkanContext.createTextureImages(gameObject);
+        result = measure(textureImages, [&] {
+            return vulkanContext.createTextureImages(gameObject);
+        });
         if (!result) {
             break;
         }
-        result = vulkanContext.createTextureImageViews(gameObject);
+        result = measure(imageViews, [&] {
+            return vulkanContext.createTextureImageViews(gameObject);
+        });
         if (!result) {
             break;
         }
-        result = vulkanContext.createTextureSamplers(gameObject);
+        result = measure(samplers, [&] {
+            return vulkanContext.createTextureSamplers(gameObject);
+        });
         if (!result) {
             break;
         }
-        result = vulkanContext.createVertexBuffers(gameObject);
+        result = measure(vertexBuffers, [&] {
+            return vulkanContext.createVertexBuffers(gameObject);
+        });
         if (!result) {
             break;
         }
-        result = vulkanContext.createIndexBuffers(gameObject);
+        result = measure(indexBuffers, [&] {
+            return vulkanContext.createIndexBuffers(gameObject);
+        });
         if (!result) {
             break;
         }
-        result = vulkanContext.createUniformBuffers(gameObject);
+        result = measure(uniformBuffers, [&] {
+            return vulkanContext.createUniformBuffers(gameObject);
+        });
         if (!result) {
             break;
         }
-        result = vulkanContext.createDescriptorSets(gameObject);
+        result = measure(descriptorSets, [&] {
+            return vulkanContext.createDescriptorSets(gameObject);
+        });
         if (!result) {
             break;
         }
@@ -144,7 +184,24 @@ Result VisualServer::loadSceneResources(Scene* scene) {
             "Scene rendering resource creation failed: " + result.error());
     }
 
-    result = vulkanContext.commitSceneResourceLoad(scene);
+    result = measure(uploadCompletion, [&] {
+        return vulkanContext.finishSceneUploadBatch();
+    });
+    if (!result) {
+        const Result cleanupResult = vulkanContext.cancelSceneResourceLoad();
+        if (!cleanupResult) {
+            return Result::failure("Scene upload completion failed: " +
+                                   result.error() +
+                                   "; partial-resource cleanup failed: " +
+                                   cleanupResult.error());
+        }
+        return Result::failure("Scene upload completion failed: " +
+                               result.error());
+    }
+
+    result = measure(commit, [&] {
+        return vulkanContext.commitSceneResourceLoad(scene);
+    });
     if (!result) {
         const Result cleanupResult = vulkanContext.cancelSceneResourceLoad();
         if (!cleanupResult) {
@@ -157,6 +214,28 @@ Result VisualServer::loadSceneResources(Scene* scene) {
             "Failed to commit scene rendering resources: " +
             result.error());
     }
+    const auto milliseconds = [](Clock::duration duration) {
+        return std::chrono::duration<double, std::milli>(duration).count();
+    };
+    const auto& stats = vulkanContext.resourceLoadStats_;
+    spdlog::info(
+        "Rendering resource load: texture images/uploads {:.2f} ms, image "
+        "views {:.2f} ms, samplers {:.2f} ms, vertex buffers/uploads {:.2f} "
+        "ms, index buffers/uploads {:.2f} ms, uniform buffers {:.2f} ms, "
+        "descriptor sets {:.2f} ms, upload completion {:.2f} ms, scene "
+        "resource commit {:.2f} ms, total {:.2f} ms; mesh instances {}, GPU "
+        "model cache hits {}, misses {}, texture uploads {}, vertex uploads "
+        "{}, index uploads {}, single-use submissions {}, queue-idle waits {}, "
+        "fence waits {}",
+        milliseconds(textureImages), milliseconds(imageViews),
+        milliseconds(samplers), milliseconds(vertexBuffers),
+        milliseconds(indexBuffers), milliseconds(uniformBuffers),
+        milliseconds(descriptorSets), milliseconds(uploadCompletion),
+        milliseconds(commit), milliseconds(Clock::now() - totalStart),
+        stats.meshInstances, stats.modelCacheHits, stats.modelCacheMisses,
+        stats.textureUploads, stats.vertexBufferUploads,
+        stats.indexBufferUploads, stats.singleUseSubmissions,
+        stats.queueIdleWaits, stats.fenceWaits);
     spdlog::info("Successfully initialized all game object visual data");
     return Result::success();
 }

@@ -289,6 +289,25 @@ bool testModelLoading(const std::filesystem::path& modelPath) {
     return passed;
 }
 
+bool testSharedGpuAssetReferences() {
+    auto asset = std::make_shared<GpuMeshAsset>();
+    asset->vertexBuffer = foreignBuffer();
+    MeshInstance editing;
+    MeshInstance runtime;
+    editing.gpuAsset = asset;
+    runtime.gpuAsset = asset;
+    bool passed = expect(editing.gpuAsset == runtime.gpuAsset,
+                         "Identical instances did not share a GPU asset");
+    runtime.gpuAsset.reset();
+    passed &= expect(editing.gpuAsset &&
+                         editing.gpuAsset->vertexBuffer == foreignBuffer(),
+                     "Runtime release invalidated the editing GPU asset");
+    editing.gpuAsset.reset();
+    passed &= expect(asset.use_count() == 1,
+                     "Scene references did not release independently");
+    return passed;
+}
+
 }  // namespace
 
 int main() {
@@ -297,6 +316,7 @@ int main() {
     bool passed = testIncomingStateAndBounds();
     passed &= testTopologyLock(modelPath);
     passed &= testModelLoading(modelPath);
+    passed &= testSharedGpuAssetReferences();
     std::error_code error;
     std::filesystem::remove(modelPath, error);
     return passed ? 0 : 1;

@@ -19,6 +19,7 @@
 
 #include "../core/result.h"
 #include "../scene/game_object.h"
+#include "../scene/loading_cache_key.h"
 #include "../scene/scene.h"
 #include "imgui_layer.h"
 #include "directional_shadow.h"
@@ -86,6 +87,8 @@ private:
     [[nodiscard]] Result createAmbientOcclusionResources();
     [[nodiscard]] Result initializeDirectionalShadowImages();
     [[nodiscard]] Result beginSceneResourceLoad(Scene* scene);
+    [[nodiscard]] Result beginSceneUploadBatch();
+    [[nodiscard]] Result finishSceneUploadBatch();
     [[nodiscard]] Result commitSceneResourceLoad(Scene* scene);
     [[nodiscard]] Result cancelSceneResourceLoad();
     [[nodiscard]] Result unloadSceneResources(Scene* scene);
@@ -139,6 +142,11 @@ private:
         std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> sets{};
     };
 
+    struct GpuModelAsset {
+        std::vector<std::shared_ptr<GpuMeshAsset>> meshes;
+        bool complete = false;
+    };
+
     struct SceneResourceOwnership {
         std::vector<OwnedBufferAllocation> temporaryBuffers;
         std::vector<OwnedBufferAllocation> buffers;
@@ -148,6 +156,19 @@ private:
         std::vector<OwnedDescriptorSets> descriptorSets;
         std::vector<RenderData*> renderData;
         std::vector<GameObject*> attachedGameObjects;
+        std::vector<std::shared_ptr<GpuModelAsset>> uncachedGpuModels;
+    };
+
+    struct ResourceLoadStats {
+        std::size_t meshInstances = 0;
+        std::size_t modelCacheHits = 0;
+        std::size_t modelCacheMisses = 0;
+        std::size_t textureUploads = 0;
+        std::size_t vertexBufferUploads = 0;
+        std::size_t indexBufferUploads = 0;
+        std::size_t singleUseSubmissions = 0;
+        std::size_t queueIdleWaits = 0;
+        std::size_t fenceWaits = 0;
     };
 
     [[nodiscard]] Result validateSceneRenderStateIsEmpty(
@@ -158,6 +179,11 @@ private:
     void cleanupTrackedSceneResources() noexcept;
     void cleanupSceneResources(SceneResourceOwnership& resources,
                                bool freeDescriptorSets) noexcept;
+    void cancelSceneUploadBatch() noexcept;
+    void cleanupCompletedUploadStaging() noexcept;
+    void destroyGpuModelAsset(GpuModelAsset& asset) noexcept;
+    void destroyGpuAssetCache() noexcept;
+    void clearGpuAliases(GameObject& object) noexcept;
 
     void updateUniformBuffer(uint32_t currentImage,
                              const std::unique_ptr<GameObject>& gameObject,
@@ -301,6 +327,9 @@ private:
     bool framebufferResized = false;
     bool hasSubmittedWork = false;
     bool singleTimeSubmissionMayBePending = false;
+    bool sceneUploadBatchActive_ = false;
+    bool sceneUploadBatchHasCommands_ = false;
+    VkCommandBuffer sceneUploadCommandBuffer_ = VK_NULL_HANDLE;
 
     VkInstance instance = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT debugMessenger = VK_NULL_HANDLE;
@@ -437,6 +466,13 @@ private:
     std::vector<RenderData*> ownedRenderData;
     std::unordered_map<const Scene*, SceneResourceOwnership>
         sceneResourceOwnership_;
+    std::unordered_map<model_loading::ModelAssetCacheKey,
+                       std::shared_ptr<GpuModelAsset>,
+                       model_loading::ModelAssetCacheKeyHash>
+        gpuModelAssetCache_;
+    std::vector<model_loading::ModelAssetCacheKey> pendingGpuModelKeys_;
+    std::vector<std::shared_ptr<GpuModelAsset>> pendingUncachedGpuModels_;
+    ResourceLoadStats resourceLoadStats_{};
     const Scene* sceneResourceLoadTarget_ = nullptr;
 
     ImGuiLayer imguiLayer;

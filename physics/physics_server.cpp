@@ -17,13 +17,17 @@
 #include <Jolt/RegisterTypes.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdarg>
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
+#include <cstring>
 #include <exception>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -33,6 +37,7 @@
 
 #include "../core/time.h"
 #include "../scene/game_object.h"
+#include "../scene/loading_cache_key.h"
 #include "../scene/scene.h"
 #include "physics_mesh_builder.h"
 #include "physics_units.h"
@@ -153,6 +158,49 @@ double milliseconds(std::chrono::steady_clock::duration duration) {
 }  // namespace
 
 struct PhysicsServer::Impl {
+    struct StaticShapeKey {
+        model_loading::ModelAssetCacheKey model;
+        std::array<std::uint32_t, 3> scaleBits{};
+        GameObject::PhysicsColliderType collider =
+            GameObject::PhysicsColliderType::Mesh;
+
+        bool operator==(const StaticShapeKey& other) const noexcept {
+            return model == other.model && scaleBits == other.scaleBits &&
+                   collider == other.collider;
+        }
+    };
+
+    struct StaticShapeKeyHash {
+        std::size_t operator()(const StaticShapeKey& key) const noexcept {
+            std::size_t result =
+                model_loading::ModelAssetCacheKeyHash{}(key.model);
+            const auto combine = [&result](std::size_t value) {
+                result ^= value + static_cast<std::size_t>(0x9e3779b9) +
+                          (result << 6) + (result >> 2);
+            };
+            for (std::uint32_t value : key.scaleBits) combine(value);
+            combine(static_cast<std::size_t>(key.collider));
+            return result;
+        }
+    };
+
+    static StaticShapeKey makeStaticShapeKey(const GameObject& object) {
+        const auto normalizedBits = [](float value) {
+            const float normalized = value == 0.0f ? 0.0f : value;
+            std::uint32_t bits = 0;
+            std::memcpy(&bits, &normalized, sizeof(bits));
+            return bits;
+        };
+        StaticShapeKey key;
+        key.model = model_loading::makeModelAssetCacheKey(
+            object.modelPath, object.texturePath);
+        key.scaleBits = std::array<std::uint32_t, 3>{
+            normalizedBits(object.scale.x), normalizedBits(object.scale.y),
+            normalizedBits(object.scale.z)};
+        key.collider = object.physics.colliderType;
+        return key;
+    }
+
     struct RuntimeBody {
         JPH::BodyID id;
         GameObject* object = nullptr;
@@ -168,6 +216,8 @@ struct PhysicsServer::Impl {
     std::unique_ptr<JPH::JobSystemThreadPool> jobSystem;
     std::unique_ptr<JPH::PhysicsSystem> physicsSystem;
     std::vector<RuntimeBody> runtimeBodies;
+    std::unordered_map<StaticShapeKey, JPH::ShapeRefC, StaticShapeKeyHash>
+        staticShapeCache;
     bool factoryCreated = false;
     bool typesRegistered = false;
     bool initialized = false;
@@ -262,6 +312,8 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
         JPH::BodyInterface& bodies = impl_->physicsSystem->GetBodyInterface();
         std::size_t staticCount = 0;
         std::size_t dynamicCount = 0;
+        std::size_t staticShapeCacheHits = 0;
+        std::size_t staticShapeCacheMisses = 0;
 
         for (const std::unique_ptr<GameObject>& objectOwner :
              runtimeScene.gameObjects()) {
@@ -286,40 +338,52 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
 
             JPH::BodyID bodyId;
             if (settings.motionType == GameObject::PhysicsMotionType::Static) {
-                physics::ScaledLocalTriangleMesh mesh;
-                const Clock::time_point conversionStart = Clock::now();
-                Result meshResult = physics::buildScaledLocalTriangleMesh(
-                    object.meshInstances(), object.scale, mesh);
-                staticMeshConversion += Clock::now() - conversionStart;
-                if (!meshResult) {
-                    endRuntimeSession();
-                    return Result::failure("Failed to build static collision for " +
-                                           objectDescription(object) + ": " +
-                                           meshResult.error());
-                }
-                JPH::TriangleList triangles;
-                triangles.reserve(mesh.indices.size() / 3);
-                for (std::size_t index = 0; index < mesh.indices.size(); index += 3) {
-                    const glm::vec3& a = mesh.vertices[mesh.indices[index]];
-                    const glm::vec3& b = mesh.vertices[mesh.indices[index + 1]];
-                    const glm::vec3& c = mesh.vertices[mesh.indices[index + 2]];
-                    triangles.emplace_back(JPH::Vec3(a.x, a.y, a.z),
-                                           JPH::Vec3(b.x, b.y, b.z),
-                                           JPH::Vec3(c.x, c.y, c.z));
-                }
-                const Clock::time_point cookingStart = Clock::now();
-                JPH::MeshShapeSettings shapeSettings(std::move(triangles));
-                shapeSettings.SetEmbedded();
-                JPH::ShapeSettings::ShapeResult shapeResult = shapeSettings.Create();
-                staticShapeCooking += Clock::now() - cookingStart;
-                if (shapeResult.HasError()) {
-                    endRuntimeSession();
-                    return Result::failure("Failed to create mesh shape for " +
-                                           objectDescription(object) + ": " +
-                                           shapeResult.GetError().c_str());
+                const Impl::StaticShapeKey key =
+                    Impl::makeStaticShapeKey(object);
+                JPH::ShapeRefC shape;
+                const auto cached = impl_->staticShapeCache.find(key);
+                if (cached != impl_->staticShapeCache.end()) {
+                    shape = cached->second;
+                    ++staticShapeCacheHits;
+                } else {
+                    ++staticShapeCacheMisses;
+                    physics::ScaledLocalTriangleMesh mesh;
+                    const Clock::time_point conversionStart = Clock::now();
+                    Result meshResult = physics::buildScaledLocalTriangleMesh(
+                        object.meshInstances(), object.scale, mesh);
+                    staticMeshConversion += Clock::now() - conversionStart;
+                    if (!meshResult) {
+                        endRuntimeSession();
+                        return Result::failure("Failed to build static collision for " +
+                                               objectDescription(object) + ": " +
+                                               meshResult.error());
+                    }
+                    JPH::TriangleList triangles;
+                    triangles.reserve(mesh.indices.size() / 3);
+                    for (std::size_t index = 0; index < mesh.indices.size(); index += 3) {
+                        const glm::vec3& a = mesh.vertices[mesh.indices[index]];
+                        const glm::vec3& b = mesh.vertices[mesh.indices[index + 1]];
+                        const glm::vec3& c = mesh.vertices[mesh.indices[index + 2]];
+                        triangles.emplace_back(JPH::Vec3(a.x, a.y, a.z),
+                                               JPH::Vec3(b.x, b.y, b.z),
+                                               JPH::Vec3(c.x, c.y, c.z));
+                    }
+                    const Clock::time_point cookingStart = Clock::now();
+                    JPH::MeshShapeSettings shapeSettings(std::move(triangles));
+                    shapeSettings.SetEmbedded();
+                    JPH::ShapeSettings::ShapeResult shapeResult = shapeSettings.Create();
+                    staticShapeCooking += Clock::now() - cookingStart;
+                    if (shapeResult.HasError()) {
+                        endRuntimeSession();
+                        return Result::failure("Failed to create mesh shape for " +
+                                               objectDescription(object) + ": " +
+                                               shapeResult.GetError().c_str());
+                    }
+                    shape = shapeResult.Get();
+                    impl_->staticShapeCache.emplace(key, shape);
                 }
                 JPH::BodyCreationSettings bodySettings(
-                    shapeResult.Get(), toJoltPosition(object.position),
+                    shape.GetPtr(), toJoltPosition(object.position),
                     toJoltRotation(object.rotation), JPH::EMotionType::Static,
                     layers::nonMoving);
                 const Clock::time_point creationStart = Clock::now();
@@ -396,11 +460,12 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
         broadPhaseOptimization += Clock::now() - broadPhaseStart;
         spdlog::info("Runtime physics world created: {} static, {} dynamic",
                      staticCount, dynamicCount);
-        spdlog::info("Physics startup: static mesh conversion {:.2f} ms, static shape cooking {:.2f} ms, dynamic convex cooking {:.2f} ms, body creation {:.2f} ms, broadphase optimization {:.2f} ms, total {:.2f} ms",
+        spdlog::info("Physics startup: static mesh conversion {:.2f} ms, static shape cooking {:.2f} ms, dynamic convex cooking {:.2f} ms, body creation {:.2f} ms, broadphase optimization {:.2f} ms, total {:.2f} ms; static shape cache hits {}, misses {}",
                      milliseconds(staticMeshConversion), milliseconds(staticShapeCooking),
                      milliseconds(convexCooking), milliseconds(bodyCreation),
                      milliseconds(broadPhaseOptimization),
-                     milliseconds(Clock::now() - totalStart));
+                     milliseconds(Clock::now() - totalStart),
+                     staticShapeCacheHits, staticShapeCacheMisses);
         return Result::success();
     } catch (const std::exception& exception) {
         endRuntimeSession();
@@ -508,6 +573,7 @@ void PhysicsServer::shutdown() noexcept {
     }
     endRuntimeSession();
     try {
+        impl_->staticShapeCache.clear();
         impl_->jobSystem.reset();
         impl_->tempAllocator.reset();
         if (impl_->typesRegistered) {

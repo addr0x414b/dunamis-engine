@@ -334,10 +334,32 @@ struct RenderData {
     std::vector<VkDescriptorSet> descriptorSets;
 };
 
+// Immutable device resources are owned by VulkanContext's asset cache. Scene
+// mesh instances retain a shared reference but never destroy these handles.
+struct GpuMeshAsset {
+    VkBuffer vertexBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
+    VkBuffer indexBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory indexBufferMemory = VK_NULL_HANDLE;
+    VkImage textureImage = VK_NULL_HANDLE;
+    VkDeviceMemory textureImageMemory = VK_NULL_HANDLE;
+    VkImageView textureImageView = VK_NULL_HANDLE;
+    VkSampler textureSampler = VK_NULL_HANDLE;
+    VkImage normalMapImage = VK_NULL_HANDLE;
+    VkDeviceMemory normalMapImageMemory = VK_NULL_HANDLE;
+    VkImageView normalMapImageView = VK_NULL_HANDLE;
+    VkSampler normalMapSampler = VK_NULL_HANDLE;
+    VkImage metallicRoughnessMapImage = VK_NULL_HANDLE;
+    VkDeviceMemory metallicRoughnessMapImageMemory = VK_NULL_HANDLE;
+    VkImageView metallicRoughnessMapImageView = VK_NULL_HANDLE;
+    VkSampler metallicRoughnessMapSampler = VK_NULL_HANDLE;
+};
+
 struct MeshInstance {
     Mesh mesh;
     Material material;
     RenderData renderData;
+    std::shared_ptr<GpuMeshAsset> gpuAsset;
 };
 
 
