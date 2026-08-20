@@ -29,6 +29,30 @@ bool isNormalized(const glm::vec3& value) {
            std::fabs(glm::length(value) - 1.0f) < 1.0e-5f;
 }
 
+bool runFovTests() {
+    bool passed = true;
+    Camera defaultCamera;
+    Camera wideCamera;
+    Camera otherCamera;
+
+    passed &= expect(defaultCamera.fov() == 60.0f &&
+                         otherCamera.fov() == 60.0f,
+                     "Camera default FOV was not 60 degrees");
+    passed &= expect(wideCamera.setFov(90.0f) &&
+                         wideCamera.fov() == 90.0f &&
+                         otherCamera.fov() == 60.0f,
+                     "Camera FOV was not independently configurable");
+
+    passed &= expect(!wideCamera.setFov(0.0f) &&
+                         wideCamera.fov() == 90.0f,
+                     "Invalid Camera FOV changed the current value");
+    passed &= expect(!wideCamera.setFov(180.0f) &&
+                         !wideCamera.setFov(
+                             std::numeric_limits<float>::quiet_NaN()),
+                     "Invalid Camera FOV was accepted");
+    return passed;
+}
+
 bool hasValidBasis(const Camera& camera) {
     const glm::vec3 cross = glm::cross(camera.front, camera.up);
     return isFiniteVector(cross) && glm::length(cross) > 1.0e-4f;
@@ -201,7 +225,8 @@ bool runOrientationDeltaTests() {
 }  // namespace
 
 int main() {
-    return runDerivationTests() && runYawPitchMutationTests() &&
+    return runFovTests() && runDerivationTests() &&
+                   runYawPitchMutationTests() &&
                    runOrientationDeltaTests()
                ? 0
                : 1;

@@ -4,7 +4,7 @@
 
 namespace {
 
-constexpr int windowWidth = 2560;
+constexpr int windowWidth = 3440;
 constexpr int windowHeight = 1440;
 
 std::string sdlError(const std::string& message) {

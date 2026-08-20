@@ -21,7 +21,7 @@ void EditorCameraController::update(const InputManager& input) {
 
     float movementSpeedUnitsPerSecond = 60.0f;
     if (input.isKeyDown(SDLK_LSHIFT)) {
-        movementSpeedUnitsPerSecond = 300.0f;
+        movementSpeedUnitsPerSecond = 2000.0f;
     } else if (input.isKeyDown(SDLK_LCTRL)) {
         movementSpeedUnitsPerSecond = 18.0f;
     }

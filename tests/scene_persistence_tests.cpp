@@ -330,16 +330,25 @@ bool managerDirtyTests() {
     Camera editor;
     auto* editingCustom = static_cast<CustomObject*>(
         manager.editingScene()->findGameObject("custom"));
+    auto* editingCamera = static_cast<Camera*>(
+        manager.editingScene()->findGameObject("camera"));
     editingCustom->spinSpeed = 270.0f;
     editingCustom->runtimeOnly = 777.0f;
+    const bool configuredCameraFov = editingCamera->setFov(90.0f);
     result = manager.prepareRuntimeScene();
     const auto* runtimeCustom = result
         ? static_cast<const CustomObject*>(
               manager.runtimeScene()->findGameObject("custom"))
         : nullptr;
+    const auto* runtimeCamera = result
+        ? static_cast<const Camera*>(
+              manager.runtimeScene()->findGameObject("camera"))
+        : nullptr;
     passed &= expect(result && runtimeCustom &&
                          runtimeCustom->spinSpeed == 270.0f &&
-                         runtimeCustom->runtimeOnly == 99.0f,
+                         runtimeCustom->runtimeOnly == 99.0f &&
+                         configuredCameraFov && runtimeCamera &&
+                         runtimeCamera->fov() == 90.0f,
                      "generic runtime transfer omitted authored custom state or copied runtime-only state");
     manager.cancelPreparedRuntimeScene();
     result = manager.saveEditingScene(editor);

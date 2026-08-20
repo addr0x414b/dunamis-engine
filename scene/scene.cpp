@@ -315,6 +315,10 @@ Result Scene::copyAuthoringStateTo(Scene& runtimeScene) const {
             auto& runtimeCamera = static_cast<Camera&>(runtimeObject);
             runtimeCamera.front = editorCamera->front;
             runtimeCamera.up = editorCamera->up;
+            if (!runtimeCamera.setFov(editorCamera->fov())) {
+                return Result::failure(
+                    "Standalone camera FOV is invalid during authoring transfer");
+            }
         }
 
         const Camera* editorAttachedCamera = editorObject.attachedCamera();
@@ -323,6 +327,10 @@ Result Scene::copyAuthoringStateTo(Scene& runtimeScene) const {
             runtimeAttachedCamera->position = editorAttachedCamera->position;
             runtimeAttachedCamera->front = editorAttachedCamera->front;
             runtimeAttachedCamera->up = editorAttachedCamera->up;
+            if (!runtimeAttachedCamera->setFov(editorAttachedCamera->fov())) {
+                return Result::failure(
+                    "Attached camera FOV is invalid during authoring transfer");
+            }
         }
     }
 

@@ -4747,7 +4747,7 @@ Result VulkanContext::drawFrame(Scene* scene, const Camera& renderCamera,
         renderCamera.position, renderCamera.position + renderCamera.front,
         renderCamera.up);
     glm::mat4 projection = glm::perspective(
-        glm::radians(45.0f),
+        glm::radians(renderCamera.fov()),
         swapchainExtent.width / static_cast<float>(swapchainExtent.height),
         0.1f, 10000.0f);
     projection[1][1] *= -1.0f;

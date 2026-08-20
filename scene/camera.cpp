@@ -57,10 +57,28 @@ bool hasValidBasis(const glm::vec3& front,
            crossLengthSquared > minimumVectorLengthSquared;
 }
 
+bool isValidFovDegrees(float fovDegrees) noexcept {
+    return std::isfinite(fovDegrees) && fovDegrees > 0.0f &&
+           fovDegrees < 180.0f;
+}
+
 }  // namespace
 
 Camera::Camera() {
     name = "Camera";
+}
+
+float Camera::fov() const noexcept {
+    return fovDegrees_;
+}
+
+bool Camera::setFov(float fovDegrees) noexcept {
+    if (!isValidFovDegrees(fovDegrees)) {
+        return false;
+    }
+
+    fovDegrees_ = fovDegrees;
+    return true;
 }
 
 bool Camera::deriveYawPitchDegrees(double& yawDegrees,

@@ -196,6 +196,8 @@ bool runAuthoringTransferTests() {
     editingCamera->scale = {37.0f, 38.0f, 39.0f};
     editingCamera->front = {0.5f, 0.25f, -0.75f};
     editingCamera->up = {0.0f, 0.5f, 0.5f};
+    passed &= expect(editingCamera->setFov(90.0f),
+                     "Could not configure standalone camera FOV");
     auto runtimeCamera = std::make_unique<Camera>();
     Camera* runtimeCameraPointer = runtimeCamera.get();
     passed &= expect(static_cast<bool>(
@@ -212,6 +214,8 @@ bool runAuthoringTransferTests() {
     editingPlayer->camera->position = {11.0f, 22.0f, 33.0f};
     editingPlayer->camera->front = {0.25f, 0.5f, -0.75f};
     editingPlayer->camera->up = {0.0f, 0.8f, 0.2f};
+    passed &= expect(editingPlayer->camera->setFov(75.0f),
+                     "Could not configure attached camera FOV");
     const glm::vec3 editingPlayerCameraPosition =
         editingPlayer->camera->position;
     const glm::vec3 editingPlayerCameraFront = editingPlayer->camera->front;
@@ -282,7 +286,8 @@ bool runAuthoringTransferTests() {
                          runtimeCameraPointer->rotation == editingCameraPointer->rotation &&
                          runtimeCameraPointer->scale == editingCameraPointer->scale &&
                          runtimeCameraPointer->front == editingCameraPointer->front &&
-                         runtimeCameraPointer->up == editingCameraPointer->up,
+                         runtimeCameraPointer->up == editingCameraPointer->up &&
+                         runtimeCameraPointer->fov() == editingCameraPointer->fov(),
                      "Standalone Camera authoring state was not transferred");
     passed &= expect(
         runtimePlayerPointer->attachedCamera()->position ==
@@ -290,7 +295,9 @@ bool runAuthoringTransferTests() {
             runtimePlayerPointer->attachedCamera()->front ==
                 editingPlayerCameraFront &&
             runtimePlayerPointer->attachedCamera()->up ==
-                editingPlayerCameraUp,
+                editingPlayerCameraUp &&
+            runtimePlayerPointer->attachedCamera()->fov() ==
+                editingPlayerPointer->attachedCamera()->fov(),
         "Attached camera authoring state was not transferred");
     passed &= expect(
         editingPlayerPointer->attachedCamera()->position ==

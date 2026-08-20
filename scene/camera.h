@@ -7,6 +7,10 @@ class Camera : public GameObject {
 public:
     Camera();
 
+    // Vertical field of view in degrees.
+    [[nodiscard]] float fov() const noexcept;
+    [[nodiscard]] bool setFov(float fovDegrees) noexcept;
+
     [[nodiscard]] bool deriveYawPitchDegrees(
         double& yawDegrees, double& pitchDegrees) const noexcept;
     [[nodiscard]] bool setYawPitchDegrees(
@@ -17,6 +21,9 @@ public:
 
     glm::vec3 front = glm::vec3(0.0f, 0.0f, -1.0f);
     glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
+
+private:
+    float fovDegrees_ = 60.0f;
 };
 
 #endif

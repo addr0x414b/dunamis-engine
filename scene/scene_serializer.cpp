@@ -318,5 +318,9 @@ Result SceneSerializer::copyAuthoredState(const Scene& source,
     Result result = serializeAuthored(source, registry, document);
     if (!result) return result;
     SceneLoadData ignored;
-    return applyDocument(document, destination, registry, ignored);
+    result = applyDocument(document, destination, registry, ignored);
+    if (!result) return result;
+    // FOV is intentionally not part of the persisted scene format yet, but it
+    // must survive the in-memory editor-to-runtime transfer.
+    return source.copyAuthoringStateTo(destination);
 }
