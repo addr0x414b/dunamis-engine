@@ -38,6 +38,7 @@
 #include "../core/time.h"
 #include "../scene/game_object.h"
 #include "../scene/loading_cache_key.h"
+#include "../scene/model_renderable.h"
 #include "../scene/scene.h"
 #include "physics_mesh_builder.h"
 #include "physics_shape_cache.h"
@@ -360,7 +361,8 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                     const Clock::time_point fingerprintStart = Clock::now();
                     const physics::StaticMeshShapeCacheKey diskKey =
                         physics::makeStaticMeshShapeCacheKey(
-                            key.modelIdentity, object.meshInstances(), object.scale,
+                            key.modelIdentity,
+                            object.modelRenderable().meshInstances(), object.scale,
                             static_cast<std::uint8_t>(settings.colliderType));
                     geometryFingerprint += Clock::now() - fingerprintStart;
                     physics::ShapeCacheLoadResult diskResult =
@@ -387,7 +389,8 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                         physics::ScaledLocalTriangleMesh mesh;
                         const Clock::time_point conversionStart = Clock::now();
                         Result meshResult = physics::buildScaledLocalTriangleMesh(
-                            object.meshInstances(), object.scale, mesh);
+                            object.modelRenderable().meshInstances(), object.scale,
+                            mesh);
                         staticMeshConversion += Clock::now() - conversionStart;
                         if (!meshResult) {
                             endRuntimeSession();
@@ -459,7 +462,7 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                 } else {
                     physics::LocalConvexHull hull;
                     Result hullResult = physics::buildScaledLocalConvexHull(
-                        object.meshInstances(), object.scale, hull);
+                        object.modelRenderable().meshInstances(), object.scale, hull);
                     if (!hullResult) {
                         endRuntimeSession();
                         return Result::failure("Failed to build dynamic convex hull for " +

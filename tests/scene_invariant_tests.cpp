@@ -1,5 +1,6 @@
 #include "scene/scene.h"
 #include "scene/scene_manager.h"
+#include "scene/model_renderable.h"
 #include "game/level_1.h"
 #include "input/input_manager.h"
 
@@ -595,7 +596,7 @@ static_assert(std::is_same_v<
               decltype(std::declval<TestScene&>().activeCamera()),
               const Camera*>);
 static_assert(std::is_same_v<
-              decltype(std::declval<GameObject&>().meshInstances()),
+              decltype(std::declval<ModelRenderable&>().meshInstances()),
               const std::vector<MeshInstance>&>);
 static_assert(std::is_same_v<
               decltype(std::declval<GameObject&>().loadModel()), Result>);
@@ -936,19 +937,19 @@ int main() {
                      "The light accessor accepted index 16");
 
     auto ordinaryObject = std::make_unique<GameObject>();
-    passed &= expect(ordinaryObject->meshInstances().empty(),
+    passed &= expect(ordinaryObject->modelRenderable().meshInstances().empty(),
                      "A new game object did not start without meshes");
     MeshInstance meshInstance{};
     meshInstance.mesh.vertices = {
         Vertex{{0.0f, 0.0f, 0.0f}}, Vertex{{1.0f, 0.0f, 0.0f}},
         Vertex{{0.0f, 1.0f, 0.0f}}};
     meshInstance.mesh.indices = {0, 1, 2};
-    const Result meshResult = ordinaryObject->addMeshInstance(
+    const Result meshResult = ordinaryObject->modelRenderable().addMeshInstance(
         std::move(meshInstance));
     passed &= expect(static_cast<bool>(meshResult),
                      "An inactive game object rejected a mesh instance");
-    passed &= expect(ordinaryObject->meshInstances().size() == 1 &&
-                         ordinaryObject->meshInstances().front()
+    passed &= expect(ordinaryObject->modelRenderable().meshInstances().size() == 1 &&
+                         ordinaryObject->modelRenderable().meshInstances().front()
                                  .mesh.indices.front() == 0,
                      "The checked mesh API did not preserve one mesh");
     const Result ordinaryObjectResult =

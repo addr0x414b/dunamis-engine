@@ -1,4 +1,5 @@
 #include "scene/game_object.h"
+#include "scene/model_renderable.h"
 
 #include <chrono>
 #include <filesystem>
@@ -11,7 +12,7 @@ class GameObjectModelCacheTestAccess {
 public:
     static std::weak_ptr<const model_loading::CachedCpuModel> asset(
         const GameObject& object) {
-        return object.loadedModelAsset_;
+        return object.modelRenderable().loadedModelAsset_;
     }
 };
 
@@ -117,9 +118,10 @@ bool testReuseIndependenceAndLifetime(const std::filesystem::path& directory) {
             passed &= expect(GameObjectModelCacheTestAccess::asset(runtime).lock() ==
                                  originalAsset.lock(),
                              "Equivalent normalized path did not reuse the asset");
-            const MeshInstance& a = editing.meshInstances().front();
+            const MeshInstance& a =
+                editing.modelRenderable().meshInstances().front();
             MeshInstance& b = const_cast<MeshInstance&>(
-                runtime.meshInstances().front());
+                runtime.modelRenderable().meshInstances().front());
             passed &= expect(a.mesh.vertices == b.mesh.vertices &&
                                  a.mesh.indices == b.mesh.indices &&
                                  a.material.baseColorFactor == b.material.baseColorFactor,
@@ -199,7 +201,8 @@ bool testKeyAndFailureBehavior(const std::filesystem::path& directory) {
     GameObject failed;
     const std::string missing = (directory / "missing.obj").string();
     failed.modelPath = missing.c_str();
-    passed &= expect(!failed.loadModel() && failed.meshInstances().empty() &&
+        passed &= expect(!failed.loadModel() &&
+                             failed.modelRenderable().meshInstances().empty() &&
                          GameObjectModelCacheTestAccess::asset(failed).expired(),
                      "Failed source load published or retained a cached asset");
     failed.modelPath = model.c_str();
@@ -216,7 +219,7 @@ bool testKeyAndFailureBehavior(const std::filesystem::path& directory) {
     {
         CurrentPathGuard noFallbackDirectory(noFallback);
         passed &= expect(!hardTextureFailure.loadModel() &&
-                             hardTextureFailure.meshInstances().empty() &&
+                             hardTextureFailure.modelRenderable().meshInstances().empty() &&
                              GameObjectModelCacheTestAccess::asset(
                                  hardTextureFailure).expired(),
                          "Hard texture/fallback failure entered the cache");

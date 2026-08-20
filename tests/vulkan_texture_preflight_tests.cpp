@@ -1,4 +1,5 @@
 #include "rendering/vulkan_context.h"
+#include "scene/model_renderable.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -29,7 +30,8 @@ int main() {
     MeshInstance instance{};
     instance.material.texWidth = 1;
     instance.material.texHeight = 1;
-    const Result addResult = object->addMeshInstance(std::move(instance));
+    const Result addResult = object->modelRenderable().addMeshInstance(
+        std::move(instance));
     if (!addResult) {
         std::cerr << addResult.error() << '\n';
         return 1;
@@ -52,7 +54,7 @@ int main() {
     normalMapInstance.material.texHeight = 1;
     normalMapInstance.material.mipLevels = 1;
     normalMapInstance.material.normalMapEnabled = true;
-    const Result normalAddResult = normalMapObject->addMeshInstance(
+    const Result normalAddResult = normalMapObject->modelRenderable().addMeshInstance(
         std::move(normalMapInstance));
     if (!normalAddResult) {
         std::cerr << normalAddResult.error() << '\n';
@@ -65,7 +67,7 @@ int main() {
         expect(normalResult.error().find("missing normal-map pixels") !=
                    std::string::npos,
                "Normal-map preflight error did not identify missing pixels");
-    stbi_image_free(normalMapObject->meshInstances().front().material.pixels);
+    stbi_image_free(normalMapObject->modelRenderable().meshInstances().front().material.pixels);
 
     auto metallicRoughnessObject = std::make_unique<GameObject>();
     MeshInstance metallicRoughnessInstance{};
@@ -76,7 +78,7 @@ int main() {
     metallicRoughnessInstance.material.mipLevels = 1;
     metallicRoughnessInstance.material.hasMetallicRoughnessMap = true;
     const Result metallicRoughnessAddResult =
-        metallicRoughnessObject->addMeshInstance(
+        metallicRoughnessObject->modelRenderable().addMeshInstance(
             std::move(metallicRoughnessInstance));
     if (!metallicRoughnessAddResult) {
         std::cerr << metallicRoughnessAddResult.error() << '\n';
@@ -93,7 +95,7 @@ int main() {
                "Metallic-roughness preflight error did not identify missing "
                "pixels");
     stbi_image_free(
-        metallicRoughnessObject->meshInstances().front().material.pixels);
+        metallicRoughnessObject->modelRenderable().meshInstances().front().material.pixels);
     context.cleanup();
     context.cleanup();
     return passed && normalPassed && metallicRoughnessPassed ? 0 : 1;

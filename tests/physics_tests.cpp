@@ -29,6 +29,7 @@
 #include "../physics/physics_server.h"
 #include "../physics/physics_units.h"
 #include "../scene/game_object.h"
+#include "../scene/model_renderable.h"
 #include "../scene/scene.h"
 
 class TimeTestAccess {
@@ -240,19 +241,23 @@ void testCookedShapeCache() {
     GameObject firstObject;
     firstObject.position = glm::vec3(10.0f, 20.0f, 30.0f);
     firstObject.rotation = glm::vec3(5.0f, 15.0f, 25.0f);
-    expect(static_cast<bool>(firstObject.addMeshInstance(triangleInstance(glm::vec3(0.0f)))),
+    expect(static_cast<bool>(firstObject.modelRenderable().addMeshInstance(
+               triangleInstance(glm::vec3(0.0f)))),
            "failed to create first position/rotation cache-key object");
     GameObject secondObject;
     secondObject.position = glm::vec3(-70.0f, 80.0f, -90.0f);
     secondObject.rotation = glm::vec3(-45.0f, 90.0f, 180.0f);
-    expect(static_cast<bool>(secondObject.addMeshInstance(triangleInstance(glm::vec3(0.0f)))),
+    expect(static_cast<bool>(secondObject.modelRenderable().addMeshInstance(
+               triangleInstance(glm::vec3(0.0f)))),
            "failed to create second position/rotation cache-key object");
     // Position and rotation are deliberately body state, not key inputs.
     const physics::StaticMeshShapeCacheKey firstObjectKey =
-        physics::makeStaticMeshShapeCacheKey("test-model", firstObject.meshInstances(),
+        physics::makeStaticMeshShapeCacheKey(
+            "test-model", firstObject.modelRenderable().meshInstances(),
                                               glm::vec3(1.0f));
     const physics::StaticMeshShapeCacheKey secondObjectKey =
-        physics::makeStaticMeshShapeCacheKey("test-model", secondObject.meshInstances(),
+        physics::makeStaticMeshShapeCacheKey(
+            "test-model", secondObject.modelRenderable().meshInstances(),
                                               glm::vec3(1.0f));
     expect(firstObjectKey == secondObjectKey,
            "position or rotation changed persistent cache identity");
@@ -419,7 +424,8 @@ void testPhysicsServerEditorRelease() {
     floor->physics.enabled = true;
     floor->physics.motionType = GameObject::PhysicsMotionType::Static;
     floor->physics.colliderType = GameObject::PhysicsColliderType::Mesh;
-    expect(static_cast<bool>(floor->addMeshInstance(floorInstance())), "failed to add floor mesh");
+    expect(static_cast<bool>(floor->modelRenderable().addMeshInstance(
+               floorInstance())), "failed to add floor mesh");
     expect(static_cast<bool>(scene.addGameObject(std::move(floor))), "failed to add floor object");
     auto prop = std::make_unique<GameObject>();
     GameObject* propPointer = prop.get();
@@ -428,7 +434,8 @@ void testPhysicsServerEditorRelease() {
     prop->physics.enabled = true;
     prop->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
     prop->physics.colliderType = GameObject::PhysicsColliderType::ConvexHull;
-    expect(static_cast<bool>(prop->addMeshInstance(tetrahedronInstance())), "failed to add prop mesh");
+    expect(static_cast<bool>(prop->modelRenderable().addMeshInstance(
+               tetrahedronInstance())), "failed to add prop mesh");
     expect(static_cast<bool>(scene.addGameObject(std::move(prop))), "failed to add prop object");
 
     PhysicsServer server;

@@ -2,6 +2,7 @@
 #include "rendering/visual_server.h"
 #include "rendering/vulkan_context.h"
 #include "scene/scene.h"
+#include "scene/model_renderable.h"
 
 #include <cstdlib>
 #include <cstdint>
@@ -78,7 +79,7 @@ public:
 class GameObjectTestAccess {
 public:
     [[nodiscard]] static bool mutableTopology(const GameObject& object) {
-        return object.renderTopologyMutable();
+        return object.modelRenderable().renderTopologyMutable();
     }
 };
 
@@ -122,7 +123,8 @@ Result addNoLightTriangle(Scene& scene) {
     instance.material.mipLevels = 1;
     instance.material.doubleSided = true;
 
-    Result result = object->addMeshInstance(std::move(instance));
+    Result result = object->modelRenderable().addMeshInstance(
+        std::move(instance));
     if (!result) {
         return result;
     }
@@ -158,7 +160,7 @@ int main(int argc, char** argv) {
         MeshInstance dirtyInstance{};
         dirtyInstance.material.textureSampler = foreignSamplerHandle();
         const Result addMeshResult =
-            object->addMeshInstance(std::move(dirtyInstance));
+            object->modelRenderable().addMeshInstance(std::move(dirtyInstance));
         if (addMeshResult ||
             addMeshResult.error().find("material Vulkan state") ==
                 std::string::npos) {
@@ -208,7 +210,7 @@ int main(int argc, char** argv) {
     EmptyScene resourceScene;
     auto resourceObject = std::make_unique<GameObject>();
     const Result addMeshResult =
-        resourceObject->addMeshInstance(MeshInstance{});
+        resourceObject->modelRenderable().addMeshInstance(MeshInstance{});
     if (!addMeshResult) {
         std::cerr << "Failed to build resource test mesh: "
                   << addMeshResult.error() << '\n';
@@ -341,7 +343,7 @@ int main(int argc, char** argv) {
 
     const RenderData& renderData =
         resourceScene.gameObjects().front()
-            ->meshInstances().front()
+            ->modelRenderable().meshInstances().front()
             .renderData;
     if (!renderData.uniformBuffers.empty() ||
         !renderData.uniformBuffersMemory.empty() ||

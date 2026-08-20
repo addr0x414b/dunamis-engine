@@ -1,6 +1,7 @@
 #include "rendering/editor_picking.h"
 #include "scene/camera.h"
 #include "scene/game_object.h"
+#include "scene/model_renderable.h"
 
 #include <cmath>
 #include <filesystem>
@@ -227,20 +228,22 @@ bool runMeshBoundsTests() {
     MeshInstance copiedImportedInstance{};
     copiedImportedInstance.mesh = secondInstance.mesh;
 
-    bool passed = expect(static_cast<bool>(firstObject.addMeshInstance(
-                             std::move(firstInstance))),
+    bool passed = expect(static_cast<bool>(firstObject.modelRenderable().addMeshInstance(
+        std::move(firstInstance))),
                          "Could not add first mesh instance");
-    passed &= expect(static_cast<bool>(secondObject.addMeshInstance(
-                         std::move(secondInstance))),
+    passed &= expect(static_cast<bool>(secondObject.modelRenderable().addMeshInstance(
+        std::move(secondInstance))),
                      "Could not add second mesh instance");
-    passed &= expect(static_cast<bool>(secondObject.addMeshInstance(
-                         std::move(copiedImportedInstance))),
+    passed &= expect(static_cast<bool>(secondObject.modelRenderable().addMeshInstance(
+        std::move(copiedImportedInstance))),
                      "Could not add copied mesh instance");
-    for (const MeshInstance& instance : firstObject.meshInstances()) {
+    for (const MeshInstance& instance :
+         firstObject.modelRenderable().meshInstances()) {
         passed &= expect(instance.mesh.bounds.valid,
                          "First GameObject mesh bounds were not computed");
     }
-    for (const MeshInstance& instance : secondObject.meshInstances()) {
+    for (const MeshInstance& instance :
+         secondObject.modelRenderable().meshInstances()) {
         passed &= expect(instance.mesh.bounds.valid,
                          "Second GameObject mesh bounds were not computed");
     }

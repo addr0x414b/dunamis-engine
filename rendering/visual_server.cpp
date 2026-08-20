@@ -1,5 +1,7 @@
 #include "visual_server.h"
 
+#include "../scene/model_renderable.h"
+
 #include <chrono>
 
 Result VisualServer::initialize(SDL_Window* window, Scene* scene) {
@@ -64,7 +66,7 @@ Result VisualServer::initGameObjects() {
     uint32_t totalMeshInstances = 0;
     for (const auto& o : currentScene->gameObjects()) {
         totalMeshInstances +=
-            static_cast<uint32_t>(o->meshInstances().size());
+            static_cast<uint32_t>(o->modelRenderable().meshInstances().size());
     }
 
     Result result = vulkanContext.createDescriptorPool(

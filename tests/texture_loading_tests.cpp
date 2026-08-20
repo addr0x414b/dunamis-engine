@@ -1,4 +1,5 @@
 #include "scene/game_object.h"
+#include "scene/model_renderable.h"
 
 #include <chrono>
 #include <cmath>
@@ -203,9 +204,9 @@ bool testFallbackSuccess(const std::filesystem::path& buildDirectory) {
         const Result result = object.loadModel();
         passed &= expect(static_cast<bool>(result),
                          "Missing intended texture did not use fallback");
-        passed &= expect(object.meshInstances().size() == 1,
+        passed &= expect(object.modelRenderable().meshInstances().size() == 1,
                          "Fallback model did not load one mesh");
-        for (const auto& instance : object.meshInstances()) {
+        for (const auto& instance : object.modelRenderable().meshInstances()) {
             passed &= expect(instance.material.pixels != nullptr,
                              "Fallback mesh has null pixels");
             passed &= expect(instance.material.texWidth > 0 &&
@@ -260,8 +261,9 @@ bool testFactorValidation(const std::filesystem::path& buildDirectory) {
         const Result result = object.loadModel();
         passed &= expect(static_cast<bool>(result),
                          "Invalid-factor glTF fixture did not load");
-        if (result && !object.meshInstances().empty()) {
-            const Material& material = object.meshInstances().front().material;
+        if (result && !object.modelRenderable().meshInstances().empty()) {
+            const Material& material =
+                object.modelRenderable().meshInstances().front().material;
             passed &= expect(
                 nearlyEqual(material.baseColorFactor.r, 0.0f) &&
                     nearlyEqual(material.baseColorFactor.g, 1.0f) &&
@@ -290,8 +292,9 @@ bool testOptionalMetallicRoughnessFailure(
         passed &= expect(static_cast<bool>(result),
                          "A failed optional metallic-roughness map rejected "
                          "the model");
-        if (result && !object.meshInstances().empty()) {
-            const Material& material = object.meshInstances().front().material;
+        if (result && !object.modelRenderable().meshInstances().empty()) {
+            const Material& material =
+                object.modelRenderable().meshInstances().front().material;
             passed &= expect(
                 !material.hasMetallicRoughnessMap &&
                     material.metallicRoughnessMapPixels == nullptr &&
@@ -314,11 +317,13 @@ bool testSharedMaterialReuse(const std::filesystem::path& buildDirectory) {
         const Result result = object.loadModel();
         passed &= expect(static_cast<bool>(result),
                          "Shared-material fixture did not load");
-        passed &= expect(object.meshInstances().size() == 2,
+        passed &= expect(object.modelRenderable().meshInstances().size() == 2,
                          "Shared-material fixture did not produce two meshes");
-        if (result && object.meshInstances().size() == 2) {
-            const MeshInstance& firstInstance = object.meshInstances()[0];
-            const MeshInstance& secondInstance = object.meshInstances()[1];
+        if (result && object.modelRenderable().meshInstances().size() == 2) {
+            const MeshInstance& firstInstance =
+                object.modelRenderable().meshInstances()[0];
+            const MeshInstance& secondInstance =
+                object.modelRenderable().meshInstances()[1];
             const Material& first = firstInstance.material;
             const Material& second = secondInstance.material;
             passed &= expect(first.pixels != nullptr &&
@@ -363,12 +368,15 @@ bool testParallelDecodeFixture(const std::filesystem::path& buildDirectory) {
         const Result firstResult = first.loadModel();
         passed &= expect(static_cast<bool>(firstResult),
                          "Parallel decode fixture did not load");
-        passed &= expect(first.meshInstances().size() == 9,
+        passed &= expect(first.modelRenderable().meshInstances().size() == 9,
                          "Parallel decode fixture did not retain mesh order");
-        if (firstResult && first.meshInstances().size() == 9) {
-            const Material& firstMaterial = first.meshInstances()[0].material;
-            const Material& repeatedMaterial = first.meshInstances()[8].material;
-            const Material& metallicMaterial = first.meshInstances()[1].material;
+        if (firstResult && first.modelRenderable().meshInstances().size() == 9) {
+            const Material& firstMaterial =
+                first.modelRenderable().meshInstances()[0].material;
+            const Material& repeatedMaterial =
+                first.modelRenderable().meshInstances()[8].material;
+            const Material& metallicMaterial =
+                first.modelRenderable().meshInstances()[1].material;
             passed &= expect(firstMaterial.pixels != nullptr &&
                                  firstMaterial.pixels[0] == 20 &&
                                  firstMaterial.pixels[1] == 80 &&
@@ -394,11 +402,11 @@ bool testParallelDecodeFixture(const std::filesystem::path& buildDirectory) {
             cached.modelPath = modelPath.c_str();
             const Result cachedResult = cached.loadModel();
             passed &= expect(static_cast<bool>(cachedResult) &&
-                                 cached.meshInstances().size() == 9 &&
-                                 cached.meshInstances()[0].material.pixels ==
+                                 cached.modelRenderable().meshInstances().size() == 9 &&
+                                 cached.modelRenderable().meshInstances()[0].material.pixels ==
                                      firstMaterial.pixels &&
-                                 cached.meshInstances()[0].mesh.vertices.data() !=
-                                     first.meshInstances()[0].mesh.vertices.data(),
+                                 cached.modelRenderable().meshInstances()[0].mesh.vertices.data() !=
+                                     first.modelRenderable().meshInstances()[0].mesh.vertices.data(),
                              "Cache hit did not preserve pixel sharing and geometry independence");
         }
     }
@@ -416,7 +424,7 @@ bool testFallbackFailure(const std::filesystem::path& modelPath,
            expect(result.error().find("intended texture") != std::string::npos &&
                       result.error().find("fallback texture") != std::string::npos,
                   "Fallback failure did not provide texture context") &&
-           expect(object.meshInstances().empty(),
+           expect(object.modelRenderable().meshInstances().empty(),
                   "Failed model load committed a mesh");
 }
 

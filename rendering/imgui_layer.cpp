@@ -27,6 +27,7 @@
 #include "editor_picking.h"
 #include "../scene/directional_light.h"
 #include "../scene/game_object.h"
+#include "../scene/model_renderable.h"
 #include "../scene/point_light.h"
 #include "../scene/scene.h"
 
@@ -1739,7 +1740,8 @@ void ImGuiLayer::processWorldSelection(Scene* scene, const glm::mat4& view,
         const glm::mat4 model = editor_picking::makeModelMatrix(
             object->position, object->rotation, object->scale);
         std::size_t meshIndex = 0;
-        for (const MeshInstance& instance : object->meshInstances()) {
+        for (const MeshInstance& instance :
+             object->modelRenderable().meshInstances()) {
             float distance = 0.0f;
             editor_picking::MeshPickDiagnostics diagnostics;
             const bool hit = editor_picking::intersectMeshWorld(
@@ -1751,7 +1753,8 @@ void ImGuiLayer::processWorldSelection(Scene* scene, const glm::mat4& view,
                 "indices={} boundsValid={} boundsMin=({}, {}, {}) "
                 "boundsMax=({}, {}, {}) invertible={} broadPhase={} "
                 "triangles={} hitDistance={}",
-                object->name, object->meshInstances().size(), meshIndex,
+                object->name, object->modelRenderable().meshInstances().size(),
+                meshIndex,
                 instance.mesh.vertices.size(), instance.mesh.indices.size(),
                 bounds.valid, bounds.minimum.x, bounds.minimum.y,
                 bounds.minimum.z, bounds.maximum.x, bounds.maximum.y,

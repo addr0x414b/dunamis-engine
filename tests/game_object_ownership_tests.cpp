@@ -1,4 +1,5 @@
 #include "scene/game_object.h"
+#include "scene/model_renderable.h"
 
 #include <chrono>
 #include <cstdint>
@@ -12,19 +13,19 @@
 class GameObjectTestAccess {
 public:
     static Result attach(GameObject& object) {
-        return object.markRenderResourcesAttached();
+        return object.modelRenderable().markRenderResourcesAttached();
     }
 
     static void detach(GameObject& object) {
-        object.markRenderResourcesDetached();
+        object.modelRenderable().markRenderResourcesDetached();
     }
 
     static bool mutableTopology(const GameObject& object) {
-        return object.renderTopologyMutable();
+        return object.modelRenderable().renderTopologyMutable();
     }
 
     static std::size_t texturePathCount(const GameObject& object) {
-        return object.texturePathStorage_.size();
+        return object.modelRenderable().texturePathStorage_.size();
     }
 };
 
@@ -110,9 +111,10 @@ std::filesystem::path writeTriangleModel() {
 bool testIncomingStateAndBounds() {
     bool passed = true;
     GameObject object;
-    passed &= expect(static_cast<bool>(object.addMeshInstance(cleanMeshInstance())),
+    passed &= expect(static_cast<bool>(object.modelRenderable().addMeshInstance(
+                         cleanMeshInstance())),
                      "A clean CPU MeshInstance was rejected");
-    const Mesh& accepted = object.meshInstances().front().mesh;
+    const Mesh& accepted = object.modelRenderable().meshInstances().front().mesh;
     passed &= expect(accepted.bounds.valid &&
                          accepted.bounds.minimum == glm::vec3(-1.0f, -8.0f, -6.0f) &&
                          accepted.bounds.maximum == glm::vec3(7.0f, 5.0f, 9.0f),
@@ -120,14 +122,15 @@ bool testIncomingStateAndBounds() {
 
     GameObject emptyObject;
     MeshInstance emptyInstance{};
-    passed &= expect(static_cast<bool>(emptyObject.addMeshInstance(
+    passed &= expect(static_cast<bool>(emptyObject.modelRenderable().addMeshInstance(
                          std::move(emptyInstance))) &&
-                         !emptyObject.meshInstances().front().mesh.bounds.valid,
+                         !emptyObject.modelRenderable().meshInstances().front()
+                              .mesh.bounds.valid,
                      "Empty CPU geometry did not retain invalid bounds");
     MeshInstance nonFiniteInstance = cleanMeshInstance();
     nonFiniteInstance.mesh.vertices[0].pos.x =
         std::numeric_limits<float>::infinity();
-    const Result nonFiniteResult = object.addMeshInstance(
+    const Result nonFiniteResult = object.modelRenderable().addMeshInstance(
         std::move(nonFiniteInstance));
     passed &= expect(!nonFiniteResult &&
                          nonFiniteResult.error().find("non-finite") !=
@@ -139,9 +142,10 @@ bool testIncomingStateAndBounds() {
         GameObject candidate;
         MeshInstance instance = cleanMeshInstance();
         configure(instance);
-        const Result result = candidate.addMeshInstance(std::move(instance));
+        const Result result = candidate.modelRenderable().addMeshInstance(
+            std::move(instance));
         return expect(!result && result.error().find(category) != std::string::npos &&
-                          candidate.meshInstances().empty(),
+                          candidate.modelRenderable().meshInstances().empty(),
                       std::string("Incoming Vulkan state was not rejected: ") +
                           category);
     };
@@ -215,27 +219,32 @@ bool testIncomingStateAndBounds() {
 
 bool testTopologyLock(const std::filesystem::path& modelPath) {
     GameObject object;
-    if (!object.addMeshInstance(cleanMeshInstance())) {
+    if (!object.modelRenderable().addMeshInstance(cleanMeshInstance())) {
         return false;
     }
-    const std::size_t sizeBefore = object.meshInstances().size();
-    const std::size_t capacityBefore = object.meshInstances().capacity();
+    const std::size_t sizeBefore = object.modelRenderable().meshInstances().size();
+    const std::size_t capacityBefore =
+        object.modelRenderable().meshInstances().capacity();
     object.modelPath = modelPath.c_str();
     const Result attach = GameObjectTestAccess::attach(object);
-    const Result add = object.addMeshInstance(cleanMeshInstance());
+    const Result add = object.modelRenderable().addMeshInstance(
+        cleanMeshInstance());
     const Result load = object.loadModel();
     bool passed = expect(static_cast<bool>(attach), "Could not attach topology test object") &&
                   expect(!add && add.error().find("mesh topology") != std::string::npos,
                          "Attached object accepted addMeshInstance") &&
                   expect(!load && load.error().find("mesh topology") != std::string::npos,
                          "Attached object accepted loadModel") &&
-                  expect(object.meshInstances().size() == sizeBefore &&
-                             object.meshInstances().capacity() == capacityBefore,
+                  expect(object.modelRenderable().meshInstances().size() ==
+                                 sizeBefore &&
+                             object.modelRenderable().meshInstances().capacity() ==
+                                 capacityBefore,
                          "Rejected topology mutation changed the mesh vector");
     GameObjectTestAccess::detach(object);
     passed &= expect(GameObjectTestAccess::mutableTopology(object),
                      "Detached topology did not become mutable") &&
-              expect(static_cast<bool>(object.addMeshInstance(cleanMeshInstance())),
+              expect(static_cast<bool>(object.modelRenderable().addMeshInstance(
+                           cleanMeshInstance())),
                      "Detached object rejected mesh mutation");
     return passed;
 }
@@ -247,11 +256,12 @@ bool testModelLoading(const std::filesystem::path& modelPath) {
     object.modelPath = validPath.c_str();
     const Result first = object.loadModel();
     passed &= expect(static_cast<bool>(first), "First model load failed: " + first.error());
-    if (!first || object.meshInstances().empty()) {
+    if (!first || object.modelRenderable().meshInstances().empty()) {
         return false;
     }
-    const MeshInstance& firstInstance = object.meshInstances().front();
-    const std::size_t meshCount = object.meshInstances().size();
+    const MeshInstance& firstInstance =
+        object.modelRenderable().meshInstances().front();
+    const std::size_t meshCount = object.modelRenderable().meshInstances().size();
     const std::size_t vertexCount = firstInstance.mesh.vertices.size();
     const std::size_t indexCount = firstInstance.mesh.indices.size();
     const Mesh::Bounds bounds = firstInstance.mesh.bounds;
@@ -263,28 +273,29 @@ bool testModelLoading(const std::filesystem::path& modelPath) {
     passed &= expect(!second && second.error().find("repeated model loading") !=
                                   std::string::npos,
                      "Repeated model loading was accepted") &&
-              expect(object.meshInstances().size() == meshCount &&
-                         object.meshInstances().front().mesh.vertices.size() == vertexCount &&
-                         object.meshInstances().front().mesh.indices.size() == indexCount &&
-                         object.meshInstances().front().mesh.bounds.minimum == bounds.minimum &&
-                         object.meshInstances().front().mesh.bounds.maximum == bounds.maximum &&
-                         object.meshInstances().front().material.baseColorFactor == baseColor &&
-                         std::string(object.meshInstances().front().material.texturePath) == texturePath,
+              expect(object.modelRenderable().meshInstances().size() == meshCount &&
+                         object.modelRenderable().meshInstances().front().mesh.vertices.size() == vertexCount &&
+                         object.modelRenderable().meshInstances().front().mesh.indices.size() == indexCount &&
+                         object.modelRenderable().meshInstances().front().mesh.bounds.minimum == bounds.minimum &&
+                         object.modelRenderable().meshInstances().front().mesh.bounds.maximum == bounds.maximum &&
+                         object.modelRenderable().meshInstances().front().material.baseColorFactor == baseColor &&
+                         std::string(object.modelRenderable().meshInstances().front().material.texturePath) == texturePath,
                      "Repeated model loading modified imported data") &&
-              expect(object.meshInstances().front().material.pixels != nullptr &&
-                         object.meshInstances().front().material.texturePath != nullptr,
+              expect(object.modelRenderable().meshInstances().front().material.pixels != nullptr &&
+                         object.modelRenderable().meshInstances().front().material.texturePath != nullptr,
                      "Imported data did not outlive the local Assimp importer");
 
     GameObject retry;
     const std::string missingPath = modelPath.string() + ".missing";
     retry.modelPath = missingPath.c_str();
     const Result missing = retry.loadModel();
-    passed &= expect(!missing && retry.meshInstances().empty() &&
+    passed &= expect(!missing && retry.modelRenderable().meshInstances().empty() &&
                          GameObjectTestAccess::texturePathCount(retry) == 0,
                      "Failed first load left partial GameObject state");
     retry.modelPath = validPath.c_str();
     const Result retried = retry.loadModel();
-    passed &= expect(static_cast<bool>(retried) && !retry.meshInstances().empty(),
+    passed &= expect(static_cast<bool>(retried) &&
+                         !retry.modelRenderable().meshInstances().empty(),
                      "A clean failed load could not be retried");
     return passed;
 }

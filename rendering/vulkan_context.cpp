@@ -2,6 +2,7 @@
 
 #include "editor_picking.h"
 #include "renderer_configuration.h"
+#include "../scene/model_renderable.h"
 
 #include <cmath>
 #include <cstdio>
@@ -201,17 +202,17 @@ Result VulkanContext::validateSceneRenderStateIsEmpty(
         if (!object) {
             continue;
         }
-        if (!object->renderTopologyMutable()) {
+        if (!object->modelRenderable().renderTopologyMutable()) {
             return Result::failure(
                 "Scene object " + std::to_string(objectIndex) +
                 " has render resources attached");
         }
 
         for (size_t instanceIndex = 0;
-             instanceIndex < object->meshInstances_.size();
+             instanceIndex < object->modelRenderable().meshInstances_.size();
              ++instanceIndex) {
             const auto& instanceData =
-                object->meshInstances_[instanceIndex];
+                object->modelRenderable().meshInstances_[instanceIndex];
             const auto& mesh = instanceData.mesh;
             const auto& material = instanceData.material;
             const auto& renderData = instanceData.renderData;
@@ -265,7 +266,7 @@ Result VulkanContext::prepareSceneResourceTracking(const Scene* scene) {
     size_t meshInstanceCount = 0;
     for (const auto& object : scene->gameObjects()) {
         if (object) {
-            meshInstanceCount += object->meshInstances().size();
+            meshInstanceCount += object->modelRenderable().meshInstances().size();
         }
     }
 
@@ -306,7 +307,10 @@ Result VulkanContext::beginSceneResourceLoad(Scene* scene) {
     pendingGpuModelKeys_.clear();
     pendingUncachedGpuModels_.clear();
     for (const auto& object : scene->gameObjects()) {
-        if (object) resourceLoadStats_.meshInstances += object->meshInstances_.size();
+        if (object) {
+            resourceLoadStats_.meshInstances +=
+                object->modelRenderable().meshInstances_.size();
+        }
     }
 
     Result result = validateSceneRenderStateIsEmpty(scene);
@@ -450,7 +454,7 @@ Result VulkanContext::commitSceneResourceLoad(Scene* scene) {
         if (!object) {
             continue;
         }
-        Result result = object->markRenderResourcesAttached();
+        Result result = object->modelRenderable().markRenderResourcesAttached();
         if (!result) {
             cleanupSceneResources(resources, false);
             sceneResourceOwnership_.erase(ownership);
@@ -573,10 +577,11 @@ Result VulkanContext::validateTextureData(
         return Result::failure("Cannot validate textures for a null game object");
     }
 
-    for (std::size_t index = 0; index < gameObject->meshInstances_.size();
+    for (std::size_t index = 0;
+         index < gameObject->modelRenderable().meshInstances_.size();
          ++index) {
         const Material& material =
-            gameObject->meshInstances_[index].material;
+            gameObject->modelRenderable().meshInstances_[index].material;
         if (!material.pixels) {
             return Result::failure("Game object mesh instance " +
                                    std::to_string(index) +
@@ -3467,20 +3472,23 @@ Result VulkanContext::createTextureImages(
     if (!gameObject) {
         return Result::failure("Cannot create textures for a null game object");
     }
-    if (gameObject->meshInstances_.empty()) {
+    if (gameObject->modelRenderable().meshInstances_.empty()) {
         return Result::success();
     }
-    const bool cacheable = static_cast<bool>(gameObject->loadedModelAsset_);
+    const bool cacheable =
+        static_cast<bool>(gameObject->modelRenderable().loadedModelAsset_);
     std::shared_ptr<GpuModelAsset> modelAsset;
     std::optional<model_loading::ModelAssetCacheKey> cacheKey;
     if (cacheable) {
         cacheKey = model_loading::makeModelAssetCacheKey(
-            gameObject->modelPath, gameObject->texturePath);
+            gameObject->modelRenderable().modelPath,
+            gameObject->modelRenderable().texturePath);
         const auto found = gpuModelAssetCache_.find(*cacheKey);
         if (found != gpuModelAssetCache_.end() && found->second->complete &&
-            found->second->meshes.size() == gameObject->meshInstances_.size()) {
+            found->second->meshes.size() ==
+                gameObject->modelRenderable().meshInstances_.size()) {
             for (std::size_t i = 0; i < found->second->meshes.size(); ++i) {
-                assignGpuAliases(gameObject->meshInstances_[i],
+                assignGpuAliases(gameObject->modelRenderable().meshInstances_[i],
                                  found->second->meshes[i]);
             }
             ++resourceLoadStats_.modelCacheHits;
@@ -3495,14 +3503,14 @@ Result VulkanContext::createTextureImages(
     }
 
     modelAsset = std::make_shared<GpuModelAsset>();
-    modelAsset->meshes.reserve(gameObject->meshInstances_.size());
+    modelAsset->meshes.reserve(gameObject->modelRenderable().meshInstances_.size());
     if (cacheKey) {
         gpuModelAssetCache_[*cacheKey] = modelAsset;
         pendingGpuModelKeys_.push_back(*cacheKey);
     } else {
         pendingUncachedGpuModels_.push_back(modelAsset);
     }
-    for (auto& instance : gameObject->meshInstances_) {
+    for (auto& instance : gameObject->modelRenderable().meshInstances_) {
         auto meshAsset = std::make_shared<GpuMeshAsset>();
         modelAsset->meshes.push_back(meshAsset);
         assignGpuAliases(instance, meshAsset);
@@ -3659,7 +3667,7 @@ Result VulkanContext::createTextureImageViews(
         return Result::failure(
             "Cannot create texture image views for a null game object");
     }
-    for (auto& instance : gameObject->meshInstances_) {
+    for (auto& instance : gameObject->modelRenderable().meshInstances_) {
         if (!instance.gpuAsset) {
             return Result::failure("GPU mesh asset is unavailable");
         }
@@ -3712,7 +3720,7 @@ Result VulkanContext::createTextureSamplers(
             "Cannot create texture samplers for a null game object");
     }
 
-    for (auto& instance : gameObject->meshInstances_) {
+    for (auto& instance : gameObject->modelRenderable().meshInstances_) {
         if (!instance.gpuAsset) {
             return Result::failure("GPU mesh asset is unavailable");
         }
@@ -3795,7 +3803,7 @@ Result VulkanContext::createVertexBuffers(
             "Cannot create vertex buffers for a null game object");
     }
 
-    for (auto& instance : gameObject->meshInstances_) {
+    for (auto& instance : gameObject->modelRenderable().meshInstances_) {
         if (!instance.gpuAsset) {
             return Result::failure("GPU mesh asset is unavailable");
         }
@@ -3879,7 +3887,7 @@ Result VulkanContext::createIndexBuffers(
             "Cannot create index buffers for a null game object");
     }
 
-    for (auto& instance : gameObject->meshInstances_) {
+    for (auto& instance : gameObject->modelRenderable().meshInstances_) {
         if (!instance.gpuAsset) {
             return Result::failure("GPU mesh asset is unavailable");
         }
@@ -3939,14 +3947,16 @@ Result VulkanContext::createIndexBuffers(
         assignGpuAliases(instance, instance.gpuAsset);
     }
 
-    if (gameObject->loadedModelAsset_) {
+    if (gameObject->modelRenderable().loadedModelAsset_) {
         const auto key = model_loading::makeModelAssetCacheKey(
-            gameObject->modelPath, gameObject->texturePath);
+            gameObject->modelRenderable().modelPath,
+            gameObject->modelRenderable().texturePath);
         const auto found = gpuModelAssetCache_.find(key);
         if (found != gpuModelAssetCache_.end()) found->second->complete = true;
     } else {
         for (auto& model : pendingUncachedGpuModels_) {
-            if (model && model->meshes.size() == gameObject->meshInstances_.size() &&
+            if (model && model->meshes.size() ==
+                              gameObject->modelRenderable().meshInstances_.size() &&
                 !model->complete) {
                 model->complete = true;
                 break;
@@ -3967,7 +3977,7 @@ Result VulkanContext::createUniformBuffers(
             "Cannot create uniform buffers for a null game object");
     }
 
-    for (auto& instance : gameObject->meshInstances_) {
+    for (auto& instance : gameObject->modelRenderable().meshInstances_) {
         VkDeviceSize bufferSize = sizeof(UniformBufferObject);
 
         if (!instance.renderData.uniformBuffers.empty() ||
@@ -4069,7 +4079,7 @@ Result VulkanContext::createDescriptorSets(
             "Cannot create descriptor sets for a null game object");
     }
 
-    for (auto& instance : gameObject->meshInstances_) {
+    for (auto& instance : gameObject->modelRenderable().meshInstances_) {
 
         std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT,
                                                 descriptorSetLayout);
@@ -4504,7 +4514,7 @@ void VulkanContext::updateUniformBuffer(
     uint32_t currentImage,
     const std::unique_ptr<GameObject>& gameObject, const glm::mat4& view,
     const glm::mat4& projection, const glm::vec3& cameraPosition) {
-    for (auto& instance : gameObject->meshInstances_) {
+    for (auto& instance : gameObject->modelRenderable().meshInstances_) {
         const UniformBufferObject ubo = makeUniformBufferObject(
             editor_picking::makeModelMatrix(gameObject->position,
                                              gameObject->rotation,
@@ -4879,7 +4889,7 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
                                 &shadowFrame.descriptorSet, 0, nullptr);
         VkPipeline boundShadowPipeline = VK_NULL_HANDLE;
         for (const auto& obj : scene->gameObjects()) {
-            for (const auto& instance : obj->meshInstances_) {
+            for (const auto& instance : obj->modelRenderable().meshInstances_) {
                 if (instance.material.alphaMode == MaterialAlphaMode::Blend) {
                     continue;
                 }
@@ -4949,7 +4959,7 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
     vkCmdSetScissor(commandBuffer, 0, 1, &aoScissor);
     VkPipeline boundGeometryPipeline = VK_NULL_HANDLE;
     for (const auto& obj : scene->gameObjects()) {
-        for (const auto& instance : obj->meshInstances_) {
+        for (const auto& instance : obj->modelRenderable().meshInstances_) {
             if (instance.material.alphaMode == MaterialAlphaMode::Blend) continue;
             const VkPipeline pipeline = instance.material.doubleSided
                 ? ambientOcclusionGeometryDoubleSidedPipeline
@@ -5059,7 +5069,7 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
 
     VkPipeline boundPipeline = VK_NULL_HANDLE;
     for (const auto& obj : scene->gameObjects()) {
-        for (auto& instance : obj->meshInstances_) {
+        for (auto& instance : obj->modelRenderable().meshInstances_) {
             const VkPipeline pipeline = instance.material.doubleSided
                 ? doubleSidedGraphicsPipeline
                 : graphicsPipeline;
@@ -5100,7 +5110,7 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
     const GameObject* selectedObject =
         imguiLayer.selectedGameObjectForScene(scene);
     if (editorToolsEnabled(runState) && selectedObject != nullptr &&
-        !selectedObject->meshInstances_.empty() &&
+        !selectedObject->modelRenderable().meshInstances_.empty() &&
         swapchainExtent.width > 0 && swapchainExtent.height > 0) {
         const OutlinePushConstants outlinePushConstants{
             glm::vec4(1.0f, 0.55f, 0.05f, 1.0f),
@@ -5115,7 +5125,7 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
                            0, sizeof(OutlinePushConstants),
                            &outlinePushConstants);
 
-        for (const auto& instance : selectedObject->meshInstances_) {
+        for (const auto& instance : selectedObject->modelRenderable().meshInstances_) {
             VkBuffer vertexBuffers[] = {instance.mesh.vertexBuffer};
             VkDeviceSize offsets[] = {0};
             vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers,
@@ -5313,7 +5323,7 @@ void VulkanContext::destroyGpuAssetCache() noexcept {
 }
 
 void VulkanContext::clearGpuAliases(GameObject& object) noexcept {
-    for (auto& instance : object.meshInstances_) {
+    for (auto& instance : object.modelRenderable().meshInstances_) {
         ::clearGpuAliases(instance);
     }
 }
@@ -5332,7 +5342,7 @@ void VulkanContext::cleanupSceneResources(
         for (GameObject* object : resources.attachedGameObjects) {
             if (object) {
                 clearGpuAliases(*object);
-                object->markRenderResourcesDetached();
+                object->modelRenderable().markRenderResourcesDetached();
             }
         }
         resources.attachedGameObjects.clear();
@@ -5481,7 +5491,7 @@ void VulkanContext::cleanupSceneResources(
     for (GameObject* object : resources.attachedGameObjects) {
         if (object) {
             clearGpuAliases(*object);
-            object->markRenderResourcesDetached();
+            object->modelRenderable().markRenderResourcesDetached();
         }
     }
     resources.attachedGameObjects.clear();
