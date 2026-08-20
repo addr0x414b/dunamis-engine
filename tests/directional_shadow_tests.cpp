@@ -163,19 +163,31 @@ int main() {
                          finiteMatrix(parallelMatrices.view),
                      "Parallel world-Y light direction did not choose a robust up vector");
 
-    DirectionalLight invalid = light;
-    invalid.rotation.x = std::numeric_limits<float>::quiet_NaN();
-    passed &= expectRejected(invalid,
-                             "Nonfinite directional-light rotation was accepted");
-    invalid = light;
-    invalid.shadow.focus.x = std::numeric_limits<float>::infinity();
-    passed &= expectRejected(invalid, "Nonfinite focus was accepted");
-    invalid = light;
-    invalid.shadow.halfExtent = 0.0f;
-    passed &= expectRejected(invalid, "Zero half extent was accepted");
-    invalid = light;
-    invalid.shadow.nearPlane = invalid.shadow.farPlane;
-    passed &= expectRejected(invalid, "Invalid near/far range was accepted");
+    const auto expectInvalid = [&](const auto& mutate, const char* message) {
+        DirectionalLight invalid;
+        invalid.rotation = light.rotation;
+        invalid.shadow = light.shadow;
+        mutate(invalid);
+        return expectRejected(invalid, message);
+    };
+    passed &= expectInvalid(
+        [](DirectionalLight& invalid) {
+            invalid.rotation.x = std::numeric_limits<float>::quiet_NaN();
+        },
+        "Nonfinite directional-light rotation was accepted");
+    passed &= expectInvalid(
+        [](DirectionalLight& invalid) {
+            invalid.shadow.focus.x = std::numeric_limits<float>::infinity();
+        },
+        "Nonfinite focus was accepted");
+    passed &= expectInvalid(
+        [](DirectionalLight& invalid) { invalid.shadow.halfExtent = 0.0f; },
+        "Zero half extent was accepted");
+    passed &= expectInvalid(
+        [](DirectionalLight& invalid) {
+            invalid.shadow.nearPlane = invalid.shadow.farPlane;
+        },
+        "Invalid near/far range was accepted");
 
     const glm::mat4 firstModel = editor_picking::makeModelMatrix(
         glm::vec3(0.0f), glm::vec3(0.0f), glm::vec3(1.0f));

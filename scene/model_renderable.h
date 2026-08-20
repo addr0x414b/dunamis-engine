@@ -18,8 +18,8 @@ class VulkanContext;
 class ModelRenderable {
 public:
     ModelRenderable() = default;
-    ModelRenderable(const ModelRenderable& other);
-    ModelRenderable& operator=(const ModelRenderable& other);
+    ModelRenderable(const ModelRenderable& other) = delete;
+    ModelRenderable& operator=(const ModelRenderable& other) = delete;
 
     // These remain simple authoring inputs for the transitional API. The
     // loaded mesh data and all renderer-facing state live in this object.
@@ -57,8 +57,6 @@ private:
     std::string modelPathStorage_;
     std::string authoredTexturePathStorage_;
     std::shared_ptr<const model_loading::CachedCpuModel> loadedModelAsset_;
-
-    void rebindPathPointersFrom(const ModelRenderable& source) noexcept;
 };
 
 #endif

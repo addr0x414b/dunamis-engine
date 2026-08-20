@@ -1103,67 +1103,6 @@ void logLoadSummary(const LoadModelProfile& profile,
 
 }  // namespace
 
-ModelRenderable::ModelRenderable(const ModelRenderable& other)
-    : modelPath(other.modelPath),
-      texturePath(other.texturePath),
-      renderTopologyState_(other.renderTopologyState_),
-      meshInstances_(other.meshInstances_),
-      texturePathStorage_(other.texturePathStorage_),
-      modelPathStorage_(other.modelPathStorage_),
-      authoredTexturePathStorage_(other.authoredTexturePathStorage_),
-      loadedModelAsset_(other.loadedModelAsset_) {
-    rebindPathPointersFrom(other);
-}
-
-ModelRenderable& ModelRenderable::operator=(const ModelRenderable& other) {
-    if (this == &other) {
-        return *this;
-    }
-
-    modelPath = other.modelPath;
-    texturePath = other.texturePath;
-    renderTopologyState_ = other.renderTopologyState_;
-    meshInstances_ = other.meshInstances_;
-    texturePathStorage_ = other.texturePathStorage_;
-    modelPathStorage_ = other.modelPathStorage_;
-    authoredTexturePathStorage_ = other.authoredTexturePathStorage_;
-    loadedModelAsset_ = other.loadedModelAsset_;
-    rebindPathPointersFrom(other);
-    return *this;
-}
-
-void ModelRenderable::rebindPathPointersFrom(
-    const ModelRenderable& source) noexcept {
-    if (source.modelPath &&
-        source.modelPath == source.modelPathStorage_.c_str()) {
-        modelPath = modelPathStorage_.c_str();
-    }
-    if (source.texturePath &&
-        source.texturePath == source.authoredTexturePathStorage_.c_str()) {
-        texturePath = authoredTexturePathStorage_.c_str();
-    }
-
-    const std::size_t meshCount =
-        std::min(source.meshInstances_.size(), meshInstances_.size());
-    for (std::size_t meshIndex = 0; meshIndex < meshCount; ++meshIndex) {
-        const MeshInstance& sourceInstance = source.meshInstances_[meshIndex];
-        MeshInstance& instance = meshInstances_[meshIndex];
-        if (sourceInstance.mesh.modelPath &&
-            sourceInstance.mesh.modelPath == source.modelPathStorage_.c_str()) {
-            instance.mesh.modelPath = modelPathStorage_.c_str();
-        }
-        for (std::size_t pathIndex = 0;
-             pathIndex < source.texturePathStorage_.size(); ++pathIndex) {
-            if (sourceInstance.material.texturePath ==
-                source.texturePathStorage_[pathIndex].c_str()) {
-                instance.material.texturePath =
-                    texturePathStorage_[pathIndex].c_str();
-                break;
-            }
-        }
-    }
-}
-
 std::string ModelRenderable::authoredModelPath() const {
     return modelPath ? std::string(modelPath) : std::string{};
 }

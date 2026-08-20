@@ -72,7 +72,7 @@ Camera& EditorCameraController::camera() noexcept {
 }
 
 Result EditorCameraController::restore(const EditorCameraState& state) noexcept {
-    Camera candidate = camera_;
+    Camera candidate;
     candidate.position = state.position;
     candidate.front = state.front;
     candidate.up = state.up;
@@ -82,7 +82,9 @@ Result EditorCameraController::restore(const EditorCameraState& state) noexcept 
         !candidate.setYawPitchDegrees(yaw, pitch, state.up)) {
         return Result::failure("Editor camera orientation is invalid");
     }
-    camera_ = candidate;
+    camera_.position = candidate.position;
+    camera_.front = candidate.front;
+    camera_.up = candidate.up;
     yaw_ = yaw;
     pitch_ = std::clamp(pitch, -89.0, 89.0);
     return Result::success();

@@ -13,8 +13,8 @@ class ModelRenderable;
 class GameObject {
 public:
     GameObject();
-    GameObject(const GameObject& other);
-    GameObject& operator=(const GameObject& other);
+    GameObject(const GameObject& other) = delete;
+    GameObject& operator=(const GameObject& other) = delete;
 
     std::string name;
     glm::vec3 position = glm::vec3(0.0f);
@@ -46,6 +46,9 @@ public:
     [[nodiscard]] ModelRenderable& modelRenderable() noexcept;
     [[nodiscard]] const ModelRenderable& modelRenderable() const noexcept;
 
+    // Transitional compatibility inputs/mirrors for ModelRenderable's
+    // authored path state. The GameObject wrappers rebind them after every
+    // delegated operation, including failures.
     const char* modelPath = nullptr;
     // texturePath is only used if the textures are not baked into the model file
     const char* texturePath = nullptr;

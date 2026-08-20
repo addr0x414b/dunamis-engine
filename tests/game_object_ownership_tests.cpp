@@ -8,7 +8,13 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <type_traits>
 #include <utility>
+
+static_assert(!std::is_copy_constructible_v<GameObject>);
+static_assert(!std::is_copy_assignable_v<GameObject>);
+static_assert(!std::is_copy_constructible_v<ModelRenderable>);
+static_assert(!std::is_copy_assignable_v<ModelRenderable>);
 
 class GameObjectTestAccess {
 public:
@@ -300,6 +306,53 @@ bool testModelLoading(const std::filesystem::path& modelPath) {
     return passed;
 }
 
+bool testAuthoredPathFailureConsistency(
+    const std::filesystem::path& modelPath) {
+    const std::string validModelPath = modelPath.string();
+    const std::string missingModelPath = validModelPath + ".missing";
+    bool passed = true;
+
+    GameObject modelFailure;
+    modelFailure.modelPath = validModelPath.c_str();
+    const Result failedModel =
+        modelFailure.setAuthoredModelPath(missingModelPath);
+    passed &= expect(!failedModel,
+                     "Missing authored model path unexpectedly loaded") &&
+              expect(modelFailure.authoredModelPath() == missingModelPath &&
+                         modelFailure.modelRenderable().authoredModelPath() ==
+                             missingModelPath &&
+                         modelFailure.modelPath ==
+                             modelFailure.modelRenderable().modelPath,
+                     "Failed model-path change desynchronized authored state");
+
+    const std::filesystem::path noFallbackDirectory =
+        std::filesystem::temp_directory_path() /
+        ("dunamis-game-object-no-fallback-" +
+         std::to_string(std::chrono::steady_clock::now()
+                            .time_since_epoch()
+                            .count()));
+    std::filesystem::create_directories(noFallbackDirectory);
+    GameObject textureFailure;
+    textureFailure.modelPath = validModelPath.c_str();
+    {
+        CurrentPathGuard noFallbackGuard(noFallbackDirectory);
+        const Result failedTexture =
+            textureFailure.setAuthoredTexturePath("missing-override.png");
+        passed &= expect(!failedTexture,
+                         "Missing authored texture path unexpectedly loaded") &&
+                  expect(textureFailure.authoredTexturePath() ==
+                             "missing-override.png" &&
+                             textureFailure.modelRenderable().authoredTexturePath() ==
+                                 "missing-override.png" &&
+                             textureFailure.texturePath ==
+                                 textureFailure.modelRenderable().texturePath,
+                         "Failed texture-path change desynchronized authored state");
+    }
+    std::error_code error;
+    std::filesystem::remove_all(noFallbackDirectory, error);
+    return passed;
+}
+
 bool testSharedGpuAssetReferences() {
     auto asset = std::make_shared<GpuMeshAsset>();
     asset->vertexBuffer = foreignBuffer();
@@ -327,6 +380,7 @@ int main() {
     bool passed = testIncomingStateAndBounds();
     passed &= testTopologyLock(modelPath);
     passed &= testModelLoading(modelPath);
+    passed &= testAuthoredPathFailureConsistency(modelPath);
     passed &= testSharedGpuAssetReferences();
     std::error_code error;
     std::filesystem::remove(modelPath, error);
