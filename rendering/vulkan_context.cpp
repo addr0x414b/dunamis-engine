@@ -2514,8 +2514,8 @@ Result VulkanContext::createGraphicsPipeline() {
     VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo,
                                                       fragShaderStageInfo};
 
-    auto bindingDescription = Vertex::getBindingDescription();
-    auto attributeDescriptions = Vertex::getAttributeDescriptions();
+    auto bindingDescription = getVulkanVertexBindingDescription();
+    auto attributeDescriptions = getVulkanVertexAttributeDescriptions();
 
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType =
@@ -2736,7 +2736,8 @@ Result VulkanContext::createDirectionalShadowPipelines() {
     stages[1].module = fragmentShader.module;
     stages[1].pName = "main";
 
-    const VkVertexInputBindingDescription binding = Vertex::getBindingDescription();
+    const VkVertexInputBindingDescription binding =
+        getVulkanVertexBindingDescription();
     std::array<VkVertexInputAttributeDescription, 2> attributes{};
     attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, pos)};
     attributes[1] = {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, texCoord)};
@@ -2848,7 +2849,8 @@ Result VulkanContext::createAmbientOcclusionPipelines() {
                          VK_SHADER_STAGE_VERTEX_BIT, geometryVertex.module, "main"};
     geometryStages[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
                          VK_SHADER_STAGE_FRAGMENT_BIT, geometryFragment.module, "main"};
-    const VkVertexInputBindingDescription binding = Vertex::getBindingDescription();
+    const VkVertexInputBindingDescription binding =
+        getVulkanVertexBindingDescription();
     std::array<VkVertexInputAttributeDescription, 3> attributes{};
     attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, pos)};
     attributes[1] = {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, texCoord)};
@@ -3018,8 +3020,8 @@ Result VulkanContext::createSelectionOutlinePipeline() {
     const VkPipelineShaderStageCreateInfo shaderStages[] = {vertexStage,
                                                              fragmentStage};
 
-    const auto bindingDescription = Vertex::getBindingDescription();
-    const auto attributeDescriptions = Vertex::getAttributeDescriptions();
+    const auto bindingDescription = getVulkanVertexBindingDescription();
+    const auto attributeDescriptions = getVulkanVertexAttributeDescriptions();
     VkPipelineVertexInputStateCreateInfo vertexInput{};
     vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vertexInput.vertexBindingDescriptionCount = 1;

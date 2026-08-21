@@ -1,6 +1,8 @@
 #include "model_renderable.h"
 #include "loading_cache_key.h"
 
+#include "../assets/model_asset.h"
+
 #include <spdlog/spdlog.h>
 #define STB_IMAGE_IMPLEMENTATION
 #include "../third_party/stb/stb_image.h"
@@ -864,8 +866,8 @@ bool normalizeVector(const glm::vec3& input, glm::vec3& output) {
 }
 
 Result validateIncomingMeshInstance(const MeshInstance& instance) {
-    const Mesh& mesh = instance.mesh;
-    const Material& material = instance.material;
+    const auto& mesh = instance.mesh;
+    const auto& material = instance.material;
     const RenderData& renderData = instance.renderData;
 
     if (mesh.vertexBuffer != VK_NULL_HANDLE ||

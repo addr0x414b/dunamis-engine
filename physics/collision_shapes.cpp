@@ -17,6 +17,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include "physics_units.h"
+#include "../assets/model_asset.h"
 #include "../scene/character.h"
 #include "../scene/game_object.h"
 #include "../scene/model_renderable.h"

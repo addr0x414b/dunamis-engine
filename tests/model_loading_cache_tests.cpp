@@ -67,7 +67,7 @@ std::filesystem::path makeFixtureDirectory() {
 }
 
 bool cleanInstance(const MeshInstance& instance) {
-    const Material& material = instance.material;
+    const auto& material = instance.material;
     return instance.mesh.vertexBuffer == VK_NULL_HANDLE &&
            instance.mesh.vertexBufferMemory == VK_NULL_HANDLE &&
            instance.mesh.indexBuffer == VK_NULL_HANDLE &&

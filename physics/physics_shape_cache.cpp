@@ -13,6 +13,7 @@
 #include <utility>
 
 #include "physics_units.h"
+#include "../assets/model_asset.h"
 
 namespace physics {
 namespace {

@@ -619,18 +619,21 @@ int main() {
                          uniqueVertices.size() == 4,
                      "Vertex identity collapsed a normal or tangent seam");
 
+    const auto binding = Vertex::getBindingDescription();
     const auto attributes = Vertex::getAttributeDescriptions();
     passed &= expect(attributes.size() == 5 &&
-                         Vertex::getBindingDescription().stride == sizeof(Vertex) &&
+                         binding.stride == sizeof(Vertex) &&
                          attributes[3].location == 3 &&
-                         attributes[3].format == VK_FORMAT_R32G32B32_SFLOAT &&
+                         attributes[3].format ==
+                             VertexAttributeFormat::Float32x3 &&
                          attributes[3].offset == offsetof(Vertex, normal) &&
                          attributes[4].location == 4 &&
-                         attributes[4].format == VK_FORMAT_R32G32B32A32_SFLOAT &&
+                         attributes[4].format ==
+                             VertexAttributeFormat::Float32x4 &&
                          attributes[4].offset == offsetof(Vertex, tangent),
-                     "Vertex normal/tangent Vulkan layout is incorrect");
+                     "Vertex normal/tangent layout is incorrect");
 
-    const Material defaultMaterial;
+    const VulkanMaterial defaultMaterial;
     passed &= expect(defaultMaterial.baseColorFactor == glm::vec4(1.0f) &&
                          defaultMaterial.metallicFactor == 1.0f &&
                          defaultMaterial.roughnessFactor == 1.0f &&

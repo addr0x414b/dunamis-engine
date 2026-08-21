@@ -2,98 +2,54 @@
 #define VULKAN_UTILS_H
 
 #include <array>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <memory>
-#include <string>
+#include <vector>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtx/hash.hpp>
 #include <vulkan/vulkan.h>
+
+#include "../../assets/model_asset.h"
 #include "../../scene/scene_limits.h"
-#include "../../third_party/stb/stb_image.h"
 
-struct StbiPixelDeleter {
-    void operator()(stbi_uc* pixels) const noexcept {
-        if (pixels) {
-            stbi_image_free(pixels);
-        }
+inline VkFormat toVulkanVertexAttributeFormat(
+    VertexAttributeFormat format) noexcept {
+    switch (format) {
+    case VertexAttributeFormat::Float32x2:
+        return VK_FORMAT_R32G32_SFLOAT;
+    case VertexAttributeFormat::Float32x3:
+        return VK_FORMAT_R32G32B32_SFLOAT;
+    case VertexAttributeFormat::Float32x4:
+        return VK_FORMAT_R32G32B32A32_SFLOAT;
     }
-};
-
-using StbiPixelOwner = std::shared_ptr<stbi_uc>;
-
-inline StbiPixelOwner makeStbiPixelOwner(stbi_uc* pixels) {
-    return StbiPixelOwner(pixels, StbiPixelDeleter{});
+    return VK_FORMAT_R32G32B32_SFLOAT;
 }
 
-inline void releaseStbiPixel(StbiPixelOwner& owner,
-                             stbi_uc*& pixels) noexcept {
-    if (owner) {
-        owner.reset();
-    } else if (pixels) {
-        stbi_image_free(pixels);
-    }
-    pixels = nullptr;
+inline VkVertexInputBindingDescription
+getVulkanVertexBindingDescription() noexcept {
+    const VertexBindingDescription binding = Vertex::getBindingDescription();
+    VkVertexInputBindingDescription result{};
+    result.binding = binding.binding;
+    result.stride = binding.stride;
+    result.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    return result;
 }
 
-struct Vertex {
-    glm::vec3 pos;
-    glm::vec3 color;
-    glm::vec2 texCoord;
-    glm::vec3 normal;
-    glm::vec4 tangent;
-
-    bool operator==(const Vertex& other) const {
-        return pos == other.pos && color == other.color &&
-               texCoord == other.texCoord && normal == other.normal &&
-               tangent == other.tangent;
+inline std::array<VkVertexInputAttributeDescription, 5>
+getVulkanVertexAttributeDescriptions() noexcept {
+    const auto descriptions = Vertex::getAttributeDescriptions();
+    std::array<VkVertexInputAttributeDescription, 5> result{};
+    for (std::size_t index = 0; index < descriptions.size(); ++index) {
+        result[index].binding = descriptions[index].binding;
+        result[index].location = descriptions[index].location;
+        result[index].format =
+            toVulkanVertexAttributeFormat(descriptions[index].format);
+        result[index].offset = descriptions[index].offset;
     }
-
-    static VkVertexInputBindingDescription getBindingDescription() {
-        VkVertexInputBindingDescription bindingDescription{};
-        bindingDescription.binding = 0;
-        bindingDescription.stride = sizeof(Vertex);
-        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-        return bindingDescription;
-    }
-
-    static std::array<VkVertexInputAttributeDescription, 5>
-    getAttributeDescriptions() {
-        std::array<VkVertexInputAttributeDescription, 5>
-            attributeDescriptions{};
-
-        attributeDescriptions[0].binding = 0;
-        attributeDescriptions[0].location = 0;
-        attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[0].offset = offsetof(Vertex, pos);
-
-        attributeDescriptions[1].binding = 0;
-        attributeDescriptions[1].location = 1;
-        attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[1].offset = offsetof(Vertex, color);
-
-        attributeDescriptions[2].binding = 0;
-        attributeDescriptions[2].location = 2;
-        attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
-        attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
-
-        attributeDescriptions[3].binding = 0;
-        attributeDescriptions[3].location = 3;
-        attributeDescriptions[3].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[3].offset = offsetof(Vertex, normal);
-
-        attributeDescriptions[4].binding = 0;
-        attributeDescriptions[4].location = 4;
-        attributeDescriptions[4].format = VK_FORMAT_R32G32B32A32_SFLOAT;
-        attributeDescriptions[4].offset = offsetof(Vertex, tangent);
-
-        return attributeDescriptions;
-    }
-};
+    return result;
+}
 
 struct UniformBufferObject {
     glm::mat4 model;
@@ -165,119 +121,6 @@ static_assert(offsetof(LightsUBO, padding) == 564,
 static_assert(sizeof(LightsUBO) == 576,
               "LightsUBO must include explicit std140 trailing padding");
 
-namespace std {
-template <>
-struct hash<Vertex> {
-    size_t operator()(Vertex const& vertex) const {
-        return ((hash<glm::vec3>()(vertex.pos) ^
-                 (hash<glm::vec3>()(vertex.color) << 1)) >>
-                1) ^
-               (hash<glm::vec2>()(vertex.texCoord) << 1) ^
-               (hash<glm::vec3>()(vertex.normal) << 1) ^
-               (hash<glm::vec4>()(vertex.tangent) << 1);
-    }
-};
-}  // namespace std
-
-struct Mesh {
-    const char* modelPath = nullptr;
-    std::vector<Vertex> vertices;
-    std::vector<uint32_t> indices;
-    struct Bounds {
-        glm::vec3 minimum{0.0f};
-        glm::vec3 maximum{0.0f};
-        bool valid = false;
-    } bounds;
-    VkBuffer vertexBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
-    VkBuffer indexBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory indexBufferMemory = VK_NULL_HANDLE;
-};
-
-inline void calculateMeshBounds(Mesh& mesh) noexcept {
-    mesh.bounds = {};
-    bool foundFinitePosition = false;
-    glm::vec3 minimum(0.0f);
-    glm::vec3 maximum(0.0f);
-    for (const Vertex& vertex : mesh.vertices) {
-        const glm::vec3& position = vertex.pos;
-        if (!std::isfinite(position.x) || !std::isfinite(position.y) ||
-            !std::isfinite(position.z)) {
-            continue;
-        }
-        if (!foundFinitePosition) {
-            minimum = position;
-            maximum = position;
-            foundFinitePosition = true;
-            continue;
-        }
-        minimum = glm::min(minimum, position);
-        maximum = glm::max(maximum, position);
-    }
-
-    if (!foundFinitePosition) {
-        return;
-    }
-
-    mesh.bounds.minimum = minimum;
-    mesh.bounds.maximum = maximum;
-    mesh.bounds.valid = true;
-}
-
-enum class MaterialAlphaMode : std::uint32_t {
-    Opaque = 0,
-    Mask = 1,
-    Blend = 2,
-};
-
-struct Material {
-    const char* texturePath = nullptr;
-    glm::vec4 baseColorFactor{1.0f};
-    float metallicFactor = 1.0f;
-    float roughnessFactor = 1.0f;
-    uint32_t mipLevels = 0;
-    VkImage textureImage = VK_NULL_HANDLE;
-    VkDeviceMemory textureImageMemory = VK_NULL_HANDLE;
-    VkImageView textureImageView = VK_NULL_HANDLE;
-    VkSampler textureSampler = VK_NULL_HANDLE;
-    stbi_uc* pixels = nullptr;
-    int texWidth = 0;
-    int texHeight = 0;
-    int texChannels = 0;
-    // Raw pixel fields are views; the owner keeps decoded CPU pixels alive
-    // until Vulkan upload (or the final Material reference) releases them.
-    StbiPixelOwner pixelsOwner{};
-    std::string normalMapPath{};
-    uint32_t normalMapMipLevels = 0;
-    VkImage normalMapImage = VK_NULL_HANDLE;
-    VkDeviceMemory normalMapImageMemory = VK_NULL_HANDLE;
-    VkImageView normalMapImageView = VK_NULL_HANDLE;
-    VkSampler normalMapSampler = VK_NULL_HANDLE;
-    stbi_uc* normalMapPixels = nullptr;
-    int normalMapWidth = 0;
-    int normalMapHeight = 0;
-    int normalMapChannels = 0;
-    // See pixelsOwner above. This owner may be shared by mesh instances.
-    StbiPixelOwner normalMapPixelsOwner{};
-    bool normalMapEnabled = false;
-    std::string metallicRoughnessMapPath{};
-    uint32_t metallicRoughnessMapMipLevels = 0;
-    VkImage metallicRoughnessMapImage = VK_NULL_HANDLE;
-    VkDeviceMemory metallicRoughnessMapImageMemory = VK_NULL_HANDLE;
-    VkImageView metallicRoughnessMapImageView = VK_NULL_HANDLE;
-    VkSampler metallicRoughnessMapSampler = VK_NULL_HANDLE;
-    stbi_uc* metallicRoughnessMapPixels = nullptr;
-    int metallicRoughnessMapWidth = 0;
-    int metallicRoughnessMapHeight = 0;
-    int metallicRoughnessMapChannels = 0;
-    // See pixelsOwner above. This owner may be shared by mesh instances.
-    StbiPixelOwner metallicRoughnessMapPixelsOwner{};
-    bool hasMetallicRoughnessMap = false;
-    MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
-    float alphaCutoff = 0.5f;
-    bool doubleSided = false;
-};
-
 struct MaterialPushConstants {
     glm::vec4 baseColorFactor{1.0f};
     float metallicFactor = 1.0f;
@@ -327,6 +170,35 @@ static_assert(offsetof(MaterialPushConstants, baseColorFactor) % 4 == 0 &&
                            metallicRoughnessMapEnabled) % 4 == 0,
               "MaterialPushConstants fields must be four-byte aligned");
 
+// Mesh and Material keep their reusable CPU data in assets/model_asset.h.
+// These renderer-side extensions preserve the transitional MeshInstance API
+// without moving GPU ownership or residency out of that object yet.
+struct VulkanMesh : Mesh {
+    using Mesh::operator=;
+
+    VkBuffer vertexBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
+    VkBuffer indexBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory indexBufferMemory = VK_NULL_HANDLE;
+};
+
+struct VulkanMaterial : Material {
+    using Material::operator=;
+
+    VkImage textureImage = VK_NULL_HANDLE;
+    VkDeviceMemory textureImageMemory = VK_NULL_HANDLE;
+    VkImageView textureImageView = VK_NULL_HANDLE;
+    VkSampler textureSampler = VK_NULL_HANDLE;
+    VkImage normalMapImage = VK_NULL_HANDLE;
+    VkDeviceMemory normalMapImageMemory = VK_NULL_HANDLE;
+    VkImageView normalMapImageView = VK_NULL_HANDLE;
+    VkSampler normalMapSampler = VK_NULL_HANDLE;
+    VkImage metallicRoughnessMapImage = VK_NULL_HANDLE;
+    VkDeviceMemory metallicRoughnessMapImageMemory = VK_NULL_HANDLE;
+    VkImageView metallicRoughnessMapImageView = VK_NULL_HANDLE;
+    VkSampler metallicRoughnessMapSampler = VK_NULL_HANDLE;
+};
+
 struct RenderData {
     std::vector<VkBuffer> uniformBuffers;
     std::vector<VkDeviceMemory> uniformBuffersMemory;
@@ -356,8 +228,8 @@ struct GpuMeshAsset {
 };
 
 struct MeshInstance {
-    Mesh mesh;
-    Material material;
+    VulkanMesh mesh;
+    VulkanMaterial material;
     RenderData renderData;
     std::shared_ptr<GpuMeshAsset> gpuAsset;
 };
