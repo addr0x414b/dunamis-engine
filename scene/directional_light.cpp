@@ -2,7 +2,7 @@
 
 #include <cmath>
 
-#include <glm/gtc/matrix_transform.hpp>
+#include "../math/transform_math.h"
 
 namespace {
 
@@ -47,16 +47,8 @@ bool DirectionalLight::calculateWorldDirection(
         return false;
     }
 
-    // Keep this order and multiplication semantics aligned with
-    // editor_picking::makeRotationMatrix without introducing a scene-to-
-    // rendering dependency.
-    glm::mat4 rotationMatrix(1.0f);
-    rotationMatrix = glm::rotate(rotationMatrix, glm::radians(rotation.x),
-                                 glm::vec3(1.0f, 0.0f, 0.0f));
-    rotationMatrix = glm::rotate(rotationMatrix, glm::radians(rotation.y),
-                                 glm::vec3(0.0f, 1.0f, 0.0f));
-    rotationMatrix = glm::rotate(rotationMatrix, glm::radians(rotation.z),
-                                 glm::vec3(0.0f, 0.0f, 1.0f));
+    const glm::mat4 rotationMatrix =
+        transform_math::makeRotationMatrix(rotation);
     if (!isFiniteMatrix(rotationMatrix)) {
         return false;
     }

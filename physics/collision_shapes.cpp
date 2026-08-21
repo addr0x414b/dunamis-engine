@@ -13,11 +13,11 @@
 #include <limits>
 #include <vector>
 
-#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
 #include "physics_units.h"
 #include "../assets/model_asset.h"
+#include "../math/transform_math.h"
 #include "../scene/character.h"
 #include "../scene/game_object.h"
 #include "../scene/model_renderable.h"
@@ -41,16 +41,6 @@ struct LocalConvexHull {
 bool isFinite(const glm::vec3& value) noexcept {
     return std::isfinite(value.x) && std::isfinite(value.y) &&
            std::isfinite(value.z);
-}
-
-glm::mat4 makeDunamisRotationMatrix(const glm::vec3& rotation) noexcept {
-    glm::mat4 result(1.0f);
-    result = glm::rotate(result, glm::radians(rotation.x),
-                         glm::vec3(1.0f, 0.0f, 0.0f));
-    result = glm::rotate(result, glm::radians(rotation.y),
-                         glm::vec3(0.0f, 1.0f, 0.0f));
-    return glm::rotate(result, glm::radians(rotation.z),
-                       glm::vec3(0.0f, 0.0f, 1.0f));
 }
 
 Result buildScaledLocalConvexHull(const std::vector<MeshInstance>& instances,
@@ -251,7 +241,7 @@ JPH::RVec3 toJoltPosition(const glm::vec3& position) noexcept {
 
 JPH::Quat toJoltRotation(const glm::vec3& rotation) noexcept {
     const glm::quat quaternion =
-        glm::quat_cast(makeDunamisRotationMatrix(rotation));
+        glm::quat_cast(transform_math::makeRotationMatrix(rotation));
     return JPH::Quat(quaternion.x, quaternion.y, quaternion.z, quaternion.w)
         .Normalized();
 }

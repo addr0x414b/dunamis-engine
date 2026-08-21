@@ -27,6 +27,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include "editor_picking.h"
+#include "../math/transform_math.h"
 #include "../scene/character.h"
 #include "../scene/directional_light.h"
 #include "../scene/game_object.h"
@@ -478,9 +479,9 @@ bool applyObjectRotation(GameObject& object,
     }
 
     const glm::mat4 oldRotation =
-        editor_picking::makeRotationMatrix(object.rotation);
+        transform_math::makeRotationMatrix(object.rotation);
     const glm::mat4 updatedRotation =
-        editor_picking::makeRotationMatrix(newRotation);
+        transform_math::makeRotationMatrix(newRotation);
     if (!isFiniteMatrix(oldRotation) || !isFiniteMatrix(updatedRotation)) {
         return false;
     }
@@ -1290,7 +1291,7 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
     ImGuizmo::SetDrawlist(drawList);
     ImGuizmo::SetRect(viewport->Pos.x, viewport->Pos.y, viewport->Size.x,
                       viewport->Size.y);
-    const glm::mat4 model = editor_picking::makeModelMatrix(
+    const glm::mat4 model = transform_math::makeModelMatrix(
         selected->position, selected->rotation, selected->scale);
     glm::mat4 gizmoMatrix = model;
     glm::vec3 originalGizmoCenter;
@@ -1299,7 +1300,7 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
     switch (gizmoMode_) {
     case GizmoMode::Translate: {
         gizmoMatrix =
-            editor_picking::makeTranslationMatrix(selected->position);
+            transform_math::makeTranslationMatrix(selected->position);
         originalGizmoCenter = glm::vec3(gizmoMatrix[3]);
         operation = ImGuizmo::TRANSLATE;
         mode = ImGuizmo::WORLD;
@@ -1988,7 +1989,7 @@ void ImGuiLayer::processWorldSelection(Scene* scene, const glm::mat4& view,
         if (object == nullptr) {
             continue;
         }
-        const glm::mat4 model = editor_picking::makeModelMatrix(
+        const glm::mat4 model = transform_math::makeModelMatrix(
             object->position, object->rotation, object->scale);
         std::size_t meshIndex = 0;
         for (const MeshInstance& instance :

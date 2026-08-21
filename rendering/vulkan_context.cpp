@@ -1,7 +1,7 @@
 #include "vulkan_context.h"
 
-#include "editor_picking.h"
 #include "renderer_configuration.h"
+#include "../math/transform_math.h"
 #include "../physics/physics_server.h"
 #include "../scene/model_renderable.h"
 #include "../scene/character.h"
@@ -4586,9 +4586,9 @@ Result VulkanContext::updateUniformBuffer(
     }
     for (MeshRenderState& renderState : states->second) {
         const UniformBufferObject ubo = makeUniformBufferObject(
-            editor_picking::makeModelMatrix(gameObject->position,
-                                             gameObject->rotation,
-                                             gameObject->scale),
+            transform_math::makeModelMatrix(gameObject->position,
+                                            gameObject->rotation,
+                                            gameObject->scale),
             view, projection, cameraPosition);
         memcpy(renderState.renderData.uniformBuffersMapped[currentImage], &ubo,
                sizeof(ubo));

@@ -1,5 +1,5 @@
 #include "rendering/directional_shadow.h"
-#include "rendering/editor_picking.h"
+#include "math/transform_math.h"
 
 #include <cmath>
 #include <iostream>
@@ -31,7 +31,7 @@ bool sameVector(const glm::vec3& first, const glm::vec3& second) {
 }
 
 glm::vec3 expectedDirection(const glm::vec3& rotation) {
-    return glm::vec3(editor_picking::makeRotationMatrix(rotation) *
+    return glm::vec3(transform_math::makeRotationMatrix(rotation) *
                      glm::vec4(0.0f, -1.0f, 0.0f, 0.0f));
 }
 
@@ -77,6 +77,15 @@ bool runDirectionalLightDirectionTests() {
                          "Combined directional-light rotation drifted from "
                          "the Dunamis convention");
     }
+
+    DirectionalLight knownConvention;
+    knownConvention.rotation = {30.0f, 45.0f, 0.0f};
+    glm::vec3 knownDirection;
+    passed &= expect(
+        knownConvention.calculateWorldDirection(knownDirection) &&
+            sameVector(knownDirection,
+                       {0.0f, -0.866025f, -0.5f}),
+        "Known combined directional-light direction changed");
 
     DirectionalLight directlyMutated;
     glm::vec3 initialDirection;
@@ -189,9 +198,9 @@ int main() {
         },
         "Invalid near/far range was accepted");
 
-    const glm::mat4 firstModel = editor_picking::makeModelMatrix(
+    const glm::mat4 firstModel = transform_math::makeModelMatrix(
         glm::vec3(0.0f), glm::vec3(0.0f), glm::vec3(1.0f));
-    const glm::mat4 movedModel = editor_picking::makeModelMatrix(
+    const glm::mat4 movedModel = transform_math::makeModelMatrix(
         glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f), glm::vec3(1.0f));
     const glm::vec4 firstLightPosition = matrices.viewProjection * firstModel *
                                          glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);

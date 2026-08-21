@@ -1,4 +1,5 @@
 #include "rendering/editor_picking.h"
+#include "math/transform_math.h"
 #include "scene/camera.h"
 #include "scene/game_object.h"
 #include "scene/model_renderable.h"
@@ -50,6 +51,17 @@ Mesh makeTriangleAt(float x) {
 
 bool sameVector(const glm::vec3& first, const glm::vec3& second) {
     return glm::length(first - second) < 1.0e-5f;
+}
+
+bool sameMatrix(const glm::mat4& first, const glm::mat4& second) {
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            if (std::abs(first[column][row] - second[column][row]) > 1.0e-5f) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 bool runAabbTests() {
@@ -148,19 +160,19 @@ bool runTransformedTests() {
     const glm::vec3 one(1.0f);
     float distance = 0.0f;
     bool passed = expect(editor_picking::intersectMeshWorld(
-                             ray, mesh, editor_picking::makeModelMatrix(
+                             ray, mesh, transform_math::makeModelMatrix(
                                  {0.0f, 0.0f, 2.0f}, zero, one), distance),
                          "Translated mesh hit failed");
     passed &= expect(editor_picking::intersectMeshWorld(
-                         ray, mesh, editor_picking::makeModelMatrix(
+                         ray, mesh, transform_math::makeModelMatrix(
                              {0.0f, 0.0f, 2.0f}, {0.0f, 0.0f, 45.0f}, one),
                          distance), "Rotated mesh hit failed");
     passed &= expect(editor_picking::intersectMeshWorld(
-                         ray, mesh, editor_picking::makeModelMatrix(
+                         ray, mesh, transform_math::makeModelMatrix(
                              {0.0f, 0.0f, 2.0f}, zero, glm::vec3(2.0f)), distance),
                          "Uniformly scaled mesh hit failed");
     passed &= expect(editor_picking::intersectMeshWorld(
-                         ray, mesh, editor_picking::makeModelMatrix(
+                         ray, mesh, transform_math::makeModelMatrix(
                              {0.0f, 0.0f, 2.0f}, zero, {2.0f, 0.5f, 3.0f}),
                          distance), "Nonuniformly scaled mesh hit failed");
     for (const glm::vec3 scale : {glm::vec3(1.0f), glm::vec3(200.0f),
@@ -168,7 +180,7 @@ bool runTransformedTests() {
                                   glm::vec3(200.0f, 500.0f, 100.0f)}) {
         float scaledDistance = 0.0f;
         passed &= expect(editor_picking::intersectMeshWorld(
-                             ray, mesh, editor_picking::makeModelMatrix(
+                             ray, mesh, transform_math::makeModelMatrix(
                                  {0.0f, 0.0f, 2.0f}, zero, scale),
                              scaledDistance) && std::abs(scaledDistance - 7.0f) < 1.0e-4f,
                          "Scale-invariant transformed mesh hit failed");
@@ -176,13 +188,13 @@ bool runTransformedTests() {
     float nearDistance = 0.0f;
     float farDistance = 0.0f;
     const bool nearHit = editor_picking::intersectMeshWorld(ray, mesh,
-        editor_picking::makeModelMatrix({0.0f, 0.0f, 1.0f}, zero, one), nearDistance);
+        transform_math::makeModelMatrix({0.0f, 0.0f, 1.0f}, zero, one), nearDistance);
     const bool farHit = editor_picking::intersectMeshWorld(ray, mesh,
-        editor_picking::makeModelMatrix({0.0f, 0.0f, 3.0f}, zero, one), farDistance);
+        transform_math::makeModelMatrix({0.0f, 0.0f, 3.0f}, zero, one), farDistance);
     passed &= expect(nearHit && farHit && nearDistance < farDistance,
                      "World-space closest hit failed");
     passed &= expect(!editor_picking::intersectMeshWorld(
-                         ray, mesh, editor_picking::makeModelMatrix(
+                         ray, mesh, transform_math::makeModelMatrix(
                              {0.0f, 0.0f, 2.0f}, zero, {0.0f, 1.0f, 1.0f}),
                          distance), "Zero-scale mesh was accepted");
     return passed;
@@ -258,11 +270,11 @@ bool runClosestObjectAndGizmoTests() {
     float sponzaDistance = 0.0f;
     float avocadoDistance = 0.0f;
     const bool sponzaHit = editor_picking::intersectMeshWorld(
-        ray, sponzaMesh, editor_picking::makeModelMatrix(
+        ray, sponzaMesh, transform_math::makeModelMatrix(
                              {0.0f, 0.0f, 8.0f}, zero, glm::vec3(100.0f)),
         sponzaDistance);
     const bool avocadoHit = editor_picking::intersectMeshWorld(
-        ray, avocadoMesh, editor_picking::makeModelMatrix(
+        ray, avocadoMesh, transform_math::makeModelMatrix(
                               {0.0f, 0.0f, 2.0f}, {0.0f, 0.0f, 35.0f},
                               {3.0f, 2.0f, 4.0f}),
         avocadoDistance);
@@ -280,7 +292,7 @@ bool runClosestObjectAndGizmoTests() {
                                                     {-3.0f, -1.0f, 0.0f}) &&
                          sameVector(aggregate.maximum, {7.0f, 1.0f, 0.0f}),
                      "Aggregate mesh bounds are incorrect");
-    const glm::mat4 model = editor_picking::makeModelMatrix(
+    const glm::mat4 model = transform_math::makeModelMatrix(
         {10.0f, 5.0f, -2.0f}, {0.0f, 0.0f, 90.0f}, {2.0f, 3.0f, 1.0f});
     const glm::vec3 expectedCenter = glm::vec3(
         model * glm::vec4(glm::vec3(2.0f, 0.0f, 0.0f), 1.0f));
@@ -290,7 +302,7 @@ bool runClosestObjectAndGizmoTests() {
                      "Aggregate world bounds center is incorrect");
 
     const glm::mat4 gizmoMatrix =
-        editor_picking::makeTranslationMatrix(worldCenter);
+        transform_math::makeTranslationMatrix(worldCenter);
     passed &= expect(gizmoMatrix[0][0] == 1.0f && gizmoMatrix[1][1] == 1.0f &&
                          gizmoMatrix[2][2] == 1.0f && gizmoMatrix[0][1] == 0.0f &&
                          gizmoMatrix[0][2] == 0.0f && gizmoMatrix[1][0] == 0.0f &&
@@ -337,15 +349,67 @@ bool runClosestObjectAndGizmoTests() {
     return passed;
 }
 
+bool runTransformMathTests() {
+    const glm::vec3 zero(0.0f);
+    const glm::vec3 one(1.0f);
+    bool passed = expect(
+        sameMatrix(transform_math::makeModelMatrix(zero, zero, one),
+                   glm::mat4(1.0f)),
+        "Identity transform did not produce the identity matrix");
+
+    const glm::vec3 translated = glm::vec3(
+        transform_math::makeTranslationMatrix({3.0f, -2.0f, 5.0f}) *
+        glm::vec4(1.0f, 2.0f, 3.0f, 1.0f));
+    passed &= expect(sameVector(translated, {4.0f, 0.0f, 8.0f}),
+                     "Translation transform moved a point incorrectly");
+
+    const glm::vec3 scaled = glm::vec3(
+        transform_math::makeScaleMatrix({2.0f, 3.0f, 4.0f}) *
+        glm::vec4(1.0f, -2.0f, 0.5f, 1.0f));
+    passed &= expect(sameVector(scaled, {2.0f, -6.0f, 2.0f}),
+                     "Nonuniform scale transformed a point incorrectly");
+
+    const glm::vec3 xRotated = glm::vec3(
+        transform_math::makeRotationMatrix({90.0f, 0.0f, 0.0f}) *
+        glm::vec4(0.0f, 1.0f, 0.0f, 0.0f));
+    const glm::vec3 yRotated = glm::vec3(
+        transform_math::makeRotationMatrix({0.0f, 90.0f, 0.0f}) *
+        glm::vec4(0.0f, 0.0f, 1.0f, 0.0f));
+    const glm::vec3 zRotated = glm::vec3(
+        transform_math::makeRotationMatrix({0.0f, 0.0f, 90.0f}) *
+        glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+    passed &= expect(sameVector(xRotated, {0.0f, 0.0f, 1.0f}) &&
+                         sameVector(yRotated, {1.0f, 0.0f, 0.0f}) &&
+                         sameVector(zRotated, {0.0f, 1.0f, 0.0f}),
+                     "Single-axis rotation convention changed");
+
+    const glm::vec3 combinedRotated = glm::vec3(
+        transform_math::makeRotationMatrix({30.0f, 45.0f, 60.0f}) *
+        glm::vec4(1.0f, 2.0f, 3.0f, 0.0f));
+    passed &= expect(sameVector(combinedRotated,
+                                {1.250129f, 0.119769f, 3.524604f}),
+                     "Combined Euler rotation order changed");
+
+    const glm::vec3 combinedModelPoint = glm::vec3(
+        transform_math::makeModelMatrix(
+            {10.0f, -4.0f, 3.0f}, {30.0f, 45.0f, 60.0f},
+            {2.0f, 3.0f, 4.0f}) *
+        glm::vec4(1.0f, 2.0f, 3.0f, 1.0f));
+    passed &= expect(sameVector(combinedModelPoint,
+                                {15.518154f, -5.628128f, 15.284103f}),
+                     "Combined model transform composition changed");
+    return passed;
+}
+
 bool runRotationMatrixTests() {
     const glm::vec3 objectPosition{3.0f, -2.0f, 7.0f};
     const glm::vec3 originalOffset{0.0f, 0.0f, 4.0f};
     const glm::vec3 originalFront{0.0f, 0.0f, -1.0f};
     const glm::vec3 originalUp{0.0f, 1.0f, 0.0f};
     const glm::mat4 oldRotation =
-        editor_picking::makeRotationMatrix({11.0f, -23.0f, 17.0f});
+        transform_math::makeRotationMatrix({11.0f, -23.0f, 17.0f});
     const glm::mat4 newRotation =
-        editor_picking::makeRotationMatrix({47.0f, 31.0f, -29.0f});
+        transform_math::makeRotationMatrix({47.0f, 31.0f, -29.0f});
     const glm::mat4 deltaRotation = newRotation * glm::inverse(oldRotation);
     const glm::vec3 rotatedOffset = glm::vec3(
         deltaRotation * glm::vec4(originalOffset, 0.0f));
@@ -372,7 +436,7 @@ bool runRotationMatrixTests() {
                      "Attached camera rotation changed distance or direction lengths");
 
     const glm::mat4 quarterTurn =
-        editor_picking::makeRotationMatrix({0.0f, 90.0f, 0.0f});
+        transform_math::makeRotationMatrix({0.0f, 90.0f, 0.0f});
     const glm::vec3 quarterTurnOffset = glm::vec3(
         quarterTurn * glm::vec4(originalOffset, 0.0f));
     const glm::vec3 quarterTurnFront = glm::vec3(
@@ -443,6 +507,7 @@ int main() {
                    runTriangleScaleToleranceTests() &&
                    runMeshBoundsTests() &&
                    runClosestObjectAndGizmoTests() &&
+                   runTransformMathTests() &&
                    runRotationMatrixTests() &&
                    runCameraDiscoveryTests()
                ? 0

@@ -36,13 +36,6 @@ struct CameraVisualizationEntry {
     bool active = false;
 };
 
-[[nodiscard]] glm::mat4 makeModelMatrix(const glm::vec3& position,
-                                         const glm::vec3& rotation,
-                                         const glm::vec3& scale) noexcept;
-[[nodiscard]] glm::mat4 makeRotationMatrix(
-    const glm::vec3& rotation) noexcept;
-[[nodiscard]] glm::mat4 makeTranslationMatrix(
-    const glm::vec3& translation) noexcept;
 [[nodiscard]] float distanceSquaredToSegment(
     const glm::vec2& point, const glm::vec2& segmentStart,
     const glm::vec2& segmentEnd) noexcept;
