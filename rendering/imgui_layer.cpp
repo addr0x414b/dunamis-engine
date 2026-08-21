@@ -1835,10 +1835,11 @@ void ImGuiLayer::drawCharacterVisualization(
     const bool selected = selectedGameObject_ == selectionTarget;
     const ImGuiCol accent = selected ? ImGuiCol_ButtonActive
                                      : ImGuiCol_ButtonHovered;
-    const ImU32 color = ImGui::ColorConvertFloat4ToU32(
-        ImGui::GetStyle().Colors[accent]);
+    //const ImU32 color = ImGui::ColorConvertFloat4ToU32(
+    //    ImGui::GetStyle().Colors[accent]);
+    const ImU32 color = IM_COL32(0, 140, 255, 255);
     drawList->PushClipRect(clipMin, clipMax, true);
-    const float lineThickness = selected ? 2.5f : 2.0f;
+    const float lineThickness = selected ? 1.25f : 1.0f;
     for (std::size_t index = 0; index < geometry.segmentCount; ++index) {
         const EditorHelperSegment& segment = geometry.segments[index];
         drawList->AddLine(ImVec2(segment.start.x, segment.start.y),

@@ -71,7 +71,7 @@ void Level1::init() {
     auto avocado = std::make_unique<GameObject>();
     avocado->persistentId = "physics_test_avocado";
     avocado->name = "Physics Test Avocado";
-    avocado->position = glm::vec3(0.0f, 300.0f, 0.0f);
+    avocado->position = glm::vec3(0.0f, 300.0f, -175.0f);
     avocado->scale = glm::vec3(500.0f);
     avocado->physics.enabled = true;
     avocado->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
@@ -94,10 +94,6 @@ void Level1::init() {
     test4->intensity = 100.0f;
     (void)test4->loadModel();
     (void)addGameObject(std::move(test4));*/
-    auto test6 = std::make_unique<Camera>();
-    test6->persistentId = "game_camera";
-    test6->name = "Camera";
-    requireSuccess(addGameObject(std::move(test6)), "Fail");
 
     auto test4 = std::make_unique<DirectionalLight>();
     test4->persistentId = "directional_light";
@@ -184,14 +180,6 @@ void Level1::update() {
     constexpr float directionalLightRotationSpeedDegreesPerSecond = 30.0f;
     for (const auto& obj : gameObjects()) {
         obj->update();
-        if (obj->name == "Direc Light") {
-            const float rotationDelta =
-                directionalLightRotationSpeedDegreesPerSecond *
-                Time::deltaTime();
-            obj->rotation.x += rotationDelta;
-            obj->rotation.y += rotationDelta;
-
-        }
     }
     if (player_ != nullptr) {
         player_->update(inputManager);

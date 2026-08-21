@@ -10,8 +10,8 @@ namespace {
 
 const glm::vec3 playerWorldUp{0.0f, 1.0f, 0.0f};
 constexpr float playerEyeHeightDunamisUnits = 150.0f;
-constexpr float walkSpeedDunamisUnitsPerSecond = 190.0f;
-constexpr float sprintSpeedDunamisUnitsPerSecond = 500.0f;
+constexpr float walkSpeedDunamisUnitsPerSecond = 400.0f;
+constexpr float sprintSpeedDunamisUnitsPerSecond = 700.0f;
 constexpr float minimumMovementVectorLength = 1.0e-4f;
 
 bool isFiniteVector(const glm::vec3& value) noexcept {
