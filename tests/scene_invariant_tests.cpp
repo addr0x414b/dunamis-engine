@@ -619,19 +619,37 @@ int main() {
                          uniqueVertices.size() == 4,
                      "Vertex identity collapsed a normal or tangent seam");
 
-    const auto binding = Vertex::getBindingDescription();
-    const auto attributes = Vertex::getAttributeDescriptions();
-    passed &= expect(attributes.size() == 5 &&
+    const auto binding = getVulkanVertexBindingDescription();
+    const auto attributes = getVulkanVertexAttributeDescriptions();
+    passed &= expect(binding.binding == 0 &&
                          binding.stride == sizeof(Vertex) &&
+                         binding.inputRate == VK_VERTEX_INPUT_RATE_VERTEX &&
+                         attributes.size() == 5 &&
+                         attributes[0].binding == 0 &&
+                         attributes[0].location == 0 &&
+                         attributes[0].format ==
+                             VK_FORMAT_R32G32B32_SFLOAT &&
+                         attributes[0].offset == offsetof(Vertex, pos) &&
+                         attributes[1].binding == 0 &&
+                         attributes[1].location == 1 &&
+                         attributes[1].format ==
+                             VK_FORMAT_R32G32B32_SFLOAT &&
+                         attributes[1].offset == offsetof(Vertex, color) &&
+                         attributes[2].binding == 0 &&
+                         attributes[2].location == 2 &&
+                         attributes[2].format == VK_FORMAT_R32G32_SFLOAT &&
+                         attributes[2].offset == offsetof(Vertex, texCoord) &&
+                         attributes[3].binding == 0 &&
                          attributes[3].location == 3 &&
                          attributes[3].format ==
-                             VertexAttributeFormat::Float32x3 &&
+                             VK_FORMAT_R32G32B32_SFLOAT &&
                          attributes[3].offset == offsetof(Vertex, normal) &&
+                         attributes[4].binding == 0 &&
                          attributes[4].location == 4 &&
                          attributes[4].format ==
-                             VertexAttributeFormat::Float32x4 &&
+                             VK_FORMAT_R32G32B32A32_SFLOAT &&
                          attributes[4].offset == offsetof(Vertex, tangent),
-                     "Vertex normal/tangent layout is incorrect");
+                     "Vulkan Vertex input layout is incorrect");
 
     const VulkanMaterial defaultMaterial;
     passed &= expect(defaultMaterial.baseColorFactor == glm::vec4(1.0f) &&

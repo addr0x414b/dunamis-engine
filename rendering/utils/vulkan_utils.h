@@ -14,41 +14,26 @@
 #include "../../assets/model_asset.h"
 #include "../../scene/scene_limits.h"
 
-inline VkFormat toVulkanVertexAttributeFormat(
-    VertexAttributeFormat format) noexcept {
-    switch (format) {
-    case VertexAttributeFormat::Float32x2:
-        return VK_FORMAT_R32G32_SFLOAT;
-    case VertexAttributeFormat::Float32x3:
-        return VK_FORMAT_R32G32B32_SFLOAT;
-    case VertexAttributeFormat::Float32x4:
-        return VK_FORMAT_R32G32B32A32_SFLOAT;
-    }
-    return VK_FORMAT_R32G32B32_SFLOAT;
-}
-
 inline VkVertexInputBindingDescription
 getVulkanVertexBindingDescription() noexcept {
-    const VertexBindingDescription binding = Vertex::getBindingDescription();
-    VkVertexInputBindingDescription result{};
-    result.binding = binding.binding;
-    result.stride = binding.stride;
-    result.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-    return result;
+    return {0, static_cast<std::uint32_t>(sizeof(Vertex)),
+            VK_VERTEX_INPUT_RATE_VERTEX};
 }
 
 inline std::array<VkVertexInputAttributeDescription, 5>
 getVulkanVertexAttributeDescriptions() noexcept {
-    const auto descriptions = Vertex::getAttributeDescriptions();
-    std::array<VkVertexInputAttributeDescription, 5> result{};
-    for (std::size_t index = 0; index < descriptions.size(); ++index) {
-        result[index].binding = descriptions[index].binding;
-        result[index].location = descriptions[index].location;
-        result[index].format =
-            toVulkanVertexAttributeFormat(descriptions[index].format);
-        result[index].offset = descriptions[index].offset;
-    }
-    return result;
+    return {{
+        {0, 0, VK_FORMAT_R32G32B32_SFLOAT,
+         static_cast<std::uint32_t>(offsetof(Vertex, pos))},
+        {1, 0, VK_FORMAT_R32G32B32_SFLOAT,
+         static_cast<std::uint32_t>(offsetof(Vertex, color))},
+        {2, 0, VK_FORMAT_R32G32_SFLOAT,
+         static_cast<std::uint32_t>(offsetof(Vertex, texCoord))},
+        {3, 0, VK_FORMAT_R32G32B32_SFLOAT,
+         static_cast<std::uint32_t>(offsetof(Vertex, normal))},
+        {4, 0, VK_FORMAT_R32G32B32A32_SFLOAT,
+         static_cast<std::uint32_t>(offsetof(Vertex, tangent))},
+    }};
 }
 
 struct UniformBufferObject {
