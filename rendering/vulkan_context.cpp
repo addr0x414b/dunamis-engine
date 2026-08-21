@@ -138,52 +138,6 @@ struct ScopedShaderModule {
     VkShaderModule module = VK_NULL_HANDLE;
 };
 
-void assignGpuAliases(MeshInstance& instance,
-                      const std::shared_ptr<GpuMeshAsset>& asset) noexcept {
-    instance.gpuAsset = asset;
-    if (!asset) return;
-    instance.mesh.vertexBuffer = asset->vertexBuffer;
-    instance.mesh.vertexBufferMemory = asset->vertexBufferMemory;
-    instance.mesh.indexBuffer = asset->indexBuffer;
-    instance.mesh.indexBufferMemory = asset->indexBufferMemory;
-    instance.material.textureImage = asset->textureImage;
-    instance.material.textureImageMemory = asset->textureImageMemory;
-    instance.material.textureImageView = asset->textureImageView;
-    instance.material.textureSampler = asset->textureSampler;
-    instance.material.normalMapImage = asset->normalMapImage;
-    instance.material.normalMapImageMemory = asset->normalMapImageMemory;
-    instance.material.normalMapImageView = asset->normalMapImageView;
-    instance.material.normalMapSampler = asset->normalMapSampler;
-    instance.material.metallicRoughnessMapImage =
-        asset->metallicRoughnessMapImage;
-    instance.material.metallicRoughnessMapImageMemory =
-        asset->metallicRoughnessMapImageMemory;
-    instance.material.metallicRoughnessMapImageView =
-        asset->metallicRoughnessMapImageView;
-    instance.material.metallicRoughnessMapSampler =
-        asset->metallicRoughnessMapSampler;
-}
-
-void clearGpuAliases(MeshInstance& instance) noexcept {
-    instance.mesh.vertexBuffer = VK_NULL_HANDLE;
-    instance.mesh.vertexBufferMemory = VK_NULL_HANDLE;
-    instance.mesh.indexBuffer = VK_NULL_HANDLE;
-    instance.mesh.indexBufferMemory = VK_NULL_HANDLE;
-    instance.material.textureImage = VK_NULL_HANDLE;
-    instance.material.textureImageMemory = VK_NULL_HANDLE;
-    instance.material.textureImageView = VK_NULL_HANDLE;
-    instance.material.textureSampler = VK_NULL_HANDLE;
-    instance.material.normalMapImage = VK_NULL_HANDLE;
-    instance.material.normalMapImageMemory = VK_NULL_HANDLE;
-    instance.material.normalMapImageView = VK_NULL_HANDLE;
-    instance.material.normalMapSampler = VK_NULL_HANDLE;
-    instance.material.metallicRoughnessMapImage = VK_NULL_HANDLE;
-    instance.material.metallicRoughnessMapImageMemory = VK_NULL_HANDLE;
-    instance.material.metallicRoughnessMapImageView = VK_NULL_HANDLE;
-    instance.material.metallicRoughnessMapSampler = VK_NULL_HANDLE;
-    instance.gpuAsset.reset();
-}
-
 std::uint32_t physicsDebugFloatBits(float value) noexcept {
     const float normalized = value == 0.0f ? 0.0f : value;
     std::uint32_t bits = 0;
@@ -229,47 +183,6 @@ Result VulkanContext::validateSceneRenderStateIsEmpty(
                 " has render resources attached");
         }
 
-        for (size_t instanceIndex = 0;
-             instanceIndex < object->modelRenderable().meshInstances_.size();
-             ++instanceIndex) {
-            const auto& instanceData =
-                object->modelRenderable().meshInstances_[instanceIndex];
-            const auto& mesh = instanceData.mesh;
-            const auto& material = instanceData.material;
-            const auto& renderData = instanceData.renderData;
-
-            const bool hasMeshState =
-                mesh.vertexBuffer != VK_NULL_HANDLE ||
-                mesh.vertexBufferMemory != VK_NULL_HANDLE ||
-                mesh.indexBuffer != VK_NULL_HANDLE ||
-                mesh.indexBufferMemory != VK_NULL_HANDLE;
-            const bool hasMaterialState =
-                material.textureImage != VK_NULL_HANDLE ||
-                material.textureImageMemory != VK_NULL_HANDLE ||
-                material.textureImageView != VK_NULL_HANDLE ||
-                material.textureSampler != VK_NULL_HANDLE ||
-                material.normalMapImage != VK_NULL_HANDLE ||
-                material.normalMapImageMemory != VK_NULL_HANDLE ||
-                material.normalMapImageView != VK_NULL_HANDLE ||
-                material.normalMapSampler != VK_NULL_HANDLE ||
-                material.metallicRoughnessMapImage != VK_NULL_HANDLE ||
-                material.metallicRoughnessMapImageMemory != VK_NULL_HANDLE ||
-                material.metallicRoughnessMapImageView != VK_NULL_HANDLE ||
-                material.metallicRoughnessMapSampler != VK_NULL_HANDLE;
-            const bool hasRenderData =
-                !renderData.uniformBuffers.empty() ||
-                !renderData.uniformBuffersMemory.empty() ||
-                !renderData.uniformBuffersMapped.empty() ||
-                !renderData.descriptorSets.empty();
-
-            if (instanceData.gpuAsset || hasMeshState || hasMaterialState ||
-                hasRenderData) {
-                return Result::failure(
-                    "Scene object " + std::to_string(objectIndex) +
-                    ", mesh instance " + std::to_string(instanceIndex) +
-                    " already contains Vulkan render state");
-            }
-        }
     }
 
     return Result::success();
@@ -343,11 +256,23 @@ Result VulkanContext::beginSceneResourceLoad(Scene* scene) {
         (void)inserted;
         ownership->second.attachedGameObjects.reserve(
             scene->gameObjects().size());
+        ownership->second.meshRenderStates.reserve(
+            scene->gameObjects().size());
+        for (const auto& object : scene->gameObjects()) {
+            if (!object) continue;
+            auto [states, stateInserted] =
+                ownership->second.meshRenderStates.try_emplace(object.get());
+            (void)stateInserted;
+            states->second.resize(
+                object->modelRenderable().meshInstances_.size());
+        }
     } catch (const std::exception& exception) {
+        sceneResourceOwnership_.erase(scene);
         return Result::failure(
             "Failed to allocate scene resource ownership: " +
             std::string(exception.what()));
     } catch (...) {
+        sceneResourceOwnership_.erase(scene);
         return Result::failure(
             "Failed to allocate scene resource ownership with an unknown "
             "error");
@@ -359,6 +284,21 @@ Result VulkanContext::beginSceneResourceLoad(Scene* scene) {
         sceneResourceLoadTarget_ = nullptr;
     }
     return result;
+}
+
+std::vector<VulkanContext::MeshRenderState>*
+VulkanContext::loadMeshRenderStates(const GameObject* object) noexcept {
+    if (!sceneResourceLoadTarget_ || !object) return nullptr;
+    const auto ownership = sceneResourceOwnership_.find(sceneResourceLoadTarget_);
+    if (ownership == sceneResourceOwnership_.end()) return nullptr;
+    const auto states = ownership->second.meshRenderStates.find(
+        const_cast<GameObject*>(object));
+    if (states == ownership->second.meshRenderStates.end() ||
+        states->second.size() !=
+            object->modelRenderable().meshInstances_.size()) {
+        return nullptr;
+    }
+    return &states->second;
 }
 
 Result VulkanContext::beginSceneUploadBatch() {
@@ -515,9 +455,6 @@ Result VulkanContext::cancelSceneResourceLoad() {
     }
     pendingUncachedGpuModels_.clear();
     if (sceneResourceLoadTarget_) {
-        for (const auto& object : sceneResourceLoadTarget_->gameObjects()) {
-            if (object) clearGpuAliases(*object);
-        }
         sceneResourceOwnership_.erase(sceneResourceLoadTarget_);
         sceneResourceLoadTarget_ = nullptr;
     }
@@ -3559,6 +3496,10 @@ Result VulkanContext::createTextureImages(
     if (gameObject->modelRenderable().meshInstances_.empty()) {
         return Result::success();
     }
+    auto* renderStates = loadMeshRenderStates(gameObject.get());
+    if (!renderStates) {
+        return Result::failure("Mesh renderer-state topology is unavailable");
+    }
     const bool cacheable =
         static_cast<bool>(gameObject->modelRenderable().loadedModelAsset_);
     std::shared_ptr<GpuModelAsset> modelAsset;
@@ -3572,8 +3513,7 @@ Result VulkanContext::createTextureImages(
             found->second->meshes.size() ==
                 gameObject->modelRenderable().meshInstances_.size()) {
             for (std::size_t i = 0; i < found->second->meshes.size(); ++i) {
-                assignGpuAliases(gameObject->modelRenderable().meshInstances_[i],
-                                 found->second->meshes[i]);
+                (*renderStates)[i].gpuAsset = found->second->meshes[i];
             }
             ++resourceLoadStats_.modelCacheHits;
             spdlog::info("GPU model asset cache HIT: {}",
@@ -3594,10 +3534,15 @@ Result VulkanContext::createTextureImages(
     } else {
         pendingUncachedGpuModels_.push_back(modelAsset);
     }
-    for (auto& instance : gameObject->modelRenderable().meshInstances_) {
+    for (std::size_t meshIndex = 0;
+         meshIndex < gameObject->modelRenderable().meshInstances_.size();
+         ++meshIndex) {
+        auto& instance =
+            gameObject->modelRenderable().meshInstances_[meshIndex];
+        MeshRenderState& renderState = (*renderStates)[meshIndex];
         auto meshAsset = std::make_shared<GpuMeshAsset>();
         modelAsset->meshes.push_back(meshAsset);
-        assignGpuAliases(instance, meshAsset);
+        renderState.gpuAsset = meshAsset;
         Material& material = instance.material;
         if (!material.normalMapPixels) {
             material.normalMapPixels = static_cast<stbi_uc*>(std::malloc(4));
@@ -3732,7 +3677,6 @@ Result VulkanContext::createTextureImages(
             "metallic-roughness image");
         if (!result) return result;
         ++resourceLoadStats_.textureUploads;
-        assignGpuAliases(instance, meshAsset);
     }
     ++resourceLoadStats_.modelCacheMisses;
     if (cacheKey) {
@@ -3751,45 +3695,50 @@ Result VulkanContext::createTextureImageViews(
         return Result::failure(
             "Cannot create texture image views for a null game object");
     }
-    for (auto& instance : gameObject->modelRenderable().meshInstances_) {
-        if (!instance.gpuAsset) {
+    auto* renderStates = loadMeshRenderStates(gameObject.get());
+    if (!renderStates) {
+        return Result::failure("Mesh renderer-state topology is unavailable");
+    }
+    for (std::size_t meshIndex = 0;
+         meshIndex < gameObject->modelRenderable().meshInstances_.size();
+         ++meshIndex) {
+        auto& instance = gameObject->modelRenderable().meshInstances_[meshIndex];
+        MeshRenderState& renderState = (*renderStates)[meshIndex];
+        if (!renderState.gpuAsset) {
             return Result::failure("GPU mesh asset is unavailable");
         }
-        if (instance.gpuAsset->textureImageView != VK_NULL_HANDLE) {
-            assignGpuAliases(instance, instance.gpuAsset);
+        GpuMeshAsset& gpuAsset = *renderState.gpuAsset;
+        if (gpuAsset.textureImageView != VK_NULL_HANDLE) {
             continue;
         }
-        if (instance.material.textureImageView != VK_NULL_HANDLE ||
-            instance.material.normalMapImageView != VK_NULL_HANDLE ||
-            instance.material.metallicRoughnessMapImageView !=
-                VK_NULL_HANDLE) {
+        if (gpuAsset.normalMapImageView != VK_NULL_HANDLE ||
+            gpuAsset.metallicRoughnessMapImageView != VK_NULL_HANDLE) {
             return Result::failure(
                 "Texture image-view slot already contains a Vulkan resource");
         }
         Result result = createImageView(
-            instance.material.textureImage, VK_FORMAT_R8G8B8A8_SRGB,
+            gpuAsset.textureImage, VK_FORMAT_R8G8B8A8_SRGB,
             VK_IMAGE_ASPECT_COLOR_BIT, instance.material.mipLevels,
-            instance.gpuAsset->textureImageView);
+            gpuAsset.textureImageView);
         if (!result) {
             return addContext("Failed to create texture image view", result);
         }
         result = createImageView(
-            instance.material.normalMapImage, VK_FORMAT_R8G8B8A8_UNORM,
+            gpuAsset.normalMapImage, VK_FORMAT_R8G8B8A8_UNORM,
             VK_IMAGE_ASPECT_COLOR_BIT, instance.material.normalMapMipLevels,
-            instance.gpuAsset->normalMapImageView);
+            gpuAsset.normalMapImageView);
         if (!result) {
             return addContext("Failed to create normal-map image view", result);
         }
         result = createImageView(
-            instance.material.metallicRoughnessMapImage,
+            gpuAsset.metallicRoughnessMapImage,
             VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT,
             instance.material.metallicRoughnessMapMipLevels,
-            instance.gpuAsset->metallicRoughnessMapImageView);
+            gpuAsset.metallicRoughnessMapImageView);
         if (!result) {
             return addContext(
                 "Failed to create metallic-roughness image view", result);
         }
-        assignGpuAliases(instance, instance.gpuAsset);
     }
     return Result::success();
 }
@@ -3804,17 +3753,24 @@ Result VulkanContext::createTextureSamplers(
             "Cannot create texture samplers for a null game object");
     }
 
-    for (auto& instance : gameObject->modelRenderable().meshInstances_) {
-        if (!instance.gpuAsset) {
+    auto* renderStates = loadMeshRenderStates(gameObject.get());
+    if (!renderStates) {
+        return Result::failure("Mesh renderer-state topology is unavailable");
+    }
+    for (std::size_t meshIndex = 0;
+         meshIndex < gameObject->modelRenderable().meshInstances_.size();
+         ++meshIndex) {
+        auto& instance = gameObject->modelRenderable().meshInstances_[meshIndex];
+        MeshRenderState& renderState = (*renderStates)[meshIndex];
+        if (!renderState.gpuAsset) {
             return Result::failure("GPU mesh asset is unavailable");
         }
-        if (instance.gpuAsset->textureSampler != VK_NULL_HANDLE) {
-            assignGpuAliases(instance, instance.gpuAsset);
+        GpuMeshAsset& gpuAsset = *renderState.gpuAsset;
+        if (gpuAsset.textureSampler != VK_NULL_HANDLE) {
             continue;
         }
-        if (instance.material.textureSampler != VK_NULL_HANDLE ||
-            instance.material.normalMapSampler != VK_NULL_HANDLE ||
-            instance.material.metallicRoughnessMapSampler != VK_NULL_HANDLE) {
+        if (gpuAsset.normalMapSampler != VK_NULL_HANDLE ||
+            gpuAsset.metallicRoughnessMapSampler != VK_NULL_HANDLE) {
             return Result::failure(
                 "Texture sampler slot already contains a Vulkan resource");
         }
@@ -3860,19 +3816,18 @@ Result VulkanContext::createTextureSamplers(
             return Result::success();
         };
 
-        Result result = createSampler(instance.gpuAsset->textureSampler,
+        Result result = createSampler(gpuAsset.textureSampler,
                                       instance.material.mipLevels, "texture");
         if (!result) return result;
-        result = createSampler(instance.gpuAsset->normalMapSampler,
+        result = createSampler(gpuAsset.normalMapSampler,
                                instance.material.normalMapMipLevels,
                                "normal map");
         if (!result) return result;
         result = createSampler(
-            instance.gpuAsset->metallicRoughnessMapSampler,
+            gpuAsset.metallicRoughnessMapSampler,
             instance.material.metallicRoughnessMapMipLevels,
             "metallic-roughness map");
         if (!result) return result;
-        assignGpuAliases(instance, instance.gpuAsset);
     }
     return Result::success();
 }
@@ -3887,12 +3842,20 @@ Result VulkanContext::createVertexBuffers(
             "Cannot create vertex buffers for a null game object");
     }
 
-    for (auto& instance : gameObject->modelRenderable().meshInstances_) {
-        if (!instance.gpuAsset) {
+    auto* renderStates = loadMeshRenderStates(gameObject.get());
+    if (!renderStates) {
+        return Result::failure("Mesh renderer-state topology is unavailable");
+    }
+    for (std::size_t meshIndex = 0;
+         meshIndex < gameObject->modelRenderable().meshInstances_.size();
+         ++meshIndex) {
+        auto& instance = gameObject->modelRenderable().meshInstances_[meshIndex];
+        MeshRenderState& renderState = (*renderStates)[meshIndex];
+        if (!renderState.gpuAsset) {
             return Result::failure("GPU mesh asset is unavailable");
         }
-        if (instance.gpuAsset->vertexBuffer != VK_NULL_HANDLE) {
-            assignGpuAliases(instance, instance.gpuAsset);
+        GpuMeshAsset& gpuAsset = *renderState.gpuAsset;
+        if (gpuAsset.vertexBuffer != VK_NULL_HANDLE) {
             continue;
         }
         VkDeviceSize bufferSize = sizeof(instance.mesh.vertices[0]) * instance.mesh.vertices.size();
@@ -3920,8 +3883,7 @@ Result VulkanContext::createVertexBuffers(
         memcpy(data, instance.mesh.vertices.data(), (size_t)bufferSize);
         vkUnmapMemory(device, staging.memory);
 
-        if (instance.mesh.vertexBuffer != VK_NULL_HANDLE ||
-            instance.mesh.vertexBufferMemory != VK_NULL_HANDLE) {
+        if (gpuAsset.vertexBufferMemory != VK_NULL_HANDLE) {
             return Result::failure(
                 "Vertex-buffer slots already contain Vulkan resources");
         }
@@ -3929,20 +3891,18 @@ Result VulkanContext::createVertexBuffers(
             bufferSize,
             VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-            instance.gpuAsset->vertexBuffer,
-            instance.gpuAsset->vertexBufferMemory);
+            gpuAsset.vertexBuffer, gpuAsset.vertexBufferMemory);
         if (!result) {
             return addContext("Failed to create vertex buffer", result);
         }
 
         result =
-            copyBuffer(staging.buffer, instance.gpuAsset->vertexBuffer,
+            copyBuffer(staging.buffer, gpuAsset.vertexBuffer,
                        bufferSize);
         if (!result) {
             return addContext("Failed to upload vertex buffer", result);
         }
         ++resourceLoadStats_.vertexBufferUploads;
-        assignGpuAliases(instance, instance.gpuAsset);
     }
     return Result::success();
 }
@@ -3971,12 +3931,20 @@ Result VulkanContext::createIndexBuffers(
             "Cannot create index buffers for a null game object");
     }
 
-    for (auto& instance : gameObject->modelRenderable().meshInstances_) {
-        if (!instance.gpuAsset) {
+    auto* renderStates = loadMeshRenderStates(gameObject.get());
+    if (!renderStates) {
+        return Result::failure("Mesh renderer-state topology is unavailable");
+    }
+    for (std::size_t meshIndex = 0;
+         meshIndex < gameObject->modelRenderable().meshInstances_.size();
+         ++meshIndex) {
+        auto& instance = gameObject->modelRenderable().meshInstances_[meshIndex];
+        MeshRenderState& renderState = (*renderStates)[meshIndex];
+        if (!renderState.gpuAsset) {
             return Result::failure("GPU mesh asset is unavailable");
         }
-        if (instance.gpuAsset->indexBuffer != VK_NULL_HANDLE) {
-            assignGpuAliases(instance, instance.gpuAsset);
+        GpuMeshAsset& gpuAsset = *renderState.gpuAsset;
+        if (gpuAsset.indexBuffer != VK_NULL_HANDLE) {
             continue;
         }
         VkDeviceSize bufferSize = sizeof(instance.mesh.indices[0]) * instance.mesh.indices.size();
@@ -4006,8 +3974,7 @@ Result VulkanContext::createIndexBuffers(
         memcpy(data, instance.mesh.indices.data(), (size_t)bufferSize);
         vkUnmapMemory(device, staging.memory);
 
-        if (instance.mesh.indexBuffer != VK_NULL_HANDLE ||
-            instance.mesh.indexBufferMemory != VK_NULL_HANDLE) {
+        if (gpuAsset.indexBufferMemory != VK_NULL_HANDLE) {
             return Result::failure(
                 "Index-buffer slots already contain Vulkan resources");
         }
@@ -4015,20 +3982,18 @@ Result VulkanContext::createIndexBuffers(
             bufferSize,
             VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-            instance.gpuAsset->indexBuffer,
-            instance.gpuAsset->indexBufferMemory);
+            gpuAsset.indexBuffer, gpuAsset.indexBufferMemory);
         if (!result) {
             return addContext("Failed to create index buffer", result);
         }
 
         result =
-            copyBuffer(staging.buffer, instance.gpuAsset->indexBuffer,
+            copyBuffer(staging.buffer, gpuAsset.indexBuffer,
                        bufferSize);
         if (!result) {
             return addContext("Failed to upload index buffer", result);
         }
         ++resourceLoadStats_.indexBufferUploads;
-        assignGpuAliases(instance, instance.gpuAsset);
     }
 
     if (gameObject->modelRenderable().loadedModelAsset_) {
@@ -4061,48 +4026,53 @@ Result VulkanContext::createUniformBuffers(
             "Cannot create uniform buffers for a null game object");
     }
 
-    for (auto& instance : gameObject->modelRenderable().meshInstances_) {
+    auto* renderStates = loadMeshRenderStates(gameObject.get());
+    if (!renderStates) {
+        return Result::failure("Mesh renderer-state topology is unavailable");
+    }
+    for (MeshRenderState& renderState : *renderStates) {
+        RenderData& renderData = renderState.renderData;
         VkDeviceSize bufferSize = sizeof(UniformBufferObject);
 
-        if (!instance.renderData.uniformBuffers.empty() ||
-            !instance.renderData.uniformBuffersMemory.empty() ||
-            !instance.renderData.uniformBuffersMapped.empty()) {
+        if (!renderData.uniformBuffers.empty() ||
+            !renderData.uniformBuffersMemory.empty() ||
+            !renderData.uniformBuffersMapped.empty()) {
             return Result::failure(
                 "Uniform-buffer render data is already initialized");
         }
-        ownedRenderData.push_back(&instance.renderData);
+        ownedRenderData.push_back(&renderData);
 
-        instance.renderData.uniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
-        instance.renderData.uniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
-        instance.renderData.uniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);
+        renderData.uniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+        renderData.uniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
+        renderData.uniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             const size_t ownershipIndex = ownedSceneBuffers.size();
             ownedSceneBuffers.push_back(
-                {&instance.renderData.uniformBuffers[i],
-                 &instance.renderData.uniformBuffersMemory[i],
-                 &instance.renderData.uniformBuffersMapped[i]});
+                {&renderData.uniformBuffers[i],
+                 &renderData.uniformBuffersMemory[i],
+                 &renderData.uniformBuffersMapped[i]});
             Result result = createBuffer(
                 bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                     VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                instance.renderData.uniformBuffers[i],
-                instance.renderData.uniformBuffersMemory[i],
+                renderData.uniformBuffers[i],
+                renderData.uniformBuffersMemory[i],
                 &ownedSceneBuffers[ownershipIndex]);
             if (!result) {
                 return addContext("Failed to create uniform buffer", result);
             }
 
             const VkResult mapResult = vkMapMemory(
-                device, instance.renderData.uniformBuffersMemory[i], 0,
+                device, renderData.uniformBuffersMemory[i], 0,
                 bufferSize, 0,
-                &instance.renderData.uniformBuffersMapped[i]);
+                &renderData.uniformBuffersMapped[i]);
             if (mapResult != VK_SUCCESS) {
-                instance.renderData.uniformBuffersMapped[i] = nullptr;
+                renderData.uniformBuffersMapped[i] = nullptr;
                 return vkFailure("vkMapMemory(uniform buffer)", mapResult);
             }
             ownedSceneBuffers[ownershipIndex].mappedAddress =
-                instance.renderData.uniformBuffersMapped[i];
+                renderData.uniformBuffersMapped[i];
         }
 
     }
@@ -4163,7 +4133,16 @@ Result VulkanContext::createDescriptorSets(
             "Cannot create descriptor sets for a null game object");
     }
 
-    for (auto& instance : gameObject->modelRenderable().meshInstances_) {
+    auto* renderStates = loadMeshRenderStates(gameObject.get());
+    if (!renderStates) {
+        return Result::failure("Mesh renderer-state topology is unavailable");
+    }
+    for (MeshRenderState& renderState : *renderStates) {
+        if (!renderState.gpuAsset) {
+            return Result::failure("GPU mesh asset is unavailable");
+        }
+        RenderData& renderData = renderState.renderData;
+        const GpuMeshAsset& gpuAsset = *renderState.gpuAsset;
 
         std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT,
                                                 descriptorSetLayout);
@@ -4173,58 +4152,58 @@ Result VulkanContext::createDescriptorSets(
         allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
         allocInfo.pSetLayouts = layouts.data();
 
-        if (!instance.renderData.descriptorSets.empty()) {
+        if (!renderData.descriptorSets.empty()) {
             return Result::failure(
                 "Descriptor-set render data is already initialized");
         }
         if (std::find(ownedRenderData.begin(), ownedRenderData.end(),
-                      &instance.renderData) == ownedRenderData.end()) {
-            ownedRenderData.push_back(&instance.renderData);
+                      &renderData) == ownedRenderData.end()) {
+            ownedRenderData.push_back(&renderData);
         }
         const size_t ownershipIndex = ownedSceneDescriptorSets.size();
         ownedSceneDescriptorSets.push_back(
-            {&instance.renderData.descriptorSets});
-        instance.renderData.descriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+            {&renderData.descriptorSets});
+        renderData.descriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
         const VkResult result = vkAllocateDescriptorSets(
             device, &allocInfo,
-            instance.renderData.descriptorSets.data());
+            renderData.descriptorSets.data());
         if (result != VK_SUCCESS) {
-            instance.renderData.descriptorSets.clear();
+            renderData.descriptorSets.clear();
             return vkFailure("vkAllocateDescriptorSets", result);
         }
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
             ownedSceneDescriptorSets[ownershipIndex].sets[i] =
-                instance.renderData.descriptorSets[i];
+                renderData.descriptorSets[i];
         }
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             VkDescriptorBufferInfo bufferInfo{};
-            bufferInfo.buffer = instance.renderData.uniformBuffers[i];
+            bufferInfo.buffer = renderData.uniformBuffers[i];
             bufferInfo.offset = 0;
             bufferInfo.range = sizeof(UniformBufferObject);
 
             VkDescriptorImageInfo imageInfo{};
             imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            imageInfo.imageView = instance.material.textureImageView;
-            imageInfo.sampler = instance.material.textureSampler;
+            imageInfo.imageView = gpuAsset.textureImageView;
+            imageInfo.sampler = gpuAsset.textureSampler;
 
             VkDescriptorImageInfo normalImageInfo{};
             normalImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            normalImageInfo.imageView = instance.material.normalMapImageView;
-            normalImageInfo.sampler = instance.material.normalMapSampler;
+            normalImageInfo.imageView = gpuAsset.normalMapImageView;
+            normalImageInfo.sampler = gpuAsset.normalMapSampler;
 
             VkDescriptorImageInfo metallicRoughnessImageInfo{};
             metallicRoughnessImageInfo.imageLayout =
                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             metallicRoughnessImageInfo.imageView =
-                instance.material.metallicRoughnessMapImageView;
+                gpuAsset.metallicRoughnessMapImageView;
             metallicRoughnessImageInfo.sampler =
-                instance.material.metallicRoughnessMapSampler;
+                gpuAsset.metallicRoughnessMapSampler;
 
             std::array<VkWriteDescriptorSet, 4> descriptorWrites{};
 
             descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[0].dstSet = instance.renderData.descriptorSets[i];
+            descriptorWrites[0].dstSet = renderData.descriptorSets[i];
             descriptorWrites[0].dstBinding = 0;
             descriptorWrites[0].dstArrayElement = 0;
             descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -4232,7 +4211,7 @@ Result VulkanContext::createDescriptorSets(
             descriptorWrites[0].pBufferInfo = &bufferInfo;
 
             descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[1].dstSet = instance.renderData.descriptorSets[i];
+            descriptorWrites[1].dstSet = renderData.descriptorSets[i];
             descriptorWrites[1].dstBinding = 1;
             descriptorWrites[1].dstArrayElement = 0;
             descriptorWrites[1].descriptorType =
@@ -4241,7 +4220,7 @@ Result VulkanContext::createDescriptorSets(
             descriptorWrites[1].pImageInfo = &imageInfo;
 
             descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[2].dstSet = instance.renderData.descriptorSets[i];
+            descriptorWrites[2].dstSet = renderData.descriptorSets[i];
             descriptorWrites[2].dstBinding = 2;
             descriptorWrites[2].dstArrayElement = 0;
             descriptorWrites[2].descriptorType =
@@ -4250,7 +4229,7 @@ Result VulkanContext::createDescriptorSets(
             descriptorWrites[2].pImageInfo = &normalImageInfo;
 
             descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[3].dstSet = instance.renderData.descriptorSets[i];
+            descriptorWrites[3].dstSet = renderData.descriptorSets[i];
             descriptorWrites[3].dstBinding = 3;
             descriptorWrites[3].dstArrayElement = 0;
             descriptorWrites[3].descriptorType =
@@ -4594,19 +4573,28 @@ void VulkanContext::cleanupSwapchain() noexcept {
     swapchainExtent = {};
 }
 
-void VulkanContext::updateUniformBuffer(
-    uint32_t currentImage,
+Result VulkanContext::updateUniformBuffer(
+    SceneResourceOwnership& resources, uint32_t currentImage,
     const std::unique_ptr<GameObject>& gameObject, const glm::mat4& view,
     const glm::mat4& projection, const glm::vec3& cameraPosition) {
-    for (auto& instance : gameObject->modelRenderable().meshInstances_) {
+    auto states = resources.meshRenderStates.find(gameObject.get());
+    if (states == resources.meshRenderStates.end() ||
+        states->second.size() !=
+            gameObject->modelRenderable().meshInstances_.size()) {
+        return Result::failure(
+            "Uniform-update mesh renderer-state topology is invalid");
+    }
+    for (MeshRenderState& renderState : states->second) {
         const UniformBufferObject ubo = makeUniformBufferObject(
             editor_picking::makeModelMatrix(gameObject->position,
                                              gameObject->rotation,
                                              gameObject->scale),
             view, projection, cameraPosition);
-        memcpy(instance.renderData.uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
+        memcpy(renderState.renderData.uniformBuffersMapped[currentImage], &ubo,
+               sizeof(ubo));
 
     }
+    return Result::success();
 }
 
 Result VulkanContext::updateLightsUniformBuffer(Scene* scene) {
@@ -4783,6 +4771,10 @@ Result VulkanContext::drawFrame(Scene* scene, const Camera& renderCamera,
     if (!scene->isActive()) {
         return Result::failure("Cannot draw an inactive scene");
     }
+    auto ownership = sceneResourceOwnership_.find(scene);
+    if (ownership == sceneResourceOwnership_.end()) {
+        return Result::failure("Scene renderer state is unavailable");
+    }
     if (scene->pointLightCount() > scene_limits::maxPointLights) {
         return Result::failure(
             "Cannot draw a scene that exceeds the point-light limit");
@@ -4847,8 +4839,10 @@ Result VulkanContext::drawFrame(Scene* scene, const Camera& renderCamera,
     if (!physicsDebugResult) return physicsDebugResult;
 
     for (const auto& obj : scene->gameObjects()) {
-        updateUniformBuffer(currentFrame, obj, view, projection,
-                            renderCamera.position);
+        Result uniformResult = updateUniformBuffer(
+            ownership->second, currentFrame, obj, view, projection,
+            renderCamera.position);
+        if (!uniformResult) return uniformResult;
     }
 
     Result lightsResult = updateLightsUniformBuffer(scene);
@@ -5212,6 +5206,11 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
         return Result::failure(
             "Cannot record a command buffer for a null scene");
     }
+    const auto ownership = sceneResourceOwnership_.find(scene);
+    if (ownership == sceneResourceOwnership_.end()) {
+        return Result::failure("Scene renderer state is unavailable");
+    }
+    const auto& meshRenderStates = ownership->second.meshRenderStates;
 
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -5258,7 +5257,19 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
                                 &shadowFrame.descriptorSet, 0, nullptr);
         VkPipeline boundShadowPipeline = VK_NULL_HANDLE;
         for (const auto& obj : scene->gameObjects()) {
-            for (const auto& instance : obj->modelRenderable().meshInstances_) {
+            const auto states = meshRenderStates.find(obj.get());
+            if (states == meshRenderStates.end() || states->second.size() !=
+                    obj->modelRenderable().meshInstances_.size()) {
+                return Result::failure("Directional-shadow mesh renderer-state topology is invalid");
+            }
+            for (std::size_t meshIndex = 0;
+                 meshIndex < obj->modelRenderable().meshInstances_.size();
+                 ++meshIndex) {
+                const auto& instance = obj->modelRenderable().meshInstances_[meshIndex];
+                const MeshRenderState& renderState = states->second[meshIndex];
+                if (!renderState.gpuAsset) {
+                    return Result::failure("Directional-shadow GPU mesh asset is unavailable");
+                }
                 if (instance.material.alphaMode == MaterialAlphaMode::Blend) {
                     continue;
                 }
@@ -5270,14 +5281,14 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
                                       pipeline);
                     boundShadowPipeline = pipeline;
                 }
-                VkBuffer vertexBuffer[] = {instance.mesh.vertexBuffer};
+                VkBuffer vertexBuffer[] = {renderState.gpuAsset->vertexBuffer};
                 VkDeviceSize offset[] = {0};
                 vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffer, offset);
-                vkCmdBindIndexBuffer(commandBuffer, instance.mesh.indexBuffer, 0,
+                vkCmdBindIndexBuffer(commandBuffer, renderState.gpuAsset->indexBuffer, 0,
                                      VK_INDEX_TYPE_UINT32);
                 vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                         directionalShadowPipelineLayout, 0, 1,
-                                        &instance.renderData.descriptorSets[currentFrame],
+                                        &renderState.renderData.descriptorSets[currentFrame],
                                         0, nullptr);
                 const MaterialPushConstants materialPushConstants{
                     instance.material.baseColorFactor, instance.material.metallicFactor,
@@ -5328,7 +5339,19 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
     vkCmdSetScissor(commandBuffer, 0, 1, &aoScissor);
     VkPipeline boundGeometryPipeline = VK_NULL_HANDLE;
     for (const auto& obj : scene->gameObjects()) {
-        for (const auto& instance : obj->modelRenderable().meshInstances_) {
+        const auto states = meshRenderStates.find(obj.get());
+        if (states == meshRenderStates.end() || states->second.size() !=
+                obj->modelRenderable().meshInstances_.size()) {
+            return Result::failure("Ambient-occlusion mesh renderer-state topology is invalid");
+        }
+        for (std::size_t meshIndex = 0;
+             meshIndex < obj->modelRenderable().meshInstances_.size();
+             ++meshIndex) {
+            const auto& instance = obj->modelRenderable().meshInstances_[meshIndex];
+            const MeshRenderState& renderState = states->second[meshIndex];
+            if (!renderState.gpuAsset) {
+                return Result::failure("Ambient-occlusion GPU mesh asset is unavailable");
+            }
             if (instance.material.alphaMode == MaterialAlphaMode::Blend) continue;
             const VkPipeline pipeline = instance.material.doubleSided
                 ? ambientOcclusionGeometryDoubleSidedPipeline
@@ -5337,13 +5360,13 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
                 vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
                 boundGeometryPipeline = pipeline;
             }
-            const VkBuffer vertexBuffer[] = {instance.mesh.vertexBuffer};
+            const VkBuffer vertexBuffer[] = {renderState.gpuAsset->vertexBuffer};
             const VkDeviceSize offset[] = {0};
             vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffer, offset);
-            vkCmdBindIndexBuffer(commandBuffer, instance.mesh.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdBindIndexBuffer(commandBuffer, renderState.gpuAsset->indexBuffer, 0, VK_INDEX_TYPE_UINT32);
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     ambientOcclusionGeometryPipelineLayout, 0, 1,
-                                    &instance.renderData.descriptorSets[currentFrame], 0, nullptr);
+                                    &renderState.renderData.descriptorSets[currentFrame], 0, nullptr);
             const MaterialPushConstants materialPushConstants{
                 instance.material.baseColorFactor, instance.material.metallicFactor,
                 instance.material.roughnessFactor,
@@ -5438,7 +5461,19 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
 
     VkPipeline boundPipeline = VK_NULL_HANDLE;
     for (const auto& obj : scene->gameObjects()) {
-        for (auto& instance : obj->modelRenderable().meshInstances_) {
+        const auto states = meshRenderStates.find(obj.get());
+        if (states == meshRenderStates.end() || states->second.size() !=
+                obj->modelRenderable().meshInstances_.size()) {
+            return Result::failure("Main-pass mesh renderer-state topology is invalid");
+        }
+        for (std::size_t meshIndex = 0;
+             meshIndex < obj->modelRenderable().meshInstances_.size();
+             ++meshIndex) {
+            const auto& instance = obj->modelRenderable().meshInstances_[meshIndex];
+            const MeshRenderState& renderState = states->second[meshIndex];
+            if (!renderState.gpuAsset) {
+                return Result::failure("Main-pass GPU mesh asset is unavailable");
+            }
             const VkPipeline pipeline = instance.material.doubleSided
                 ? doubleSidedGraphicsPipeline
                 : graphicsPipeline;
@@ -5448,13 +5483,13 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
                 boundPipeline = pipeline;
             }
 
-            VkBuffer vertexBuffers[] = {instance.mesh.vertexBuffer};
+            VkBuffer vertexBuffers[] = {renderState.gpuAsset->vertexBuffer};
             VkDeviceSize offsets[] = {0};
             vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-            vkCmdBindIndexBuffer(commandBuffer, instance.mesh.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdBindIndexBuffer(commandBuffer, renderState.gpuAsset->indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    pipelineLayout, 0, 1, &instance.renderData.descriptorSets[currentFrame],
+                                    pipelineLayout, 0, 1, &renderState.renderData.descriptorSets[currentFrame],
                                     0, nullptr);
 
             const MaterialPushConstants materialPushConstants{
@@ -5494,17 +5529,30 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
                            0, sizeof(OutlinePushConstants),
                            &outlinePushConstants);
 
-        for (const auto& instance : selectedObject->modelRenderable().meshInstances_) {
-            VkBuffer vertexBuffers[] = {instance.mesh.vertexBuffer};
+        const auto states = meshRenderStates.find(
+            const_cast<GameObject*>(selectedObject));
+        if (states == meshRenderStates.end() || states->second.size() !=
+                selectedObject->modelRenderable().meshInstances_.size()) {
+            return Result::failure("Selection-outline mesh renderer-state topology is invalid");
+        }
+        for (std::size_t meshIndex = 0;
+             meshIndex < selectedObject->modelRenderable().meshInstances_.size();
+             ++meshIndex) {
+            const auto& instance = selectedObject->modelRenderable().meshInstances_[meshIndex];
+            const MeshRenderState& renderState = states->second[meshIndex];
+            if (!renderState.gpuAsset) {
+                return Result::failure("Selection-outline GPU mesh asset is unavailable");
+            }
+            VkBuffer vertexBuffers[] = {renderState.gpuAsset->vertexBuffer};
             VkDeviceSize offsets[] = {0};
             vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers,
                                    offsets);
-            vkCmdBindIndexBuffer(commandBuffer, instance.mesh.indexBuffer, 0,
+            vkCmdBindIndexBuffer(commandBuffer, renderState.gpuAsset->indexBuffer, 0,
                                  VK_INDEX_TYPE_UINT32);
             vkCmdBindDescriptorSets(
                 commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                 selectionOutlinePipelineLayout, 0, 1,
-                &instance.renderData.descriptorSets[currentFrame], 0, nullptr);
+                &renderState.renderData.descriptorSets[currentFrame], 0, nullptr);
             vkCmdDrawIndexed(commandBuffer,
                              static_cast<uint32_t>(instance.mesh.indices.size()),
                              1, 0, 0, 0);
@@ -5517,7 +5565,18 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
             if (object && !object->modelRenderable().meshInstances_.empty()) { cameraObject = object.get(); break; }
         }
         if (cameraObject != nullptr) {
-            const VkDescriptorSet cameraSet = cameraObject->modelRenderable().meshInstances_.front().renderData.descriptorSets[currentFrame];
+            const auto cameraStates = meshRenderStates.find(
+                const_cast<GameObject*>(cameraObject));
+            if (cameraStates == meshRenderStates.end() ||
+                cameraStates->second.size() !=
+                    cameraObject->modelRenderable().meshInstances_.size() ||
+                cameraStates->second.empty()) {
+                return Result::failure(
+                    "Physics-debug camera renderer state is unavailable");
+            }
+            const VkDescriptorSet cameraSet =
+                cameraStates->second.front().renderData
+                    .descriptorSets[currentFrame];
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, physicsDebugPipeline);
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, physicsDebugPipelineLayout, 0, 1, &cameraSet, 0, nullptr);
             for (const PhysicsDebugRenderer::DrawCommand& command : physicsDebugRenderer_->drawCommands()) {
@@ -5714,12 +5773,6 @@ void VulkanContext::destroyGpuAssetCache() noexcept {
     pendingGpuModelKeys_.clear();
 }
 
-void VulkanContext::clearGpuAliases(GameObject& object) noexcept {
-    for (auto& instance : object.modelRenderable().meshInstances_) {
-        ::clearGpuAliases(instance);
-    }
-}
-
 void VulkanContext::cleanupSceneResources(
     SceneResourceOwnership& resources,
     bool freeDescriptorSets) noexcept {
@@ -5731,14 +5784,14 @@ void VulkanContext::cleanupSceneResources(
         resources.samplers.clear();
         resources.descriptorSets.clear();
         resources.renderData.clear();
+        resources.uncachedGpuModels.clear();
+        resources.meshRenderStates.clear();
         for (GameObject* object : resources.attachedGameObjects) {
             if (object) {
-                clearGpuAliases(*object);
                 object->modelRenderable().markRenderResourcesDetached();
             }
         }
         resources.attachedGameObjects.clear();
-        resources.uncachedGpuModels.clear();
         return;
     }
 
@@ -5880,9 +5933,9 @@ void VulkanContext::cleanupSceneResources(
         if (asset) destroyGpuModelAsset(*asset);
     }
     resources.uncachedGpuModels.clear();
+    resources.meshRenderStates.clear();
     for (GameObject* object : resources.attachedGameObjects) {
         if (object) {
-            clearGpuAliases(*object);
             object->modelRenderable().markRenderResourcesDetached();
         }
     }

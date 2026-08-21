@@ -6,7 +6,6 @@
 #include <glm/glm.hpp>
 
 #include "../assets/model_asset.h"
-#include "utils/vulkan_utils.h"
 
 class Camera;
 class GameObject;

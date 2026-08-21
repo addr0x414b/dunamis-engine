@@ -4,7 +4,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -155,35 +154,6 @@ static_assert(offsetof(MaterialPushConstants, baseColorFactor) % 4 == 0 &&
                            metallicRoughnessMapEnabled) % 4 == 0,
               "MaterialPushConstants fields must be four-byte aligned");
 
-// Mesh and Material keep their reusable CPU data in assets/model_asset.h.
-// These renderer-side extensions preserve the transitional MeshInstance API
-// without moving GPU ownership or residency out of that object yet.
-struct VulkanMesh : Mesh {
-    using Mesh::operator=;
-
-    VkBuffer vertexBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
-    VkBuffer indexBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory indexBufferMemory = VK_NULL_HANDLE;
-};
-
-struct VulkanMaterial : Material {
-    using Material::operator=;
-
-    VkImage textureImage = VK_NULL_HANDLE;
-    VkDeviceMemory textureImageMemory = VK_NULL_HANDLE;
-    VkImageView textureImageView = VK_NULL_HANDLE;
-    VkSampler textureSampler = VK_NULL_HANDLE;
-    VkImage normalMapImage = VK_NULL_HANDLE;
-    VkDeviceMemory normalMapImageMemory = VK_NULL_HANDLE;
-    VkImageView normalMapImageView = VK_NULL_HANDLE;
-    VkSampler normalMapSampler = VK_NULL_HANDLE;
-    VkImage metallicRoughnessMapImage = VK_NULL_HANDLE;
-    VkDeviceMemory metallicRoughnessMapImageMemory = VK_NULL_HANDLE;
-    VkImageView metallicRoughnessMapImageView = VK_NULL_HANDLE;
-    VkSampler metallicRoughnessMapSampler = VK_NULL_HANDLE;
-};
-
 struct RenderData {
     std::vector<VkBuffer> uniformBuffers;
     std::vector<VkDeviceMemory> uniformBuffersMemory;
@@ -191,8 +161,7 @@ struct RenderData {
     std::vector<VkDescriptorSet> descriptorSets;
 };
 
-// Immutable device resources are owned by VulkanContext's asset cache. Scene
-// mesh instances retain a shared reference but never destroy these handles.
+// Immutable device resources are owned by VulkanContext's asset cache.
 struct GpuMeshAsset {
     VkBuffer vertexBuffer = VK_NULL_HANDLE;
     VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
@@ -211,13 +180,5 @@ struct GpuMeshAsset {
     VkImageView metallicRoughnessMapImageView = VK_NULL_HANDLE;
     VkSampler metallicRoughnessMapSampler = VK_NULL_HANDLE;
 };
-
-struct MeshInstance {
-    VulkanMesh mesh;
-    VulkanMaterial material;
-    RenderData renderData;
-    std::shared_ptr<GpuMeshAsset> gpuAsset;
-};
-
 
 #endif

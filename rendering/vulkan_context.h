@@ -154,6 +154,11 @@ private:
         bool complete = false;
     };
 
+    struct MeshRenderState {
+        std::shared_ptr<GpuMeshAsset> gpuAsset;
+        RenderData renderData;
+    };
+
     struct SceneResourceOwnership {
         std::vector<OwnedBufferAllocation> temporaryBuffers;
         std::vector<OwnedBufferAllocation> buffers;
@@ -162,6 +167,8 @@ private:
         std::vector<OwnedSampler> samplers;
         std::vector<OwnedDescriptorSets> descriptorSets;
         std::vector<RenderData*> renderData;
+        std::unordered_map<GameObject*, std::vector<MeshRenderState>>
+            meshRenderStates;
         std::vector<GameObject*> attachedGameObjects;
         std::vector<std::shared_ptr<GpuModelAsset>> uncachedGpuModels;
     };
@@ -190,13 +197,13 @@ private:
     void cleanupCompletedUploadStaging() noexcept;
     void destroyGpuModelAsset(GpuModelAsset& asset) noexcept;
     void destroyGpuAssetCache() noexcept;
-    void clearGpuAliases(GameObject& object) noexcept;
+    [[nodiscard]] std::vector<MeshRenderState>* loadMeshRenderStates(
+        const GameObject* object) noexcept;
 
-    void updateUniformBuffer(uint32_t currentImage,
-                             const std::unique_ptr<GameObject>& gameObject,
-                             const glm::mat4& view,
-                             const glm::mat4& projection,
-                             const glm::vec3& cameraPosition);
+    [[nodiscard]] Result updateUniformBuffer(
+        SceneResourceOwnership& resources, uint32_t currentImage,
+        const std::unique_ptr<GameObject>& gameObject, const glm::mat4& view,
+        const glm::mat4& projection, const glm::vec3& cameraPosition);
     [[nodiscard]] Result recreateSwapchain();
     [[nodiscard]] Result recordCommandBuffer(VkCommandBuffer commandBuffer,
                                              uint32_t imageIndex,

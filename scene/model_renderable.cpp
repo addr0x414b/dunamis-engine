@@ -868,34 +868,6 @@ bool normalizeVector(const glm::vec3& input, glm::vec3& output) {
 Result validateIncomingMeshInstance(const MeshInstance& instance) {
     const auto& mesh = instance.mesh;
     const auto& material = instance.material;
-    const RenderData& renderData = instance.renderData;
-
-    if (mesh.vertexBuffer != VK_NULL_HANDLE ||
-        mesh.vertexBufferMemory != VK_NULL_HANDLE ||
-        mesh.indexBuffer != VK_NULL_HANDLE ||
-        mesh.indexBufferMemory != VK_NULL_HANDLE) {
-        return Result::failure("MeshInstance contains mesh Vulkan state");
-    }
-    if (material.textureImage != VK_NULL_HANDLE ||
-        material.textureImageMemory != VK_NULL_HANDLE ||
-        material.textureImageView != VK_NULL_HANDLE ||
-        material.textureSampler != VK_NULL_HANDLE ||
-        material.normalMapImage != VK_NULL_HANDLE ||
-        material.normalMapImageMemory != VK_NULL_HANDLE ||
-        material.normalMapImageView != VK_NULL_HANDLE ||
-        material.normalMapSampler != VK_NULL_HANDLE ||
-        material.metallicRoughnessMapImage != VK_NULL_HANDLE ||
-        material.metallicRoughnessMapImageMemory != VK_NULL_HANDLE ||
-        material.metallicRoughnessMapImageView != VK_NULL_HANDLE ||
-        material.metallicRoughnessMapSampler != VK_NULL_HANDLE) {
-        return Result::failure("MeshInstance contains material Vulkan state");
-    }
-    if (!renderData.uniformBuffers.empty() ||
-        !renderData.uniformBuffersMemory.empty() ||
-        !renderData.uniformBuffersMapped.empty() ||
-        !renderData.descriptorSets.empty()) {
-        return Result::failure("MeshInstance contains RenderData Vulkan state");
-    }
 
     if (!mesh.indices.empty() && mesh.vertices.empty()) {
         return Result::failure(

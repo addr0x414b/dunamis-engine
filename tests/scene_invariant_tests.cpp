@@ -3,6 +3,7 @@
 #include "scene/model_renderable.h"
 #include "game/level_1.h"
 #include "input/input_manager.h"
+#include "rendering/utils/vulkan_utils.h"
 
 #include <algorithm>
 #include <chrono>
@@ -651,7 +652,7 @@ int main() {
                          attributes[4].offset == offsetof(Vertex, tangent),
                      "Vulkan Vertex input layout is incorrect");
 
-    const VulkanMaterial defaultMaterial;
+    const Material defaultMaterial;
     passed &= expect(defaultMaterial.baseColorFactor == glm::vec4(1.0f) &&
                          defaultMaterial.metallicFactor == 1.0f &&
                          defaultMaterial.roughnessFactor == 1.0f &&
@@ -663,25 +664,13 @@ int main() {
                          defaultMaterial.normalMapHeight == 0 &&
                          defaultMaterial.normalMapChannels == 0 &&
                          defaultMaterial.normalMapMipLevels == 0 &&
-                         defaultMaterial.normalMapImage == VK_NULL_HANDLE &&
-                         defaultMaterial.normalMapImageMemory == VK_NULL_HANDLE &&
-                         defaultMaterial.normalMapImageView == VK_NULL_HANDLE &&
-                         defaultMaterial.normalMapSampler == VK_NULL_HANDLE &&
                          defaultMaterial.metallicRoughnessMapPath.empty() &&
                          defaultMaterial.metallicRoughnessMapPixels == nullptr &&
                          defaultMaterial.metallicRoughnessMapWidth == 0 &&
                          defaultMaterial.metallicRoughnessMapHeight == 0 &&
                          defaultMaterial.metallicRoughnessMapChannels == 0 &&
-                         defaultMaterial.metallicRoughnessMapMipLevels == 0 &&
-                         defaultMaterial.metallicRoughnessMapImage ==
-                             VK_NULL_HANDLE &&
-                         defaultMaterial.metallicRoughnessMapImageMemory ==
-                             VK_NULL_HANDLE &&
-                         defaultMaterial.metallicRoughnessMapImageView ==
-                             VK_NULL_HANDLE &&
-                         defaultMaterial.metallicRoughnessMapSampler ==
-                             VK_NULL_HANDLE,
-                     "Default material state is not cleanup-safe");
+                         defaultMaterial.metallicRoughnessMapMipLevels == 0,
+                     "Default CPU material state is invalid");
 
     passed &= expect(scene_limits::maxPointLights == 16,
                      "The point-light limit is not 16");

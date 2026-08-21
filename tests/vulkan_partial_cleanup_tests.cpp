@@ -14,6 +14,19 @@
 
 class VulkanContextTestAccess {
 public:
+    [[nodiscard]] static bool meshRenderStatesShareGpuAssets() {
+        auto asset = std::make_shared<GpuMeshAsset>();
+        VulkanContext::MeshRenderState editing;
+        VulkanContext::MeshRenderState runtime;
+        editing.gpuAsset = asset;
+        runtime.gpuAsset = asset;
+        if (editing.gpuAsset != runtime.gpuAsset || asset.use_count() != 3) {
+            return false;
+        }
+        runtime.gpuAsset.reset();
+        return editing.gpuAsset == asset && asset.use_count() == 2;
+    }
+
     [[nodiscard]] static Result beginSceneResourceLoad(
         VulkanContext& context, Scene* scene) {
         return context.beginSceneResourceLoad(scene);
@@ -32,6 +45,12 @@ public:
         VulkanContext& context,
         const std::unique_ptr<GameObject>& gameObject) {
         return context.createUniformBuffers(gameObject);
+    }
+
+    [[nodiscard]] static bool hasNoSceneRendererState(
+        const VulkanContext& context, const Scene* scene) {
+        return context.sceneResourceOwnership_.find(scene) ==
+               context.sceneResourceOwnership_.end();
     }
 
     [[nodiscard]] static bool ambientOcclusionIsReset(
@@ -232,14 +251,6 @@ Result addNoLightTriangle(Scene& scene) {
     return scene.addGameObject(std::move(object));
 }
 
-VkSampler foreignSamplerHandle() {
-#if VK_USE_64_BIT_PTR_DEFINES
-    return reinterpret_cast<VkSampler>(std::uintptr_t{1});
-#else
-    return static_cast<VkSampler>(1);
-#endif
-}
-
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -250,6 +261,10 @@ int main(int argc, char** argv) {
 
     EmptyScene editingScene;
     EmptyScene runtimeScene;
+    if (!VulkanContextTestAccess::meshRenderStatesShareGpuAssets()) {
+        std::cerr << "Mesh renderer states do not share cached GPU assets\n";
+        return 1;
+    }
     if (!VulkanContextTestAccess::physicsDebugShapeKeyIgnoresScene(
             &editingScene, &runtimeScene)) {
         std::cerr << "Physics debug shape key still depends on Scene identity\n";
@@ -266,20 +281,6 @@ int main(int argc, char** argv) {
         std::cout << "Skipping Vulkan partial-cleanup test: "
                   << platformResult.error() << '\n';
         return skipped;
-    }
-
-    {
-        auto object = std::make_unique<GameObject>();
-        MeshInstance dirtyInstance{};
-        dirtyInstance.material.textureSampler = foreignSamplerHandle();
-        const Result addMeshResult =
-            object->modelRenderable().addMeshInstance(std::move(dirtyInstance));
-        if (addMeshResult ||
-            addMeshResult.error().find("material Vulkan state") ==
-                std::string::npos) {
-            std::cerr << "GameObject accepted pre-existing Vulkan state\n";
-            return 1;
-        }
     }
 
     EmptyScene scene;
@@ -400,6 +401,8 @@ int main(int argc, char** argv) {
             !VulkanContextTestAccess::ambientOcclusionIsReset(initializedContext) ||
             !VulkanContextTestAccess::physicsDebugPipelinesAreReset(
                 initializedContext) ||
+            !VulkanContextTestAccess::hasNoSceneRendererState(
+                initializedContext, &resourceScene) ||
             !GameObjectTestAccess::mutableTopology(
                 *resourceScene.gameObjects().front())) {
             std::cerr << "Repeated full Vulkan cleanup did not complete\n";
@@ -455,17 +458,6 @@ int main(int argc, char** argv) {
             std::cerr << "Repeated no-light VisualServer shutdown failed\n";
             return 1;
         }
-    }
-
-    const RenderData& renderData =
-        resourceScene.gameObjects().front()
-            ->modelRenderable().meshInstances().front()
-            .renderData;
-    if (!renderData.uniformBuffers.empty() ||
-        !renderData.uniformBuffersMemory.empty() ||
-        !renderData.uniformBuffersMapped.empty()) {
-        std::cerr << "Vulkan cleanup retained tracked scene-buffer state\n";
-        return 1;
     }
 
     platform.shutdown();

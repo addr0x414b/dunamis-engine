@@ -15,7 +15,7 @@
 
 #include <glm/glm.hpp>
 
-#include "../rendering/utils/vulkan_utils.h"
+#include "../assets/model_asset.h"
 
 namespace physics {
 

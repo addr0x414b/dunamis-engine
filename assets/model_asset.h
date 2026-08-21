@@ -148,4 +148,9 @@ struct Material {
     bool doubleSided = false;
 };
 
+struct MeshInstance {
+    Mesh mesh;
+    Material material;
+};
+
 #endif

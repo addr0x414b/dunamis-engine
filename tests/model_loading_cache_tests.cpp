@@ -68,27 +68,7 @@ std::filesystem::path makeFixtureDirectory() {
 
 bool cleanInstance(const MeshInstance& instance) {
     const auto& material = instance.material;
-    return instance.mesh.vertexBuffer == VK_NULL_HANDLE &&
-           instance.mesh.vertexBufferMemory == VK_NULL_HANDLE &&
-           instance.mesh.indexBuffer == VK_NULL_HANDLE &&
-           instance.mesh.indexBufferMemory == VK_NULL_HANDLE &&
-           material.textureImage == VK_NULL_HANDLE &&
-           material.textureImageMemory == VK_NULL_HANDLE &&
-           material.textureImageView == VK_NULL_HANDLE &&
-           material.textureSampler == VK_NULL_HANDLE &&
-           material.normalMapImage == VK_NULL_HANDLE &&
-           material.normalMapImageMemory == VK_NULL_HANDLE &&
-           material.normalMapImageView == VK_NULL_HANDLE &&
-           material.normalMapSampler == VK_NULL_HANDLE &&
-           material.metallicRoughnessMapImage == VK_NULL_HANDLE &&
-           material.metallicRoughnessMapImageMemory == VK_NULL_HANDLE &&
-           material.metallicRoughnessMapImageView == VK_NULL_HANDLE &&
-           material.metallicRoughnessMapSampler == VK_NULL_HANDLE &&
-           instance.renderData.uniformBuffers.empty() &&
-           instance.renderData.uniformBuffersMemory.empty() &&
-           instance.renderData.uniformBuffersMapped.empty() &&
-           instance.renderData.descriptorSets.empty() &&
-           material.pixels == material.pixelsOwner.get() &&
+    return material.pixels == material.pixelsOwner.get() &&
            material.normalMapPixels == material.normalMapPixelsOwner.get() &&
            material.metallicRoughnessMapPixels ==
                material.metallicRoughnessMapPixelsOwner.get() &&

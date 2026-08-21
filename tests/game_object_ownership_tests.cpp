@@ -15,6 +15,8 @@ static_assert(!std::is_copy_constructible_v<GameObject>);
 static_assert(!std::is_copy_assignable_v<GameObject>);
 static_assert(!std::is_copy_constructible_v<ModelRenderable>);
 static_assert(!std::is_copy_assignable_v<ModelRenderable>);
+static_assert(std::is_same_v<decltype(MeshInstance::mesh), Mesh>);
+static_assert(std::is_same_v<decltype(MeshInstance::material), Material>);
 
 class GameObjectTestAccess {
 public:
@@ -56,30 +58,6 @@ MeshInstance cleanMeshInstance() {
     instance.mesh.bounds.maximum = {101.0f, 101.0f, 101.0f};
     return instance;
 }
-
-#if VK_USE_64_BIT_PTR_DEFINES
-VkBuffer foreignBuffer() {
-    return reinterpret_cast<VkBuffer>(std::uintptr_t{1});
-}
-VkDeviceMemory foreignMemory() {
-    return reinterpret_cast<VkDeviceMemory>(std::uintptr_t{1});
-}
-VkImage foreignImage() {
-    return reinterpret_cast<VkImage>(std::uintptr_t{1});
-}
-VkImageView foreignImageView() {
-    return reinterpret_cast<VkImageView>(std::uintptr_t{1});
-}
-VkSampler foreignSampler() {
-    return reinterpret_cast<VkSampler>(std::uintptr_t{1});
-}
-#else
-VkBuffer foreignBuffer() { return static_cast<VkBuffer>(1); }
-VkDeviceMemory foreignMemory() { return static_cast<VkDeviceMemory>(1); }
-VkImage foreignImage() { return static_cast<VkImage>(1); }
-VkImageView foreignImageView() { return static_cast<VkImageView>(1); }
-VkSampler foreignSampler() { return static_cast<VkSampler>(1); }
-#endif
 
 class CurrentPathGuard {
 public:
@@ -143,83 +121,6 @@ bool testIncomingStateAndBounds() {
                              std::string::npos,
                      "Non-finite vertex positions were accepted");
 
-    const auto expectRejected = [&](const char* category,
-                                    const auto& configure) {
-        GameObject candidate;
-        MeshInstance instance = cleanMeshInstance();
-        configure(instance);
-        const Result result = candidate.modelRenderable().addMeshInstance(
-            std::move(instance));
-        return expect(!result && result.error().find(category) != std::string::npos &&
-                          candidate.modelRenderable().meshInstances().empty(),
-                      std::string("Incoming Vulkan state was not rejected: ") +
-                          category);
-    };
-
-    passed &= expectRejected("mesh Vulkan state", [](MeshInstance& instance) {
-        instance.mesh.vertexBuffer = foreignBuffer();
-    });
-    passed &= expectRejected("mesh Vulkan state", [](MeshInstance& instance) {
-        instance.mesh.vertexBufferMemory = foreignMemory();
-    });
-    passed &= expectRejected("mesh Vulkan state", [](MeshInstance& instance) {
-        instance.mesh.indexBuffer = foreignBuffer();
-    });
-    passed &= expectRejected("mesh Vulkan state", [](MeshInstance& instance) {
-        instance.mesh.indexBufferMemory = foreignMemory();
-    });
-    passed &= expectRejected("material Vulkan state", [](MeshInstance& instance) {
-        instance.material.textureImage = foreignImage();
-    });
-    passed &= expectRejected("material Vulkan state", [](MeshInstance& instance) {
-        instance.material.textureImageMemory = foreignMemory();
-    });
-    passed &= expectRejected("material Vulkan state", [](MeshInstance& instance) {
-        instance.material.textureImageView = foreignImageView();
-    });
-    passed &= expectRejected("material Vulkan state", [](MeshInstance& instance) {
-        instance.material.textureSampler = foreignSampler();
-    });
-    passed &= expectRejected("material Vulkan state", [](MeshInstance& instance) {
-        instance.material.normalMapImage = foreignImage();
-    });
-    passed &= expectRejected("material Vulkan state", [](MeshInstance& instance) {
-        instance.material.normalMapImageMemory = foreignMemory();
-    });
-    passed &= expectRejected("material Vulkan state", [](MeshInstance& instance) {
-        instance.material.normalMapImageView = foreignImageView();
-    });
-    passed &= expectRejected("material Vulkan state", [](MeshInstance& instance) {
-        instance.material.normalMapSampler = foreignSampler();
-    });
-    passed &= expectRejected("material Vulkan state", [](MeshInstance& instance) {
-        instance.material.metallicRoughnessMapImage = foreignImage();
-    });
-    passed &= expectRejected("material Vulkan state", [](MeshInstance& instance) {
-        instance.material.metallicRoughnessMapImageMemory = foreignMemory();
-    });
-    passed &= expectRejected("material Vulkan state", [](MeshInstance& instance) {
-        instance.material.metallicRoughnessMapImageView = foreignImageView();
-    });
-    passed &= expectRejected("material Vulkan state", [](MeshInstance& instance) {
-        instance.material.metallicRoughnessMapSampler = foreignSampler();
-    });
-    passed &= expectRejected("RenderData Vulkan state", [](MeshInstance& instance) {
-        instance.renderData.uniformBuffers.push_back(VK_NULL_HANDLE);
-    });
-    passed &= expectRejected("RenderData Vulkan state", [](MeshInstance& instance) {
-        instance.renderData.uniformBuffersMemory.push_back(VK_NULL_HANDLE);
-    });
-    passed &= expectRejected("RenderData Vulkan state", [](MeshInstance& instance) {
-        instance.renderData.uniformBuffersMapped.push_back(nullptr);
-    });
-    passed &= expectRejected("RenderData Vulkan state", [](MeshInstance& instance) {
-        instance.renderData.uniformBuffersMapped.push_back(
-            reinterpret_cast<void*>(std::uintptr_t{1}));
-    });
-    passed &= expectRejected("RenderData Vulkan state", [](MeshInstance& instance) {
-        instance.renderData.descriptorSets.push_back(VK_NULL_HANDLE);
-    });
     return passed;
 }
 
@@ -353,25 +254,6 @@ bool testAuthoredPathFailureConsistency(
     return passed;
 }
 
-bool testSharedGpuAssetReferences() {
-    auto asset = std::make_shared<GpuMeshAsset>();
-    asset->vertexBuffer = foreignBuffer();
-    MeshInstance editing;
-    MeshInstance runtime;
-    editing.gpuAsset = asset;
-    runtime.gpuAsset = asset;
-    bool passed = expect(editing.gpuAsset == runtime.gpuAsset,
-                         "Identical instances did not share a GPU asset");
-    runtime.gpuAsset.reset();
-    passed &= expect(editing.gpuAsset &&
-                         editing.gpuAsset->vertexBuffer == foreignBuffer(),
-                     "Runtime release invalidated the editing GPU asset");
-    editing.gpuAsset.reset();
-    passed &= expect(asset.use_count() == 1,
-                     "Scene references did not release independently");
-    return passed;
-}
-
 }  // namespace
 
 int main() {
@@ -381,7 +263,6 @@ int main() {
     passed &= testTopologyLock(modelPath);
     passed &= testModelLoading(modelPath);
     passed &= testAuthoredPathFailureConsistency(modelPath);
-    passed &= testSharedGpuAssetReferences();
     std::error_code error;
     std::filesystem::remove(modelPath, error);
     return passed ? 0 : 1;

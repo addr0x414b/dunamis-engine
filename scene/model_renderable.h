@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "../core/result.h"
-#include "../rendering/utils/vulkan_utils.h"
+#include "../assets/model_asset.h"
 
 namespace model_loading {
 struct CachedCpuModel;
@@ -21,8 +21,8 @@ public:
     ModelRenderable(const ModelRenderable& other) = delete;
     ModelRenderable& operator=(const ModelRenderable& other) = delete;
 
-    // These remain simple authoring inputs for the transitional API. The
-    // loaded mesh data and all renderer-facing state live in this object.
+    // These remain simple authoring inputs. Loaded CPU mesh/material data
+    // lives here; renderer state is owned by the active renderer backend.
     const char* modelPath = nullptr;
     const char* texturePath = nullptr;
 
