@@ -22,6 +22,13 @@
 namespace authored_property {
 
 template <typename T>
+inline constexpr bool is_supported_v =
+    std::is_same_v<T, bool> || std::is_same_v<T, std::string> ||
+    std::is_integral_v<T> || std::is_floating_point_v<T> ||
+    std::is_same_v<T, glm::vec2> || std::is_same_v<T, glm::vec3> ||
+    std::is_same_v<T, glm::vec4>;
+
+template <typename T>
 Result encode(const T& value, nlohmann::json& output) {
     if constexpr (std::is_same_v<T, bool> || std::is_same_v<T, std::string>) {
         output = value;
@@ -114,11 +121,18 @@ Result decode(const nlohmann::json& input, T& value) {
 
 }  // namespace authored_property
 
+enum class PropertyLifecycle {
+    Persisted,
+    RuntimeTransferOnly,
+    Transient,
+};
+
 struct PropertyDescriptor {
     std::string name;
-    bool authored = true;
+    PropertyLifecycle lifecycle = PropertyLifecycle::Persisted;
     std::function<Result(const GameObject&, nlohmann::json&)> read;
     std::function<Result(GameObject&, const nlohmann::json&)> write;
+    std::function<Result(const GameObject&, GameObject&)> copy;
 };
 
 struct TypeDescriptor {
@@ -158,20 +172,23 @@ public:
 
     template <typename Owner, typename Value>
     Result registerProperty(const std::string& typeName, std::string name,
-                            Value Owner::*member, bool authored = true) {
+                            Value Owner::*member,
+                            PropertyLifecycle lifecycle =
+                                PropertyLifecycle::Persisted) {
         return registerAccessor<Owner, Value>(
             typeName, std::move(name),
             [member](const Owner& object) { return object.*member; },
             [member](Owner& object, const Value& value) {
                 object.*member = value;
                 return Result::success();
-            }, authored);
+            }, lifecycle);
     }
 
     template <typename Owner, typename Value, typename Getter, typename Setter>
     Result registerAccessor(const std::string& typeName, std::string name,
                             Getter getter, Setter setter,
-                            bool authored = true) {
+                            PropertyLifecycle lifecycle =
+                                PropertyLifecycle::Persisted) {
         static_assert(std::is_base_of_v<GameObject, Owner>,
                       "Property owners must derive from GameObject");
         TypeDescriptor* descriptor = findMutable(typeName);
@@ -185,18 +202,34 @@ public:
         }
         PropertyDescriptor property;
         property.name = std::move(name);
-        property.authored = authored;
-        property.read = [getter](const GameObject& base, nlohmann::json& output) {
-            return authored_property::encode<Value>(
-                getter(static_cast<const Owner&>(base)), output);
-        };
-        property.write = [setter](GameObject& base,
-                                  const nlohmann::json& input) {
-            Value value{};
-            Result result = authored_property::decode<Value>(input, value);
-            if (!result) return result;
-            return setter(static_cast<Owner&>(base), value);
-        };
+        property.lifecycle = lifecycle;
+        if (lifecycle != PropertyLifecycle::Transient) {
+            property.copy = [getter, setter](const GameObject& source,
+                                             GameObject& destination) {
+                Value value = getter(static_cast<const Owner&>(source));
+                return setter(static_cast<Owner&>(destination), value);
+            };
+        }
+        if (lifecycle == PropertyLifecycle::Persisted) {
+            if constexpr (!authored_property::is_supported_v<Value>) {
+                return Result::failure(
+                    "Persisted property '" + property.name +
+                    "' has no supported JSON codec");
+            } else {
+                property.read = [getter](const GameObject& base,
+                                         nlohmann::json& output) {
+                    return authored_property::encode<Value>(
+                        getter(static_cast<const Owner&>(base)), output);
+                };
+                property.write = [setter](GameObject& base,
+                                          const nlohmann::json& input) {
+                    Value value{};
+                    Result result = authored_property::decode<Value>(input, value);
+                    if (!result) return result;
+                    return setter(static_cast<Owner&>(base), value);
+                };
+            }
+        }
         descriptor->properties.push_back(std::move(property));
         return Result::success();
     }
@@ -205,7 +238,9 @@ public:
     [[nodiscard]] const TypeDescriptor* find(const GameObject& object) const;
     [[nodiscard]] const PropertyDescriptor* findProperty(
         const TypeDescriptor& type, const std::string& name) const;
-    [[nodiscard]] std::vector<const PropertyDescriptor*> authoredProperties(
+    [[nodiscard]] std::vector<const PropertyDescriptor*> persistedProperties(
+        const TypeDescriptor& type) const;
+    [[nodiscard]] std::vector<const PropertyDescriptor*> runtimeTransferProperties(
         const TypeDescriptor& type) const;
     [[nodiscard]] bool isA(const TypeDescriptor& type,
                            const std::string& baseName) const;
@@ -214,8 +249,9 @@ private:
     [[nodiscard]] TypeDescriptor* findMutable(const std::string& name);
     [[nodiscard]] static const PropertyDescriptor* findOwnProperty(
         const TypeDescriptor& type, const std::string& name);
-    void appendAuthoredProperties(const TypeDescriptor& type,
-                                  std::vector<const PropertyDescriptor*>& out) const;
+    void appendProperties(const TypeDescriptor& type,
+                          std::vector<const PropertyDescriptor*>& out,
+                          bool includeRuntimeTransferOnly) const;
 
     std::unordered_map<std::string, TypeDescriptor> byName_;
     std::unordered_map<std::type_index, std::string> byCppType_;

@@ -45,7 +45,8 @@ Result registerCustom(TypeRegistry& registry) {
     REGISTER_CUSTOM(tag);
 #undef REGISTER_CUSTOM
     return registry.registerProperty(
-        "CustomObject", "runtimeOnly", &CustomObject::runtimeOnly, false);
+        "CustomObject", "runtimeOnly", &CustomObject::runtimeOnly,
+        PropertyLifecycle::Transient);
 }
 
 class PersistenceScene final : public Scene {
@@ -147,17 +148,94 @@ bool registryTests() {
     const TypeDescriptor* custom = registry.find("CustomObject");
     passed &= expect(custom && registry.isA(*custom, "GameObject"),
                      "custom type did not inherit GameObject metadata");
-    const auto properties = registry.authoredProperties(*custom);
-    bool hasPosition = false;
-    bool hasSpin = false;
-    bool hasRuntime = false;
-    for (const PropertyDescriptor* property : properties) {
-        hasPosition |= property->name == "position";
-        hasSpin |= property->name == "spinSpeed";
-        hasRuntime |= property->name == "runtimeOnly";
+    const auto contains = [](const auto& properties, const std::string& name) {
+        return std::any_of(
+            properties.begin(), properties.end(),
+            [&name](const PropertyDescriptor* property) {
+                return property->name == name;
+            });
+    };
+    const auto persisted = registry.persistedProperties(*custom);
+    const auto runtimeTransfer = registry.runtimeTransferProperties(*custom);
+    const PropertyDescriptor* spin =
+        registry.findProperty(*custom, "spinSpeed");
+    const PropertyDescriptor* runtimeOnly =
+        registry.findProperty(*custom, "runtimeOnly");
+    passed &= expect(contains(persisted, "position") &&
+                         contains(persisted, "spinSpeed") &&
+                         !contains(persisted, "runtimeOnly") &&
+                         contains(runtimeTransfer, "position") &&
+                         contains(runtimeTransfer, "spinSpeed") &&
+                         contains(runtimeTransfer, "physics") &&
+                         !contains(runtimeTransfer, "runtimeOnly") &&
+                         spin &&
+                         spin->lifecycle == PropertyLifecycle::Persisted &&
+                         runtimeOnly &&
+                         runtimeOnly->lifecycle == PropertyLifecycle::Transient &&
+                         !runtimeOnly->read && !runtimeOnly->write &&
+                         !runtimeOnly->copy,
+                     "property lifecycle filtering or inheritance failed");
+
+    const TypeDescriptor* cameraType = registry.find("Camera");
+    const auto cameraPersisted = cameraType
+        ? registry.persistedProperties(*cameraType)
+        : std::vector<const PropertyDescriptor*>{};
+    const auto cameraRuntimeTransfer = cameraType
+        ? registry.runtimeTransferProperties(*cameraType)
+        : std::vector<const PropertyDescriptor*>{};
+    const PropertyDescriptor* fov = cameraType
+        ? registry.findProperty(*cameraType, "fov")
+        : nullptr;
+    const PropertyDescriptor* physics = cameraType
+        ? registry.findProperty(*cameraType, "physics")
+        : nullptr;
+    passed &= expect(cameraType && contains(cameraPersisted, "position") &&
+                         contains(cameraPersisted, "front") &&
+                         !contains(cameraPersisted, "physics") &&
+                         !contains(cameraPersisted, "fov") &&
+                         contains(cameraRuntimeTransfer, "position") &&
+                         contains(cameraRuntimeTransfer, "physics") &&
+                         contains(cameraRuntimeTransfer, "fov") && fov &&
+                         fov->lifecycle == PropertyLifecycle::RuntimeTransferOnly &&
+                         !fov->read && !fov->write && fov->copy && physics &&
+                         physics->lifecycle == PropertyLifecycle::RuntimeTransferOnly &&
+                         !physics->read && !physics->write && physics->copy,
+                     "camera lifecycle registration or inherited transfer metadata failed");
+
+    Camera sourceCamera;
+    Camera destinationCamera;
+    const bool sourceFovConfigured = sourceCamera.setFov(90.0f);
+    Result fovCopy = Result::failure("FOV descriptor was not registered");
+    if (fov && fov->copy) fovCopy = fov->copy(sourceCamera, destinationCamera);
+    passed &= expect(sourceFovConfigured && fovCopy &&
+                         destinationCamera.fov() == 90.0f,
+                     "camera FOV was not copied through its typed descriptor");
+    const float validFov = destinationCamera.fov();
+    passed &= expect(!destinationCamera.setFov(0.0f) &&
+                         destinationCamera.fov() == validFov,
+                     "camera FOV descriptor did not preserve setter validation semantics");
+
+    GameObject sourcePhysics;
+    GameObject destinationPhysics;
+    sourcePhysics.physics.enabled = true;
+    sourcePhysics.physics.motionType = GameObject::PhysicsMotionType::Dynamic;
+    sourcePhysics.physics.colliderType = GameObject::PhysicsColliderType::Sphere;
+    sourcePhysics.physics.sphereRadius = 4.25f;
+    destinationPhysics.physics.enabled = false;
+    destinationPhysics.physics.motionType = GameObject::PhysicsMotionType::Static;
+    destinationPhysics.physics.colliderType = GameObject::PhysicsColliderType::Mesh;
+    destinationPhysics.physics.sphereRadius = 0.5f;
+    Result physicsCopy = Result::failure("physics descriptor was not registered");
+    if (physics && physics->copy) {
+        physicsCopy = physics->copy(sourcePhysics, destinationPhysics);
     }
-    passed &= expect(hasPosition && hasSpin && !hasRuntime,
-                     "property inheritance/authored filtering failed");
+    passed &= expect(physicsCopy && destinationPhysics.physics.enabled &&
+                         destinationPhysics.physics.motionType ==
+                             GameObject::PhysicsMotionType::Dynamic &&
+                         destinationPhysics.physics.colliderType ==
+                             GameObject::PhysicsColliderType::Sphere &&
+                         destinationPhysics.physics.sphereRadius == 4.25f,
+                     "physics settings were not copied without JSON encoding");
     passed &= expect(custom->factory &&
                          dynamic_cast<CustomObject*>(custom->factory().get()),
                      "custom factory did not construct the correct type");
@@ -178,6 +256,8 @@ bool serializerTests() {
     PersistenceScene source;
     source.name = "Persistence Test";
     source.init();
+    auto* sourceCamera = static_cast<Camera*>(source.findGameObject("camera"));
+    const bool configuredSourceFov = sourceCamera->setFov(90.0f);
     Camera editor;
     editor.position = {11.0f, 12.0f, 13.0f};
     editor.front = {-1.0f, 0.0f, 0.0f};
@@ -191,9 +271,15 @@ bool serializerTests() {
     const auto customRecord = *std::find_if(
         document["objects"].begin(), document["objects"].end(),
         [](const auto& object) { return object["id"] == "custom"; });
+    const auto cameraRecord = *std::find_if(
+        document["objects"].begin(), document["objects"].end(),
+        [](const auto& object) { return object["id"] == "camera"; });
     passed &= expect(customRecord["properties"].contains("position") &&
                          customRecord["properties"].contains("spinSpeed") &&
-                         !customRecord["properties"].contains("runtimeOnly"),
+                         !customRecord["properties"].contains("runtimeOnly") &&
+                         !customRecord["properties"].contains("physics") &&
+                         !cameraRecord["properties"].contains("fov") &&
+                         !cameraRecord["properties"].contains("physics"),
                      "generic custom/inherited property serialization failed");
     passed &= expect(document["activeCamera"]["ownerId"] == "camera" &&
                          document["activeCamera"]["kind"] == "object",
@@ -221,6 +307,7 @@ bool serializerTests() {
     passed &= expect(point && point->intensity == 7.0f &&
                          sun && sun->shadow.halfExtent == 321.0f &&
                          camera && candidate.activeCamera() == camera &&
+                         configuredSourceFov && camera->fov() == 60.0f &&
                          candidate.ambientIntensity() == 0.7f,
                      "built-in object/camera/scene state did not round trip");
     passed &= expect(candidate.findGameObject("base")->authoredTexturePath() ==

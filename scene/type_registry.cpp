@@ -41,23 +41,35 @@ const PropertyDescriptor* TypeRegistry::findProperty(
     return nullptr;
 }
 
-void TypeRegistry::appendAuthoredProperties(
+void TypeRegistry::appendProperties(
     const TypeDescriptor& type,
-    std::vector<const PropertyDescriptor*>& out) const {
+    std::vector<const PropertyDescriptor*>& out,
+    bool includeRuntimeTransferOnly) const {
     if (!type.parentName.empty()) {
         if (const TypeDescriptor* parent = find(type.parentName)) {
-            appendAuthoredProperties(*parent, out);
+            appendProperties(*parent, out, includeRuntimeTransferOnly);
         }
     }
     for (const PropertyDescriptor& property : type.properties) {
-        if (property.authored) out.push_back(&property);
+        if (property.lifecycle == PropertyLifecycle::Persisted ||
+            (includeRuntimeTransferOnly &&
+             property.lifecycle == PropertyLifecycle::RuntimeTransferOnly)) {
+            out.push_back(&property);
+        }
     }
 }
 
-std::vector<const PropertyDescriptor*> TypeRegistry::authoredProperties(
+std::vector<const PropertyDescriptor*> TypeRegistry::persistedProperties(
     const TypeDescriptor& type) const {
     std::vector<const PropertyDescriptor*> properties;
-    appendAuthoredProperties(type, properties);
+    appendProperties(type, properties, false);
+    return properties;
+}
+
+std::vector<const PropertyDescriptor*> TypeRegistry::runtimeTransferProperties(
+    const TypeDescriptor& type) const {
+    std::vector<const PropertyDescriptor*> properties;
+    appendProperties(type, properties, true);
     return properties;
 }
 
@@ -83,6 +95,10 @@ Result registerEngineTypes(TypeRegistry& registry) {
     if (!result) return result;
     result = registry.registerProperty("GameObject", "scale", &GameObject::scale);
     if (!result) return result;
+    result = registry.registerProperty(
+        "GameObject", "physics", &GameObject::physics,
+        PropertyLifecycle::RuntimeTransferOnly);
+    if (!result) return result;
     result = registry.registerAccessor<GameObject, std::string>(
         "GameObject", "texturePath",
         [](const GameObject& object) { return object.authoredTexturePath(); },
@@ -104,6 +120,17 @@ Result registerEngineTypes(TypeRegistry& registry) {
     result = registry.registerProperty("Camera", "front", &Camera::front);
     if (!result) return result;
     result = registry.registerProperty("Camera", "up", &Camera::up);
+    if (!result) return result;
+    result = registry.registerAccessor<Camera, float>(
+        "Camera", "fov",
+        [](const Camera& camera) { return camera.fov(); },
+        [](Camera& camera, const float value) {
+            return camera.setFov(value)
+                ? Result::success()
+                : Result::failure(
+                      "Camera FOV must be finite and between 0 and 180 degrees");
+        },
+        PropertyLifecycle::RuntimeTransferOnly);
     if (!result) return result;
 
     result = registry.registerType<PointLight>(

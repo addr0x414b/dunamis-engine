@@ -48,7 +48,7 @@ Result applyProperties(const nlohmann::json& properties, GameObject& object,
                        std::vector<std::string>& warnings) {
     if (!properties.is_object()) return Result::failure("expected properties object");
     for (const PropertyDescriptor* descriptor :
-         registry.authoredProperties(type)) {
+         registry.persistedProperties(type)) {
         const auto property = properties.find(descriptor->name);
         if (property == properties.end()) continue;
         Result result = descriptor->write(object, property.value());
@@ -60,7 +60,8 @@ Result applyProperties(const nlohmann::json& properties, GameObject& object,
     for (auto property = properties.begin(); property != properties.end(); ++property) {
         const PropertyDescriptor* descriptor =
             registry.findProperty(type, property.key());
-        if (!descriptor || !descriptor->authored) {
+        if (!descriptor ||
+            descriptor->lifecycle != PropertyLifecycle::Persisted) {
             warnings.push_back("Ignoring unknown property '" + property.key() +
                                "' on type '" + type.name + "'");
         }
@@ -103,7 +104,7 @@ Result SceneSerializer::serializeObject(const GameObject& object,
     }
     output = {{"id", object.persistentId}, {"type", type->name},
               {"properties", nlohmann::json::object()}};
-    for (const PropertyDescriptor* property : registry.authoredProperties(*type)) {
+    for (const PropertyDescriptor* property : registry.persistedProperties(*type)) {
         nlohmann::json value;
         Result result = property->read(object, value);
         if (!result) {
