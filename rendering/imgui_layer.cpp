@@ -12,11 +12,13 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <iomanip>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <iterator>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -58,6 +60,24 @@ constexpr SDL_DialogFileFilter sceneFileFilters[] = {
     {"Dunamis Scene", "scene.json"},
     {"All Files", "*"},
 };
+
+std::string formatMemoryBytes(std::size_t bytes) {
+    constexpr double kibibyte = 1024.0;
+    constexpr double mebibyte = kibibyte * 1024.0;
+    constexpr double gibibyte = mebibyte * 1024.0;
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(2);
+    if (bytes >= static_cast<std::size_t>(gibibyte)) {
+        stream << static_cast<double>(bytes) / gibibyte << " GiB";
+    } else if (bytes >= static_cast<std::size_t>(mebibyte)) {
+        stream << static_cast<double>(bytes) / mebibyte << " MiB";
+    } else if (bytes >= static_cast<std::size_t>(kibibyte)) {
+        stream << static_cast<double>(bytes) / kibibyte << " KiB";
+    } else {
+        stream << bytes << " B";
+    }
+    return stream.str();
+}
 
 struct NativeFileDialogCallbackContext {
     std::shared_ptr<NativeFileDialogState> state;
@@ -1050,6 +1070,14 @@ void ImGuiLayer::requestSaveAsOverwriteConfirmation(const std::string& path) {
 }
 void ImGuiLayer::requestQuitConfirmation() { openQuitConfirmationPopup_ = true; }
 
+void ImGuiLayer::setPhysicsDiagnostics(
+    const GameObject* object, std::optional<physics::ShapeDiagnostics> diagnostics,
+    std::string error) {
+    physicsDiagnosticsObject_ = object;
+    physicsDiagnostics_ = std::move(diagnostics);
+    physicsDiagnosticsError_ = std::move(error);
+}
+
 void ImGuiLayer::setRenderColliderIds(const std::vector<std::string>& ids) {
     renderColliderIds_.clear();
     for (const std::string& id : ids) if (!id.empty()) renderColliderIds_.insert(id);
@@ -2021,6 +2049,7 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
     DirectionalLight* directionalLight =
         dynamic_cast<DirectionalLight*>(selectedGameObject_);
     Camera* camera = dynamic_cast<Camera*>(selectedGameObject_);
+    const Character* character = dynamic_cast<const Character*>(selectedGameObject_);
     const char* objectType = pointLight != nullptr
                                  ? "Point Light"
                                  : directionalLight != nullptr
@@ -2059,21 +2088,75 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
         }
     }
 
-    if (selectedGameObject_->physics.enabled) {
+    if (character != nullptr || selectedGameObject_->physics.enabled) {
         ImGui::SeparatorText("Physics");
-        const char* motion = selectedGameObject_->physics.motionType == GameObject::PhysicsMotionType::Static ? "Static" : "Dynamic";
-        const auto collider = selectedGameObject_->physics.colliderType;
-        const char* type = collider == GameObject::PhysicsColliderType::Mesh ? "Mesh" : collider == GameObject::PhysicsColliderType::Sphere ? "Sphere" : "ConvexHull";
-        ImGui::Text("Motion Type: %s", motion);
-        ImGui::Text("Collider Type: %s", type);
-        if (collider == GameObject::PhysicsColliderType::Sphere) {
-            ImGui::Text("Radius: %.3f", selectedGameObject_->physics.sphereRadius);
+        const bool diagnosticsMatch =
+            physicsDiagnosticsObject_ == selectedGameObject_ &&
+            physicsDiagnostics_.has_value();
+        if (character != nullptr) {
+            ImGui::TextUnformatted("Collider Type: Capsule");
             ImGui::TextUnformatted("Collision Representation: Analytic");
+            ImGui::Text("Height: %.3f", character->capsuleHeight);
+            ImGui::Text("Radius: %.3f", character->capsuleRadius);
+            if (diagnosticsMatch) {
+                ImGui::Text("Jolt Shape Memory: %s",
+                            formatMemoryBytes(physicsDiagnostics_->joltBytes).c_str());
+            }
+        } else {
+            const char* motion = selectedGameObject_->physics.motionType ==
+                                         GameObject::PhysicsMotionType::Static
+                                     ? "Static"
+                                     : "Dynamic";
+            const auto collider = selectedGameObject_->physics.colliderType;
+            const char* type = collider == GameObject::PhysicsColliderType::Mesh
+                                   ? "Mesh"
+                                   : collider == GameObject::PhysicsColliderType::Sphere
+                                         ? "Sphere"
+                                         : "ConvexHull";
+            ImGui::Text("Motion Type: %s", motion);
+            ImGui::Text("Collider Type: %s", type);
+            if (diagnosticsMatch) {
+                switch (collider) {
+                case GameObject::PhysicsColliderType::Mesh:
+                    ImGui::Text("Input Vertices: %zu",
+                                physicsDiagnostics_->inputVertices);
+                    ImGui::Text("Input Triangles: %zu",
+                                physicsDiagnostics_->inputTriangles);
+                    ImGui::Text("Jolt Triangles: %zu",
+                                physicsDiagnostics_->joltTriangles);
+                    break;
+                case GameObject::PhysicsColliderType::ConvexHull:
+                    ImGui::Text("Input Points: %zu",
+                                physicsDiagnostics_->inputPoints);
+                    ImGui::Text("Cooked Hull Vertices: %zu",
+                                physicsDiagnostics_->cookedHullVertices);
+                    ImGui::Text("Jolt Triangles: %zu",
+                                physicsDiagnostics_->joltTriangles);
+                    break;
+                case GameObject::PhysicsColliderType::Sphere:
+                    ImGui::TextUnformatted("Collision Representation: Analytic");
+                    ImGui::Text("Radius: %.3f",
+                                selectedGameObject_->physics.sphereRadius);
+                    break;
+                }
+                ImGui::Text("Jolt Shape Memory: %s",
+                            formatMemoryBytes(physicsDiagnostics_->joltBytes).c_str());
+            } else if (collider == GameObject::PhysicsColliderType::Sphere) {
+                ImGui::TextUnformatted("Collision Representation: Analytic");
+                ImGui::Text("Radius: %.3f",
+                            selectedGameObject_->physics.sphereRadius);
+            }
+
+            bool enabled = renderColliderEnabled(*selectedGameObject_);
+            if (ImGui::Checkbox("Render Collider", &enabled)) {
+                if (enabled) renderColliderIds_.insert(selectedGameObject_->persistentId);
+                else renderColliderIds_.erase(selectedGameObject_->persistentId);
+            }
         }
-        bool enabled = renderColliderEnabled(*selectedGameObject_);
-        if (ImGui::Checkbox("Render Collider", &enabled)) {
-            if (enabled) renderColliderIds_.insert(selectedGameObject_->persistentId);
-            else renderColliderIds_.erase(selectedGameObject_->persistentId);
+        if (physicsDiagnosticsObject_ == selectedGameObject_ &&
+            !physicsDiagnosticsError_.empty()) {
+            ImGui::TextWrapped("Collision diagnostics unavailable: %s",
+                               physicsDiagnosticsError_.c_str());
         }
     }
 
@@ -2257,6 +2340,9 @@ void ImGuiLayer::shutdown() noexcept {
     drawDataReady_ = false;
     selectionScene_ = nullptr;
     selectedGameObject_ = nullptr;
+    physicsDiagnosticsObject_ = nullptr;
+    physicsDiagnostics_.reset();
+    physicsDiagnosticsError_.clear();
     pendingEditorCommand_ = EditorCommand::None;
     sceneInteractionAreaHovered_ = false;
     sceneInteractionRect_ = {};
@@ -2308,6 +2394,9 @@ void ImGuiLayer::abandon() noexcept {
     imageCount_ = 0;
     selectionScene_ = nullptr;
     selectedGameObject_ = nullptr;
+    physicsDiagnosticsObject_ = nullptr;
+    physicsDiagnostics_.reset();
+    physicsDiagnosticsError_.clear();
     pendingEditorCommand_ = EditorCommand::None;
     sceneInteractionAreaHovered_ = false;
     sceneInteractionRect_ = {};

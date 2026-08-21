@@ -8,6 +8,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
+#include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
@@ -22,9 +23,11 @@
 #include <limits>
 #include <memory>
 #include <thread>
+#include <utility>
 
 #include "../core/time.h"
 #include "../physics/physics_mesh_builder.h"
+#include "../physics/jolt_shape_builder.h"
 #include "../physics/physics_shape_cache.h"
 #include "../physics/physics_server.h"
 #include "../physics/physics_units.h"
@@ -107,6 +110,225 @@ MeshInstance triangleInstance(const glm::vec3& vertex) {
         {glm::vec3(0.0f, 0.0f, 1.0f), {}, {}, {}, {}}};
     instance.mesh.indices = {0, 1, 2};
     return instance;
+}
+
+JPH::ShapeRefC makeOffOriginHull();
+
+void initializeJoltForShapeTests() {
+    JPH::RegisterDefaultAllocator();
+    JPH::Factory::sInstance = new JPH::Factory();
+    JPH::RegisterTypes();
+}
+
+void shutdownJoltForShapeTests() {
+    JPH::UnregisterTypes();
+    delete JPH::Factory::sInstance;
+    JPH::Factory::sInstance = nullptr;
+}
+
+void testShapeCenterOfMassTransform() {
+    initializeJoltForShapeTests();
+
+    const JPH::Vec3 knownOffset(0.75f, -0.25f, 0.5f);
+    JPH::RotatedTranslatedShapeSettings knownSettings(
+        knownOffset, JPH::Quat::sIdentity(),
+        new JPH::BoxShape(JPH::Vec3(0.2f, 0.3f, 0.4f)));
+    const JPH::ShapeSettings::ShapeResult knownResult = knownSettings.Create();
+    expect(!knownResult.HasError(),
+           "failed to create known-offset shape for COM transform test");
+    const JPH::ShapeRefC knownShape = knownResult.Get();
+    expect(knownShape->GetCenterOfMass().IsClose(knownOffset, 1.0e-5f),
+           "known-offset shape did not preserve its local COM");
+
+    const glm::vec3 knownBodyOrigin(-350.0f, 120.0f, 875.0f);
+    const glm::vec3 knownBodyRotation(11.0f, 37.0f, -29.0f);
+    const JPH::Quat knownRotation = physics::toJoltRotation(knownBodyRotation);
+    const JPH::RVec3 knownExpected = physics::toJoltPosition(knownBodyOrigin) +
+                                     knownRotation * knownOffset;
+    const JPH::RMat44 knownActual = physics::makeShapeCenterOfMassTransform(
+        *knownShape, knownBodyOrigin, knownBodyRotation);
+    expect(knownActual.GetTranslation().IsClose(knownExpected, 2.0e-5f),
+           "generic COM transform did not rotate a known local offset");
+
+    const JPH::ShapeRefC hull = makeOffOriginHull();
+    const JPH::Vec3 localCom = hull->GetCenterOfMass();
+    expect(!localCom.IsNearZero(1.0e-4f),
+           "off-origin convex hull did not produce a non-zero center of mass");
+    const glm::vec3 bodyOrigin(700.0f, -400.0f, 1250.0f);
+    const glm::vec3 bodyRotation(23.0f, -41.0f, 67.0f);
+    const JPH::Quat rotation = physics::toJoltRotation(bodyRotation);
+    const JPH::RVec3 expected = physics::toJoltPosition(bodyOrigin) +
+                                rotation * localCom;
+    const JPH::RMat44 actual = physics::makeShapeCenterOfMassTransform(
+        *hull, bodyOrigin, bodyRotation);
+    expect(actual.GetTranslation().IsClose(expected, 2.0e-5f),
+           "shape COM transform did not rotate the local COM offset from the body origin");
+
+    const glm::mat4 renderTransform = physics::joltTransformToDunamis(actual);
+    const glm::vec3 expectedRenderPosition = physics::metersToDunamis(glm::vec3(
+        static_cast<float>(expected.GetX()), static_cast<float>(expected.GetY()),
+        static_cast<float>(expected.GetZ())));
+    expect(glm::length(glm::vec3(renderTransform[3]) - expectedRenderPosition) <
+               2.0e-3f,
+           "Jolt-to-Dunamis transform conversion changed COM translation");
+
+    shutdownJoltForShapeTests();
+}
+
+void testCharacterShapeCenterOfMassTransform() {
+    initializeJoltForShapeTests();
+
+    Character character;
+    character.position = glm::vec3(10.0f, 20.0f, -30.0f);
+    character.capsuleHeight = 180.0f;
+    character.capsuleRadius = 35.0f;
+    physics::CookedShape cooked;
+    expect(static_cast<bool>(physics::buildCharacterShape(character, cooked)),
+           "failed to build character capsule for COM placement test");
+    const JPH::RMat44 transform = physics::makeShapeCenterOfMassTransform(
+        *cooked.shape, character.position, character.rotation);
+    const JPH::AABox bounds = cooked.shape->GetLocalBounds();
+    const float bottom = physics::metersToDunamis(static_cast<float>(
+        transform.GetTranslation().GetY() + bounds.mMin.GetY()));
+    const float top = physics::metersToDunamis(static_cast<float>(
+        transform.GetTranslation().GetY() + bounds.mMax.GetY()));
+    expect(near(bottom, character.position.y, 2.0e-3f) &&
+               near(top, character.position.y + character.capsuleHeight, 2.0e-3f),
+           "character COM transform did not place capsule between feet and authored height");
+
+    shutdownJoltForShapeTests();
+}
+
+void testShapeDefinitionSignatures() {
+    GameObject object;
+    object.physics.enabled = true;
+    object.physics.colliderType = GameObject::PhysicsColliderType::Mesh;
+    object.scale = glm::vec3(1.0f);
+    const physics::ShapeDefinitionSignature meshSignature =
+        physics::makeGameObjectShapeDefinitionSignature(object);
+    object.position = glm::vec3(100.0f);
+    object.rotation = glm::vec3(20.0f, 30.0f, 40.0f);
+    expect(meshSignature == physics::makeGameObjectShapeDefinitionSignature(object),
+           "position or rotation changed the mesh shape signature");
+    object.scale.x = 2.0f;
+    expect(meshSignature != physics::makeGameObjectShapeDefinitionSignature(object),
+           "mesh scale did not change the shape signature");
+
+    MeshInstance modelAInput = triangleInstance(glm::vec3(0.0f));
+    MeshInstance modelBInput = triangleInstance(glm::vec3(0.0f));
+    modelAInput.mesh.modelPath = "model-a";
+    modelBInput.mesh.modelPath = "model-b";
+    GameObject modelA;
+    GameObject modelB;
+    modelA.physics.enabled = true;
+    modelB.physics.enabled = true;
+    expect(static_cast<bool>(modelA.modelRenderable().addMeshInstance(
+               std::move(modelAInput))) &&
+               static_cast<bool>(modelB.modelRenderable().addMeshInstance(
+                   std::move(modelBInput))),
+           "failed to add model identity signature inputs");
+    expect(physics::makeGameObjectShapeDefinitionSignature(modelA) !=
+               physics::makeGameObjectShapeDefinitionSignature(modelB),
+           "mesh model identity did not change the shape signature");
+
+    object.physics.colliderType = GameObject::PhysicsColliderType::Sphere;
+    object.physics.sphereRadius = 25.0f;
+    const physics::ShapeDefinitionSignature sphereSignature =
+        physics::makeGameObjectShapeDefinitionSignature(object);
+    object.position.y += 5.0f;
+    expect(sphereSignature == physics::makeGameObjectShapeDefinitionSignature(object),
+           "position changed the sphere shape signature");
+    object.physics.sphereRadius = 30.0f;
+    expect(sphereSignature != physics::makeGameObjectShapeDefinitionSignature(object),
+           "sphere radius did not change the shape signature");
+
+    Character character;
+    const physics::ShapeDefinitionSignature characterSignature =
+        physics::makeCharacterShapeDefinitionSignature(character);
+    character.position = glm::vec3(1.0f, 2.0f, 3.0f);
+    character.rotation = glm::vec3(10.0f, 20.0f, 30.0f);
+    expect(characterSignature ==
+               physics::makeCharacterShapeDefinitionSignature(character),
+           "position or rotation changed the character shape signature");
+    character.capsuleHeight += 1.0f;
+    expect(characterSignature !=
+               physics::makeCharacterShapeDefinitionSignature(character),
+           "character height did not change the shape signature");
+    character.capsuleHeight -= 1.0f;
+    character.capsuleRadius += 1.0f;
+    expect(characterSignature !=
+               physics::makeCharacterShapeDefinitionSignature(character),
+           "character radius did not change the shape signature");
+}
+
+void testShapeDiagnostics() {
+    initializeJoltForShapeTests();
+
+    GameObject meshObject;
+    meshObject.physics.enabled = true;
+    meshObject.physics.colliderType = GameObject::PhysicsColliderType::Mesh;
+    expect(static_cast<bool>(meshObject.modelRenderable().addMeshInstance(
+               triangleInstance(glm::vec3(0.0f)))),
+           "failed to add mesh diagnostic input");
+    physics::CookedShape mesh;
+    expect(static_cast<bool>(physics::buildGameObjectShape(meshObject, mesh)),
+           "failed to build mesh diagnostic shape");
+    expect(mesh.diagnostics.representation ==
+               physics::ShapeDiagnostics::Representation::TriangleMesh &&
+               mesh.diagnostics.inputVertices == 3 &&
+               mesh.diagnostics.inputTriangles == 1 &&
+               mesh.diagnostics.joltTriangles > 0 && mesh.diagnostics.joltBytes > 0,
+           "mesh diagnostics were not populated");
+
+    MeshInstance convexInput;
+    convexInput.mesh.vertices = {
+        {{0.0f, 0.0f, 0.0f}, {}, {}, {}, {}},
+        {{100.0f, 0.0f, 0.0f}, {}, {}, {}, {}},
+        {{0.0f, 200.0f, 0.0f}, {}, {}, {}, {}},
+        {{0.0f, 0.0f, 100.0f}, {}, {}, {}, {}}};
+    GameObject convexObject;
+    convexObject.physics.enabled = true;
+    convexObject.physics.colliderType = GameObject::PhysicsColliderType::ConvexHull;
+    expect(static_cast<bool>(convexObject.modelRenderable().addMeshInstance(
+               std::move(convexInput))),
+           "failed to add convex diagnostic input");
+    physics::CookedShape convex;
+    expect(static_cast<bool>(physics::buildGameObjectShape(convexObject, convex)),
+           "failed to build convex diagnostic shape");
+    expect(convex.diagnostics.representation ==
+               physics::ShapeDiagnostics::Representation::ConvexHull &&
+               convex.diagnostics.inputPoints == 4 &&
+               convex.diagnostics.cookedHullVertices > 0 &&
+               convex.diagnostics.joltTriangles > 0 && convex.diagnostics.joltBytes > 0,
+           "convex hull diagnostics were not populated");
+
+    GameObject sphereObject;
+    sphereObject.physics.enabled = true;
+    sphereObject.physics.colliderType = GameObject::PhysicsColliderType::Sphere;
+    sphereObject.physics.sphereRadius = 42.0f;
+    physics::CookedShape sphere;
+    expect(static_cast<bool>(physics::buildGameObjectShape(sphereObject, sphere)),
+           "failed to build sphere diagnostic shape");
+    expect(sphere.diagnostics.representation ==
+               physics::ShapeDiagnostics::Representation::AnalyticSphere &&
+               near(sphere.diagnostics.radius, 42.0f) &&
+               sphere.diagnostics.joltBytes > 0,
+           "sphere diagnostics were not populated as analytic data");
+
+    Character character;
+    character.capsuleHeight = 180.0f;
+    character.capsuleRadius = 35.0f;
+    physics::CookedShape capsule;
+    expect(static_cast<bool>(physics::buildCharacterShape(character, capsule)),
+           "failed to build capsule diagnostic shape");
+    expect(capsule.diagnostics.representation ==
+               physics::ShapeDiagnostics::Representation::AnalyticCapsule &&
+               near(capsule.diagnostics.height, 180.0f) &&
+               near(capsule.diagnostics.radius, 35.0f) &&
+               capsule.diagnostics.joltBytes > 0,
+           "character diagnostics were not populated as analytic data");
+
+    shutdownJoltForShapeTests();
 }
 
 void testAccumulator() {
@@ -712,6 +934,10 @@ int main() {
     testPhysicsUnits();
     testScaledLocalTriangleMesh();
     testConvexHullInputAndRotation();
+    testShapeCenterOfMassTransform();
+    testCharacterShapeCenterOfMassTransform();
+    testShapeDefinitionSignatures();
+    testShapeDiagnostics();
     testCookedShapeCache();
     testOffOriginBodyPivot();
     testDynamicConvexRotationIntegration();

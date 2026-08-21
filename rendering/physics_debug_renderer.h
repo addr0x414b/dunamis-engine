@@ -5,8 +5,9 @@
 #include <Jolt/Jolt.h>
 #include <Jolt/Renderer/DebugRenderer.h>
 
-#include <cstdint>
 #include <atomic>
+#include <chrono>
+#include <cstdint>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -34,9 +35,16 @@ public:
     void beginFrame() noexcept;
     [[nodiscard]] const std::vector<DrawCommand>& drawCommands() const noexcept;
 
-    static bool makeLineIndices(const std::vector<std::uint32_t>& triangles,
-                                std::size_t vertexCount,
-                                std::vector<std::uint32_t>& output) noexcept;
+    static bool makeTriangleEdgeIndices(
+        const std::vector<std::uint32_t>& triangles, std::size_t vertexCount,
+        std::vector<std::uint32_t>& output) noexcept;
+
+    struct PreparationStats {
+        std::chrono::nanoseconds triangleEdgeConversion{};
+        std::size_t batches = 0;
+    };
+
+    [[nodiscard]] PreparationStats consumePreparationStats() noexcept;
 
     void DrawLine(JPH::RVec3Arg from, JPH::RVec3Arg to, JPH::ColorArg color) override;
     void DrawTriangle(JPH::RVec3Arg first, JPH::RVec3Arg second,
@@ -56,6 +64,7 @@ private:
     [[nodiscard]] Batch makeBatch(const std::vector<glm::vec3>& vertices,
                                   const std::vector<std::uint32_t>& triangles);
     std::vector<DrawCommand> drawCommands_;
+    PreparationStats preparationStats_{};
 };
 
 #endif

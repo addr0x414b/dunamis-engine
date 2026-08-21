@@ -47,6 +47,11 @@ target_include_directories(PhysicsTests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(PhysicsTests PRIVATE Physics Jolt glm spdlog Threads::Threads)
 add_test(NAME physics_backend COMMAND PhysicsTests)
 
+add_executable(PhysicsDebugRendererTests physics_debug_renderer_tests.cpp)
+target_include_directories(PhysicsDebugRendererTests PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(PhysicsDebugRendererTests PRIVATE VulkanContext Jolt glm spdlog)
+add_test(NAME physics_debug_renderer COMMAND PhysicsDebugRendererTests)
+
 add_executable(VulkanPartialCleanupTests vulkan_partial_cleanup_tests.cpp)
 add_dependencies(VulkanPartialCleanupTests DunamisEngine)
 

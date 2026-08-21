@@ -8,6 +8,7 @@
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 
 #include <cmath>
+#include <cstring>
 
 #include <glm/gtc/quaternion.hpp>
 
@@ -19,6 +20,24 @@
 
 namespace physics {
 namespace {
+
+std::uint32_t floatBits(float value) noexcept {
+    const float normalized = value == 0.0f ? 0.0f : value;
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &normalized, sizeof(bits));
+    return bits;
+}
+
+std::string modelIdentity(const GameObject& object) {
+    std::string identity = object.authoredModelPath();
+    if (!identity.empty()) return identity;
+    for (const MeshInstance& instance : object.modelRenderable().meshInstances()) {
+        if (instance.mesh.modelPath != nullptr && instance.mesh.modelPath[0] != '\0') {
+            return instance.mesh.modelPath;
+        }
+    }
+    return {};
+}
 
 void setStats(const JPH::Shape& shape, ShapeDiagnostics& diagnostics) {
     const JPH::Shape::Stats stats = shape.GetStats();
@@ -77,6 +96,39 @@ Result cookConvexHull(const GameObject& object, CookedShape& output) {
 
 }  // namespace
 
+ShapeDefinitionSignature makeGameObjectShapeDefinitionSignature(
+    const GameObject& object) {
+    ShapeDefinitionSignature signature;
+    switch (object.physics.colliderType) {
+    case GameObject::PhysicsColliderType::Mesh:
+        signature.type = ShapeDefinitionSignature::Type::Mesh;
+        signature.modelIdentity = modelIdentity(object);
+        signature.scaleBits = {floatBits(object.scale.x), floatBits(object.scale.y),
+                               floatBits(object.scale.z)};
+        break;
+    case GameObject::PhysicsColliderType::ConvexHull:
+        signature.type = ShapeDefinitionSignature::Type::ConvexHull;
+        signature.modelIdentity = modelIdentity(object);
+        signature.scaleBits = {floatBits(object.scale.x), floatBits(object.scale.y),
+                               floatBits(object.scale.z)};
+        break;
+    case GameObject::PhysicsColliderType::Sphere:
+        signature.type = ShapeDefinitionSignature::Type::Sphere;
+        signature.radiusBits = floatBits(object.physics.sphereRadius);
+        break;
+    }
+    return signature;
+}
+
+ShapeDefinitionSignature makeCharacterShapeDefinitionSignature(
+    const Character& character) {
+    ShapeDefinitionSignature signature;
+    signature.type = ShapeDefinitionSignature::Type::CharacterCapsule;
+    signature.radiusBits = floatBits(character.capsuleRadius);
+    signature.heightBits = floatBits(character.capsuleHeight);
+    return signature;
+}
+
 JPH::RVec3 toJoltPosition(const glm::vec3& position) noexcept {
     const glm::vec3 meters = dunamisToMeters(position);
     return JPH::RVec3(meters.x, meters.y, meters.z);
@@ -87,9 +139,15 @@ JPH::Quat toJoltRotation(const glm::vec3& rotation) noexcept {
     return JPH::Quat(quaternion.x, quaternion.y, quaternion.z, quaternion.w).Normalized();
 }
 
-JPH::RMat44 centerOfMassTransform(const glm::vec3& position,
-                                  const glm::vec3& rotation) noexcept {
-    return JPH::RMat44::sRotationTranslation(toJoltRotation(rotation), toJoltPosition(position));
+JPH::RMat44 makeShapeCenterOfMassTransform(
+    const JPH::Shape& shape, const glm::vec3& bodyOriginPosition,
+    const glm::vec3& bodyRotation) noexcept {
+    // Jolt's body creation position is the authored body origin, while Draw
+    // expects a transform for the shape's center of mass. PreTranslated uses
+    // the rotation part of this transform to rotate the local COM offset.
+    return JPH::RMat44::sRotationTranslation(
+               toJoltRotation(bodyRotation), toJoltPosition(bodyOriginPosition))
+        .PreTranslated(shape.GetCenterOfMass());
 }
 
 glm::mat4 joltTransformToDunamis(const JPH::RMat44& transform) noexcept {

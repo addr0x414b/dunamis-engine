@@ -3,8 +3,11 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <fstream>
+#include <functional>
 #include <optional>
 #include <set>
 #include <string>
@@ -323,8 +326,60 @@ private:
     [[nodiscard]] Result createRenderFinishedSemaphores();
     void destroyRenderFinishedSemaphores() noexcept;
     [[nodiscard]] Result initializeImGui();
+    void prepareSelectedPhysicsDiagnostics(Scene* scene,
+                                           SceneRunState runState);
     [[nodiscard]] Result preparePhysicsDebugDraws(Scene* scene, SceneRunState runState);
     [[nodiscard]] Result ensurePhysicsDebugBatch(const PhysicsDebugRenderer::BatchData& batch);
+
+    struct PhysicsDebugGpuBatch {
+        VkBuffer vertices = VK_NULL_HANDLE;
+        VkDeviceMemory vertexMemory = VK_NULL_HANDLE;
+        VkBuffer indices = VK_NULL_HANDLE;
+        VkDeviceMemory indexMemory = VK_NULL_HANDLE;
+    };
+
+    struct PhysicsDebugShapeKey {
+        const Scene* scene = nullptr;
+        std::string objectId;
+        bool character = false;
+
+        [[nodiscard]] bool operator==(const PhysicsDebugShapeKey& other) const
+            noexcept {
+            return scene == other.scene && objectId == other.objectId &&
+                   character == other.character;
+        }
+    };
+
+    struct PhysicsDebugShapeKeyHash {
+        [[nodiscard]] std::size_t operator()(
+            const PhysicsDebugShapeKey& key) const noexcept {
+            std::size_t result = std::hash<const Scene*>{}(key.scene);
+            result ^= std::hash<std::string>{}(key.objectId) +
+                      static_cast<std::size_t>(0x9e3779b9) + (result << 6) +
+                      (result >> 2);
+            result ^= std::hash<bool>{}(key.character) +
+                      static_cast<std::size_t>(0x9e3779b9) + (result << 6) +
+                      (result >> 2);
+            return result;
+        }
+    };
+
+    struct PhysicsDebugShapeCacheEntry {
+        physics::ShapeDefinitionSignature signature;
+        std::optional<physics::CookedShape> cooked;
+        std::string error;
+    };
+
+    [[nodiscard]] const physics::CookedShape* ensurePhysicsDebugShape(
+        Scene* scene, const GameObject& object, bool character,
+        const physics::ShapeDefinitionSignature& signature,
+        std::chrono::nanoseconds& preparationDuration, bool& rebuilt,
+        std::string& error);
+    void clearPhysicsDebugCache() noexcept;
+    void retirePhysicsDebugGpuBatches() noexcept;
+    void collectPhysicsDebugGpuBatches() noexcept;
+    void destroyPhysicsDebugGpuBatch(PhysicsDebugGpuBatch& batch) noexcept;
+    void destroyAllPhysicsDebugGpuBatches() noexcept;
 
     SDL_Window* window = nullptr;
     Scene* currentScene = nullptr;
@@ -471,9 +526,12 @@ private:
     std::vector<OwnedSampler> ownedSceneSamplers;
     std::vector<OwnedDescriptorSets> ownedSceneDescriptorSets;
     std::vector<RenderData*> ownedRenderData;
-    struct PhysicsDebugGpuBatch { VkBuffer vertices = VK_NULL_HANDLE; VkDeviceMemory vertexMemory = VK_NULL_HANDLE; VkBuffer indices = VK_NULL_HANDLE; VkDeviceMemory indexMemory = VK_NULL_HANDLE; };
     std::unordered_map<const PhysicsDebugRenderer::BatchData*, PhysicsDebugGpuBatch> physicsDebugGpuBatches_;
-    std::unordered_map<std::string, physics::CookedShape> physicsDebugShapes_;
+    std::array<std::vector<PhysicsDebugGpuBatch>, MAX_FRAMES_IN_FLIGHT>
+        deferredPhysicsDebugGpuBatches_;
+    std::unordered_map<PhysicsDebugShapeKey, PhysicsDebugShapeCacheEntry,
+                       PhysicsDebugShapeKeyHash>
+        physicsDebugShapes_;
     std::unique_ptr<PhysicsDebugRenderer> physicsDebugRenderer_;
     std::unordered_map<const Scene*, SceneResourceOwnership>
         sceneResourceOwnership_;

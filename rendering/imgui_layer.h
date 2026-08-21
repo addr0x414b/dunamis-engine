@@ -17,6 +17,7 @@
 
 #include "../core/result.h"
 #include "../core/editor_state.h"
+#include "../physics/shape_diagnostics.h"
 #include "../scene/runtime_transform_edit.h"
 
 class Scene;
@@ -63,6 +64,10 @@ public:
     void requestLoadConfirmation();
     void requestSaveAsOverwriteConfirmation(const std::string& path);
     void requestQuitConfirmation();
+    void setPhysicsDiagnostics(
+        const GameObject* object,
+        std::optional<physics::ShapeDiagnostics> diagnostics,
+        std::string error);
     void setRenderColliderIds(const std::vector<std::string>& ids);
     [[nodiscard]] std::vector<std::string> renderColliderIds() const;
     [[nodiscard]] bool renderColliderEnabled(const GameObject& object) const noexcept;
@@ -181,6 +186,9 @@ private:
     bool sceneInteractionAreaHovered_ = false;
     SceneInteractionRect sceneInteractionRect_;
     std::unordered_set<std::string> renderColliderIds_;
+    const GameObject* physicsDiagnosticsObject_ = nullptr;
+    std::optional<physics::ShapeDiagnostics> physicsDiagnostics_;
+    std::string physicsDiagnosticsError_;
     std::vector<EditorHelperGeometry> editorHelperGeometry_;
     std::string currentScenePath_;
     std::string requestedScenePath_;

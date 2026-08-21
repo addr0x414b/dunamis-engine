@@ -10,24 +10,13 @@
 #include <glm/glm.hpp>
 
 #include "../core/result.h"
+#include "shape_definition_signature.h"
+#include "shape_diagnostics.h"
 
 class GameObject;
 class Character;
 
 namespace physics {
-
-struct ShapeDiagnostics {
-    enum class Representation { TriangleMesh, ConvexHull, AnalyticSphere, AnalyticCapsule };
-    Representation representation = Representation::TriangleMesh;
-    std::size_t inputVertices = 0;
-    std::size_t inputTriangles = 0;
-    std::size_t inputPoints = 0;
-    std::size_t cookedHullVertices = 0;
-    std::size_t joltTriangles = 0;
-    std::size_t joltBytes = 0;
-    float radius = 0.0f;
-    float height = 0.0f;
-};
 
 struct CookedShape {
     JPH::ShapeRefC shape;
@@ -43,8 +32,9 @@ struct CookedShape {
                                          CookedShape& output);
 [[nodiscard]] JPH::RVec3 toJoltPosition(const glm::vec3& position) noexcept;
 [[nodiscard]] JPH::Quat toJoltRotation(const glm::vec3& rotation) noexcept;
-[[nodiscard]] JPH::RMat44 centerOfMassTransform(const glm::vec3& position,
-                                                 const glm::vec3& rotation) noexcept;
+[[nodiscard]] JPH::RMat44 makeShapeCenterOfMassTransform(
+    const JPH::Shape& shape, const glm::vec3& bodyOriginPosition,
+    const glm::vec3& bodyRotation) noexcept;
 [[nodiscard]] glm::mat4 joltTransformToDunamis(const JPH::RMat44& transform) noexcept;
 
 }  // namespace physics
