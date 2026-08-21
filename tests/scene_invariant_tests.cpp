@@ -22,9 +22,6 @@ class PlayerTestAccess {
 public:
     static double yaw(const Player& player) { return player.yaw; }
     static double pitch(const Player& player) { return player.pitch; }
-    static void applyMovementDelta(Player& player, const glm::vec3& delta) {
-        player.applyMovementDelta(delta);
-    }
 };
 
 namespace {
@@ -544,37 +541,13 @@ bool runPlayerMovementInvariantTests() {
     bool passed = true;
     Player player;
     player.init();
-    player.camera->front = glm::normalize(glm::vec3(0.55f, 0.45f, -0.7f));
-    player.camera->up = glm::normalize(glm::vec3(0.0f, 0.8f, 0.6f));
-    player.start(nullptr);
-
-    const glm::vec3 offset{1.5f, -2.0f, 3.25f};
     player.position = {10.0f, 20.0f, 30.0f};
-    player.camera->position = player.position + offset;
-
-    const glm::vec3 worldUp{0.0f, 1.0f, 0.0f};
-    const glm::vec3 forward = player.camera->front;
-    const glm::vec3 right = glm::normalize(glm::cross(forward, worldUp));
-    const glm::vec3 deltas[] = {forward, right, worldUp, -forward, -right,
-                                -worldUp};
-    const char* deltaNames[] = {"forward", "strafe", "vertical", "reverse",
-                                "reverse strafe", "reverse vertical"};
-
-    const std::size_t deltaCount = sizeof(deltas) / sizeof(deltas[0]);
-    for (std::size_t index = 0; index < deltaCount; ++index) {
-        const glm::vec3 previousPlayerPosition = player.position;
-        const glm::vec3 previousCameraPosition = player.camera->position;
-        PlayerTestAccess::applyMovementDelta(player, deltas[index]);
-
-        passed &= expect(
-            sameVector(player.camera->position - player.position, offset),
-            "Player and Camera movement changed their relative offset");
-        passed &= expect(
-            sameVector(player.position - previousPlayerPosition, deltas[index]) &&
-                sameVector(player.camera->position - previousCameraPosition,
-                           deltas[index]),
-            deltaNames[index]);
-    }
+    player.onPhysicsTransformResolved();
+    passed &= expect(
+        sameVector(player.camera->position, glm::vec3(10.0f, 170.0f, 30.0f)),
+        "Player camera did not follow the physics-resolved position at eye height");
+    passed &= expect(player.desiredVelocity == glm::vec3(0.0f),
+                     "Player starts with nonzero character movement intent");
 
     return passed;
 }

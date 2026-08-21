@@ -6,13 +6,15 @@
 
 #include <spdlog/spdlog.h>
 
-#include "../core/time.h"
-
 namespace {
 
 const glm::vec3 playerWorldUp{0.0f, 1.0f, 0.0f};
+constexpr float playerEyeHeightDunamisUnits = 150.0f;
+constexpr float walkSpeedDunamisUnitsPerSecond = 190.0f;
+constexpr float sprintSpeedDunamisUnitsPerSecond = 500.0f;
+constexpr float minimumMovementVectorLength = 1.0e-4f;
 
-bool isFiniteMovementDelta(const glm::vec3& value) noexcept {
+bool isFiniteVector(const glm::vec3& value) noexcept {
     return std::isfinite(value.x) && std::isfinite(value.y) &&
            std::isfinite(value.z);
 }
@@ -24,15 +26,18 @@ void Player::init() {
 
     auto c = std::make_unique<Camera>();
     camera = std::move(c);
+    synchronizeCameraPosition();
 }
 
-void Player::applyMovementDelta(const glm::vec3& delta) noexcept {
-    if (!camera || !isFiniteMovementDelta(delta)) {
+void Player::synchronizeCameraPosition() noexcept {
+    if (!camera || !isFiniteVector(position)) {
         return;
     }
+    camera->position = position + playerEyeHeightDunamisUnits * playerWorldUp;
+}
 
-    position += delta;
-    camera->position += delta;
+void Player::onPhysicsTransformResolved() noexcept {
+    synchronizeCameraPosition();
 }
 
 void Player::start(std::shared_ptr<InputManager> input) {
@@ -57,6 +62,7 @@ void Player::start(std::shared_ptr<InputManager> input) {
 
     yaw = startingYaw;
     pitch = startingPitch;
+    synchronizeCameraPosition();
 
     if (!input) {
         return;
@@ -74,54 +80,51 @@ void Player::start(std::shared_ptr<InputManager> input) {
 }
 
 void Player::update(std::shared_ptr<InputManager> input) {
-    if (!input->gameplayInputEnabled()) {
+    if (!input || !input->gameplayInputEnabled() || !camera) {
+        desiredVelocity = glm::vec3(0.0f);
         return;
     }
 
-    float movementSpeedUnitsPerSecond = 60.0f;
+    float movementSpeedUnitsPerSecond = walkSpeedDunamisUnitsPerSecond;
     if (input->isKeyDown(SDLK_LSHIFT)) {
-        movementSpeedUnitsPerSecond = 300.0f;
-    } else if (input->isKeyDown(SDLK_LCTRL)) {
-        movementSpeedUnitsPerSecond = 18.0f;
-    }
-    const float movementDistance =
-        movementSpeedUnitsPerSecond * Time::deltaTime();
-
-    glm::vec3 right = glm::cross(camera->front, playerWorldUp);
-    const float rightLength = glm::length(right);
-    if (!std::isfinite(rightLength) || rightLength <= 0.0f) {
-        spdlog::error("Player could not calculate a valid movement right vector");
-        return;
-    }
-    right /= rightLength;
-    if (!std::isfinite(right.x) || !std::isfinite(right.y) ||
-        !std::isfinite(right.z)) {
-        spdlog::error("Player could not calculate a valid movement right vector");
-        return;
+        movementSpeedUnitsPerSecond = sprintSpeedDunamisUnitsPerSecond;
     }
 
-    if (input->isKeyDown(SDLK_W)) {
-        applyMovementDelta(movementDistance * camera->front);
+    glm::vec3 forward{camera->front.x, 0.0f, camera->front.z};
+    const float forwardLength = glm::length(forward);
+    if (!std::isfinite(forwardLength) ||
+        forwardLength <= minimumMovementVectorLength) {
+        desiredVelocity = glm::vec3(0.0f);
+        spdlog::error("Player could not calculate a valid horizontal movement forward vector");
+    } else {
+        forward /= forwardLength;
+        glm::vec3 right = glm::cross(forward, playerWorldUp);
+        const float rightLength = glm::length(right);
+        if (!std::isfinite(rightLength) || rightLength <= 0.0f) {
+            desiredVelocity = glm::vec3(0.0f);
+            spdlog::error("Player could not calculate a valid movement right vector");
+        } else {
+            right /= rightLength;
+            glm::vec3 movement(0.0f);
+            if (input->isKeyDown(SDLK_W)) movement += forward;
+            if (input->isKeyDown(SDLK_S)) movement -= forward;
+            if (input->isKeyDown(SDLK_D)) movement += right;
+            if (input->isKeyDown(SDLK_A)) movement -= right;
+
+            const float movementLength = glm::length(movement);
+            if (std::isfinite(movementLength) &&
+                movementLength > minimumMovementVectorLength) {
+                desiredVelocity = movement *
+                    (movementSpeedUnitsPerSecond / movementLength);
+            } else {
+                desiredVelocity = glm::vec3(0.0f);
+            }
+        }
     }
 
-    if (input->isKeyDown(SDLK_D)) {
-        applyMovementDelta(movementDistance * right);
-    }
-
-    if (input->isKeyDown(SDLK_A)) {
-        applyMovementDelta(-movementDistance * right);
-    }
-
-    if (input->isKeyDown(SDLK_S)) {
-        applyMovementDelta(-movementDistance * camera->front);
-    }
-
-    if (input->isKeyDown(SDLK_E)) {
-        applyMovementDelta(movementDistance * playerWorldUp);
-    }
-
-    if (input->isKeyDown(SDLK_Q)) {
-        applyMovementDelta(-movementDistance * playerWorldUp);
+    if (!isFiniteVector(desiredVelocity)) {
+        desiredVelocity = glm::vec3(0.0f);
+        spdlog::error("Player calculated a non-finite movement velocity");
     }
 
     double xPos = input->getMouseRelX();

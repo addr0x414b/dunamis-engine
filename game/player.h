@@ -6,15 +6,16 @@
 
 #include "../input/input_manager.h"
 #include "../scene/camera.h"
-#include "../scene/game_object.h"
+#include "../scene/character.h"
 
 class PlayerTestAccess;
 
-class Player : public GameObject {
+class Player : public Character {
 public:
     void init();
     void start(std::shared_ptr<InputManager> input);
     void update(std::shared_ptr<InputManager> input);
+    void onPhysicsTransformResolved() noexcept override;
     Camera* attachedCamera() noexcept override { return camera.get(); }
     const Camera* attachedCamera() const noexcept override {
         return camera.get();
@@ -24,7 +25,7 @@ public:
 private:
     friend class PlayerTestAccess;
 
-    void applyMovementDelta(const glm::vec3& delta) noexcept;
+    void synchronizeCameraPosition() noexcept;
 
     double yaw = -90.0f;
     double pitch = 0.0f;

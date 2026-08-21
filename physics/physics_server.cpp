@@ -8,8 +8,11 @@
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Geometry/Triangle.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
+#include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
@@ -36,6 +39,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include "../core/time.h"
+#include "../scene/character.h"
 #include "../scene/game_object.h"
 #include "../scene/loading_cache_key.h"
 #include "../scene/model_renderable.h"
@@ -209,6 +213,11 @@ struct PhysicsServer::Impl {
         bool editorOverride = false;
     };
 
+    struct RuntimeCharacter {
+        Character* object = nullptr;
+        JPH::Ref<JPH::CharacterVirtual> virtualCharacter;
+    };
+
     // These filters outlive physicsSystem because Jolt retains references.
     BroadPhaseLayerInterface broadPhaseLayerInterface;
     ObjectVsBroadPhaseLayerFilter objectVsBroadPhaseLayerFilter;
@@ -217,6 +226,7 @@ struct PhysicsServer::Impl {
     std::unique_ptr<JPH::JobSystemThreadPool> jobSystem;
     std::unique_ptr<JPH::PhysicsSystem> physicsSystem;
     std::vector<RuntimeBody> runtimeBodies;
+    std::vector<RuntimeCharacter> runtimeCharacters;
     std::unordered_map<StaticShapeKey, JPH::ShapeRefC, StaticShapeKeyHash>
         staticShapeCache;
     physics::PhysicsShapeCache persistentShapeCache;
@@ -323,13 +333,22 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
         std::size_t diskCacheHits = 0;
         std::size_t diskCacheMisses = 0;
         std::size_t diskCacheInvalid = 0;
+        std::vector<Character*> characters;
 
         for (const std::unique_ptr<GameObject>& objectOwner :
              runtimeScene.gameObjects()) {
-            if (!objectOwner || !objectOwner->physics.enabled) {
+            if (!objectOwner) {
                 continue;
             }
             GameObject& object = *objectOwner;
+            if (auto* character = dynamic_cast<Character*>(&object)) {
+                characters.push_back(character);
+                character->grounded = false;
+                continue;
+            }
+            if (!object.physics.enabled) {
+                continue;
+            }
             const GameObject::PhysicsBodySettings& settings = object.physics;
             if (settings.motionType == GameObject::PhysicsMotionType::Static &&
                 settings.colliderType != GameObject::PhysicsColliderType::Mesh) {
@@ -510,8 +529,48 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
         const Clock::time_point broadPhaseStart = Clock::now();
         impl_->physicsSystem->OptimizeBroadPhase();
         broadPhaseOptimization += Clock::now() - broadPhaseStart;
-        spdlog::info("Runtime physics world created: {} static, {} dynamic",
-                     staticCount, dynamicCount);
+        for (Character* character : characters) {
+            if (character == nullptr ||
+                !(character->capsuleHeight > 2.0f * character->capsuleRadius) ||
+                !(character->capsuleRadius > 0.0f) ||
+                !std::isfinite(character->capsuleHeight) ||
+                !std::isfinite(character->capsuleRadius)) {
+                endRuntimeSession();
+                return Result::failure("Character capsule dimensions must be finite, positive, and taller than its diameter");
+            }
+
+            const float radiusMeters =
+                physics::dunamisToMeters(character->capsuleRadius);
+            const float halfCylinderHeightMeters = physics::dunamisToMeters(
+                0.5f * character->capsuleHeight - character->capsuleRadius);
+            JPH::RotatedTranslatedShapeSettings shapeSettings(
+                JPH::Vec3(0.0f, 0.5f * physics::dunamisToMeters(
+                    character->capsuleHeight), 0.0f),
+                JPH::Quat::sIdentity(),
+                new JPH::CapsuleShape(halfCylinderHeightMeters, radiusMeters));
+            JPH::ShapeSettings::ShapeResult shapeResult = shapeSettings.Create();
+            if (shapeResult.HasError()) {
+                endRuntimeSession();
+                return Result::failure("Failed to create character capsule for " +
+                                       objectDescription(*character) + ": " +
+                                       shapeResult.GetError().c_str());
+            }
+
+            JPH::CharacterVirtualSettings characterSettings;
+            characterSettings.mShape = shapeResult.Get();
+            characterSettings.mSupportingVolume = JPH::Plane(
+                JPH::Vec3::sAxisY(), -radiusMeters);
+            characterSettings.mEnhancedInternalEdgeRemoval = true;
+            JPH::Ref<JPH::CharacterVirtual> virtualCharacter =
+                new JPH::CharacterVirtual(&characterSettings,
+                                          toJoltPosition(character->position),
+                                          JPH::Quat::sIdentity(),
+                                          impl_->physicsSystem.get());
+            impl_->runtimeCharacters.push_back(
+                {character, std::move(virtualCharacter)});
+        }
+        spdlog::info("Runtime physics world created: {} static, {} dynamic, {} characters",
+                     staticCount, dynamicCount, characters.size());
         spdlog::info("Physics startup: geometry fingerprint {:.2f} ms, disk read {:.2f} ms, Jolt restore {:.2f} ms, static mesh conversion {:.2f} ms, static shape cooking {:.2f} ms, disk write {:.2f} ms, dynamic convex cooking {:.2f} ms, body creation {:.2f} ms, broadphase optimization {:.2f} ms, total {:.2f} ms; RAM hits {}, misses {}; disk hits {}, misses {}, invalid {}",
                      milliseconds(geometryFingerprint), milliseconds(diskRead),
                      milliseconds(diskRestore), milliseconds(staticMeshConversion),
@@ -579,6 +638,63 @@ void PhysicsServer::update() {
     }
     const std::size_t steps = accumulator_.addFrameDelta(Time::deltaTime());
     for (std::size_t step = 0; step < steps; ++step) {
+        const JPH::Vec3 gravity = impl_->physicsSystem->GetGravity();
+        const JPH::BroadPhaseLayerFilter& broadPhaseFilter =
+            impl_->physicsSystem->GetDefaultBroadPhaseLayerFilter(
+                layers::moving);
+        const JPH::ObjectLayerFilter& objectLayerFilter =
+            impl_->physicsSystem->GetDefaultLayerFilter(layers::moving);
+        for (Impl::RuntimeCharacter& runtimeCharacter :
+             impl_->runtimeCharacters) {
+            if (runtimeCharacter.object == nullptr ||
+                runtimeCharacter.virtualCharacter == nullptr) {
+                continue;
+            }
+
+            Character& object = *runtimeCharacter.object;
+            JPH::CharacterVirtual& virtualCharacter =
+                *runtimeCharacter.virtualCharacter;
+            glm::vec3 desiredVelocity = object.desiredVelocity;
+            if (!std::isfinite(desiredVelocity.x) ||
+                !std::isfinite(desiredVelocity.z)) {
+                desiredVelocity = glm::vec3(0.0f);
+            }
+            const glm::vec3 desiredVelocityMeters =
+                physics::dunamisToMeters(glm::vec3(
+                    desiredVelocity.x, 0.0f, desiredVelocity.z));
+            const JPH::Vec3 horizontalVelocity(
+                desiredVelocityMeters.x, 0.0f, desiredVelocityMeters.z);
+
+            virtualCharacter.UpdateGroundVelocity();
+            const JPH::Vec3 up = virtualCharacter.GetUp();
+            const JPH::Vec3 currentVelocity =
+                virtualCharacter.GetLinearVelocity();
+            const JPH::Vec3 currentVerticalVelocity =
+                currentVelocity.Dot(up) * up;
+            const JPH::Vec3 groundVelocity =
+                virtualCharacter.GetGroundVelocity();
+            const bool movingTowardsGround =
+                currentVerticalVelocity.Dot(up) - groundVelocity.Dot(up) <
+                0.1f;
+            JPH::Vec3 newVelocity;
+            if (virtualCharacter.GetGroundState() ==
+                    JPH::CharacterVirtual::EGroundState::OnGround &&
+                movingTowardsGround) {
+                newVelocity = groundVelocity + horizontalVelocity;
+            } else {
+                newVelocity = currentVerticalVelocity + horizontalVelocity;
+            }
+            newVelocity += gravity * PhysicsStepAccumulator::fixedDeltaTime;
+            virtualCharacter.SetLinearVelocity(newVelocity);
+
+            JPH::CharacterVirtual::ExtendedUpdateSettings updateSettings;
+            virtualCharacter.ExtendedUpdate(
+                PhysicsStepAccumulator::fixedDeltaTime, gravity,
+                updateSettings, broadPhaseFilter, objectLayerFilter, {}, {},
+                *impl_->tempAllocator);
+            object.grounded = virtualCharacter.GetGroundState() ==
+                JPH::CharacterVirtual::EGroundState::OnGround;
+        }
         (void)impl_->physicsSystem->Update(PhysicsStepAccumulator::fixedDeltaTime,
                                            1, impl_->tempAllocator.get(),
                                            impl_->jobSystem.get());
@@ -597,6 +713,20 @@ void PhysicsServer::update() {
             body.object->rotation = rotation;
         }
     }
+    for (const Impl::RuntimeCharacter& runtimeCharacter :
+         impl_->runtimeCharacters) {
+        if (runtimeCharacter.object == nullptr ||
+            runtimeCharacter.virtualCharacter == nullptr) {
+            continue;
+        }
+        const JPH::RVec3 position =
+            runtimeCharacter.virtualCharacter->GetPosition();
+        runtimeCharacter.object->position = physics::metersToDunamis(
+            glm::vec3(static_cast<float>(position.GetX()),
+                      static_cast<float>(position.GetY()),
+                      static_cast<float>(position.GetZ())));
+        runtimeCharacter.object->onPhysicsTransformResolved();
+    }
 }
 
 void PhysicsServer::endRuntimeSession() noexcept {
@@ -605,6 +735,7 @@ void PhysicsServer::endRuntimeSession() noexcept {
         return;
     }
     try {
+        impl_->runtimeCharacters.clear();
         JPH::BodyInterface& bodies = impl_->physicsSystem->GetBodyInterface();
         for (const Impl::RuntimeBody& body : impl_->runtimeBodies) {
             if (!body.id.IsInvalid()) {
@@ -617,6 +748,7 @@ void PhysicsServer::endRuntimeSession() noexcept {
         spdlog::info("Runtime physics world destroyed");
     } catch (...) {
         // Teardown is best-effort and must remain safe during rollback.
+        impl_->runtimeCharacters.clear();
         impl_->runtimeBodies.clear();
         impl_->physicsSystem.reset();
     }

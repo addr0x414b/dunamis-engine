@@ -37,6 +37,9 @@ public:
 
     virtual void start() {}
     virtual void update() {}
+    // Called by PhysicsServer after it writes a physics-resolved transform.
+    // Most objects have nothing else to synchronize.
+    virtual void onPhysicsTransformResolved() noexcept {}
     virtual Camera* attachedCamera() noexcept { return nullptr; }
     virtual const Camera* attachedCamera() const noexcept {
         return nullptr;

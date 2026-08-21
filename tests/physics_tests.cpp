@@ -28,6 +28,7 @@
 #include "../physics/physics_shape_cache.h"
 #include "../physics/physics_server.h"
 #include "../physics/physics_units.h"
+#include "../scene/character.h"
 #include "../scene/game_object.h"
 #include "../scene/model_renderable.h"
 #include "../scene/scene.h"
@@ -408,6 +409,28 @@ MeshInstance floorInstance() {
     return instance;
 }
 
+MeshInstance characterFloorInstance() {
+    MeshInstance instance;
+    instance.mesh.vertices = {
+        {{-1000.0f, 0.0f, -1000.0f}, {}, {}, {}, {}},
+        {{1000.0f, 0.0f, -1000.0f}, {}, {}, {}, {}},
+        {{1000.0f, 0.0f, 1000.0f}, {}, {}, {}, {}},
+        {{-1000.0f, 0.0f, 1000.0f}, {}, {}, {}, {}}};
+    instance.mesh.indices = {0, 1, 2, 0, 2, 3};
+    return instance;
+}
+
+MeshInstance characterWallInstance() {
+    MeshInstance instance;
+    instance.mesh.vertices = {
+        {{-1000.0f, 0.0f, -250.0f}, {}, {}, {}, {}},
+        {{1000.0f, 0.0f, -250.0f}, {}, {}, {}, {}},
+        {{1000.0f, 500.0f, -250.0f}, {}, {}, {}, {}},
+        {{-1000.0f, 500.0f, -250.0f}, {}, {}, {}, {}}};
+    instance.mesh.indices = {0, 1, 2, 0, 2, 3};
+    return instance;
+}
+
 MeshInstance tetrahedronInstance() {
     MeshInstance instance;
     instance.mesh.vertices = {
@@ -460,6 +483,74 @@ void testPhysicsServerEditorRelease() {
     server.update();
     expect(propPointer->position.y < 6.0f,
            "released editor transform did not resume gravity");
+    server.endRuntimeSession();
+    server.shutdown();
+}
+
+void advanceRuntimePhysics(PhysicsServer& server, int frameCount) {
+    TimeTestAccess::initialize();
+    for (int frame = 0; frame < frameCount; ++frame) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(18));
+        TimeTestAccess::update();
+        server.update();
+    }
+}
+
+void testRuntimeCharacterFloorWallAndLifecycle() {
+    TestScene scene;
+
+    auto floor = std::make_unique<GameObject>();
+    floor->name = "Character Test Floor";
+    floor->modelPath = "character_test_floor";
+    floor->physics.enabled = true;
+    floor->physics.motionType = GameObject::PhysicsMotionType::Static;
+    floor->physics.colliderType = GameObject::PhysicsColliderType::Mesh;
+    expect(static_cast<bool>(floor->modelRenderable().addMeshInstance(
+               characterFloorInstance())),
+           "failed to add character test floor mesh");
+    expect(static_cast<bool>(scene.addGameObject(std::move(floor))),
+           "failed to add character test floor");
+
+    auto wall = std::make_unique<GameObject>();
+    wall->name = "Character Test Wall";
+    wall->modelPath = "character_test_wall";
+    wall->physics.enabled = true;
+    wall->physics.motionType = GameObject::PhysicsMotionType::Static;
+    wall->physics.colliderType = GameObject::PhysicsColliderType::Mesh;
+    expect(static_cast<bool>(wall->modelRenderable().addMeshInstance(
+               characterWallInstance())),
+           "failed to add character test wall mesh");
+    expect(static_cast<bool>(scene.addGameObject(std::move(wall))),
+           "failed to add character test wall");
+
+    auto character = std::make_unique<Character>();
+    Character* characterPointer = character.get();
+    character->position = {0.0f, 300.0f, 0.0f};
+    character->desiredVelocity = {200.0f, 0.0f, -300.0f};
+    expect(static_cast<bool>(scene.addGameObject(std::move(character))),
+           "failed to add runtime character");
+
+    PhysicsServer server;
+    expect(static_cast<bool>(server.initialize()),
+           "failed to initialize character PhysicsServer");
+    expect(static_cast<bool>(server.beginRuntimeSession(scene)),
+           "failed to begin character physics session");
+    advanceRuntimePhysics(server, 150);
+    expect(characterPointer->grounded,
+           "runtime character did not become supported by the static floor");
+    expect(characterPointer->position.y >= -1.0f &&
+               characterPointer->position.y <= 5.0f,
+           "runtime character did not settle at the static floor");
+    expect(characterPointer->position.z > -220.0f,
+           "runtime character passed through the static wall");
+    expect(characterPointer->position.x > 100.0f,
+           "runtime character did not slide along the static wall");
+
+    server.endRuntimeSession();
+    expect(!server.runtimeSessionActive(),
+           "character physics session remained active after teardown");
+    expect(static_cast<bool>(server.beginRuntimeSession(scene)),
+           "character physics session could not be recreated after teardown");
     server.endRuntimeSession();
     server.shutdown();
 }
@@ -626,6 +717,7 @@ int main() {
     testDynamicConvexRotationIntegration();
     testFloorSphere();
     testPhysicsServerEditorRelease();
+    testRuntimeCharacterFloorWallAndLifecycle();
     testDynamicPositionAndGravityWorldScale();
     testStaticTransformAndWake();
     return EXIT_SUCCESS;
