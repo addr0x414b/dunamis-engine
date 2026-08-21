@@ -120,8 +120,16 @@ void SDLCALL nativeFileDialogCallback(
 constexpr const char* dunamisDockspaceName =
     "DunamisEditorDockspace_v1";
 constexpr float minCameraBasisLengthSquared = 1.0e-8f;
-constexpr float cameraVisualizationDistance = 8.0f;
-constexpr float directionalVisualizationDistance = 8.0f;
+constexpr float cameraVisualizationDistance = 30.0f;
+constexpr float directionalVisualizationDistance = 30.0f;
+constexpr float pointLightVisualizationRadius = 7.0f;
+constexpr float pointLightVisualizationInnerRadiusRatio = 0.45f;
+constexpr float pointLightVisualizationCenterRadiusRatio = 1.0f / 3.0f;
+constexpr float directionalLightVisualizationRadius = 5.0f;
+constexpr float directionalLightArrowheadLength = 9.0f;
+constexpr float directionalLightArrowheadHalfWidth = 4.0f;
+constexpr float directionalLightCenterRadius = 2.5f;
+constexpr float minimumLightVisualizationPixelRadius = 1.0f;
 constexpr float editorHelperLineHitTolerance = 7.0f;
 constexpr float editorHelperPointHitRadius = 8.0f;
 constexpr float editorHelperHitTieEpsilonSquared = 1.0e-4f;
@@ -350,6 +358,46 @@ bool projectWorldToImGui(const glm::vec3& worldPoint,
         viewport.Pos.x + (ndc.x * 0.5f + 0.5f) * viewport.Size.x,
         viewport.Pos.y + (ndc.y * 0.5f + 0.5f) * viewport.Size.y);
     return std::isfinite(screenPoint.x) && std::isfinite(screenPoint.y);
+}
+
+bool projectWorldRadiusToImGui(const glm::vec3& worldPoint,
+                               const glm::vec2& centerScreen,
+                               const glm::mat4& editorView,
+                               const glm::mat4& projection,
+                               const ImGuiViewport& viewport,
+                               float worldRadius,
+                               float& screenRadius) noexcept {
+    screenRadius = 0.0f;
+    if (!isFiniteVector(worldPoint) || !std::isfinite(centerScreen.x) ||
+        !std::isfinite(centerScreen.y) || !isFiniteMatrix(editorView) ||
+        !std::isfinite(worldRadius) || worldRadius <= 0.0f) {
+        return false;
+    }
+
+    const glm::mat4 inverseView = glm::inverse(editorView);
+    if (!isFiniteMatrix(inverseView)) {
+        return false;
+    }
+
+    glm::vec3 cameraRight;
+    if (!normalizeFinite(glm::vec3(inverseView[0]), cameraRight)) {
+        return false;
+    }
+
+    const glm::vec3 offsetWorldPoint =
+        worldPoint + cameraRight * worldRadius;
+    if (!isFiniteVector(offsetWorldPoint)) {
+        return false;
+    }
+
+    glm::vec2 offsetScreen;
+    if (!projectWorldToImGui(offsetWorldPoint, editorView, projection,
+                             viewport, offsetScreen)) {
+        return false;
+    }
+
+    screenRadius = glm::length(offsetScreen - centerScreen);
+    return std::isfinite(screenRadius) && screenRadius >= 0.0f;
 }
 
 float viewDepthForWorldPoint(const glm::vec3& worldPoint,
@@ -1494,6 +1542,16 @@ void ImGuiLayer::drawPointLightVisualization(
     geometry.pointValid = true;
     geometry.viewDepth = viewDepthForWorldPoint(light.position, editorView);
 
+    float outerRadius = 0.0f;
+    if (!projectWorldRadiusToImGui(
+            light.position, center, editorView, projection, *viewport,
+            pointLightVisualizationRadius, outerRadius)) {
+        return;
+    }
+    outerRadius = std::max(outerRadius, minimumLightVisualizationPixelRadius);
+    const float innerRadius =
+        outerRadius * pointLightVisualizationInnerRadiusRatio;
+
     constexpr std::array<glm::vec2, 8> radialDirections{
         glm::vec2(0.0f, -1.0f), glm::vec2(0.70710677f, -0.70710677f),
         glm::vec2(1.0f, 0.0f), glm::vec2(0.70710677f, 0.70710677f),
@@ -1501,8 +1559,8 @@ void ImGuiLayer::drawPointLightVisualization(
         glm::vec2(-1.0f, 0.0f), glm::vec2(-0.70710677f, -0.70710677f)};
     for (const glm::vec2& radialDirection : radialDirections) {
         geometry.segments[geometry.segmentCount++] = {
-            center + radialDirection * 4.0f,
-            center + radialDirection * 9.0f};
+            center + radialDirection * innerRadius,
+            center + radialDirection * outerRadius};
     }
     editorHelperGeometry_.push_back(geometry);
 
@@ -1527,7 +1585,9 @@ void ImGuiLayer::drawPointLightVisualization(
                           ImVec2(segment.end.x, segment.end.y), color,
                           lineThickness);
     }
-    drawList->AddCircleFilled(ImVec2(center.x, center.y), 3.0f, color);
+    drawList->AddCircleFilled(
+        ImVec2(center.x, center.y),
+        outerRadius * pointLightVisualizationCenterRadiusRatio, color);
     drawList->PopClipRect();
 }
 
@@ -1553,7 +1613,14 @@ void ImGuiLayer::drawDirectionalLightVisualization(
     geometry.pointValid = true;
     geometry.viewDepth = viewDepthForWorldPoint(light.position, editorView);
 
-    constexpr float markerRadius = 6.0f;
+    float markerRadius = 0.0f;
+    if (!projectWorldRadiusToImGui(
+            light.position, center, editorView, projection, *viewport,
+            directionalLightVisualizationRadius, markerRadius)) {
+        return;
+    }
+    markerRadius =
+        std::max(markerRadius, minimumLightVisualizationPixelRadius);
     const std::array<glm::vec2, 4> markerPoints{
         center + glm::vec2(0.0f, -markerRadius),
         center + glm::vec2(markerRadius, 0.0f),
@@ -1578,16 +1645,29 @@ void ImGuiLayer::drawDirectionalLightVisualization(
                 const glm::vec2 unitDirection = screenDirection / screenLength;
                 const glm::vec2 perpendicular(-unitDirection.y,
                                                unitDirection.x);
-                const glm::vec2 arrowBase = arrowEndScreen -
-                    unitDirection * 9.0f;
-                const glm::vec2 firstWing = arrowBase + perpendicular * 4.0f;
-                const glm::vec2 secondWing = arrowBase - perpendicular * 4.0f;
-                geometry.segments[geometry.segmentCount++] = {center,
-                                                               arrowEndScreen};
                 geometry.segments[geometry.segmentCount++] = {
-                    arrowEndScreen, firstWing};
-                geometry.segments[geometry.segmentCount++] = {
-                    arrowEndScreen, secondWing};
+                    center, arrowEndScreen};
+                float arrowheadLength = 0.0f;
+                float arrowheadHalfWidth = 0.0f;
+                if (projectWorldRadiusToImGui(
+                        light.position, center, editorView, projection,
+                        *viewport, directionalLightArrowheadLength,
+                        arrowheadLength) &&
+                    projectWorldRadiusToImGui(
+                        light.position, center, editorView, projection,
+                        *viewport, directionalLightArrowheadHalfWidth,
+                        arrowheadHalfWidth)) {
+                    const glm::vec2 arrowBase =
+                        arrowEndScreen - unitDirection * arrowheadLength;
+                    const glm::vec2 firstWing =
+                        arrowBase + perpendicular * arrowheadHalfWidth;
+                    const glm::vec2 secondWing =
+                        arrowBase - perpendicular * arrowheadHalfWidth;
+                    geometry.segments[geometry.segmentCount++] = {
+                        arrowEndScreen, firstWing};
+                    geometry.segments[geometry.segmentCount++] = {
+                        arrowEndScreen, secondWing};
+                }
             }
         }
     }
@@ -1614,7 +1694,13 @@ void ImGuiLayer::drawDirectionalLightVisualization(
                           ImVec2(segment.end.x, segment.end.y), color,
                           lineThickness);
     }
-    drawList->AddCircleFilled(ImVec2(center.x, center.y), 2.5f, color);
+    float centerRadius = 0.0f;
+    if (projectWorldRadiusToImGui(
+            light.position, center, editorView, projection, *viewport,
+            directionalLightCenterRadius, centerRadius)) {
+        drawList->AddCircleFilled(ImVec2(center.x, center.y), centerRadius,
+                                   color);
+    }
     drawList->PopClipRect();
 }
 
