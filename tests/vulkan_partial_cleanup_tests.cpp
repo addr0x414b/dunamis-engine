@@ -74,6 +74,23 @@ public:
         }
         return true;
     }
+
+    [[nodiscard]] static bool physicsDebugShapeKeyIgnoresScene(
+        const Scene* firstScene, const Scene* secondScene) {
+        if (firstScene == nullptr || secondScene == nullptr ||
+            firstScene == secondScene) {
+            return false;
+        }
+        const VulkanContext::PhysicsDebugShapeKey first{"sponza", false};
+        const VulkanContext::PhysicsDebugShapeKey second{"sponza", false};
+        return first == second;
+    }
+
+    [[nodiscard]] static bool physicsDebugPipelinesAreReset(
+        const VulkanContext& context) {
+        return context.physicsDebugPipeline == VK_NULL_HANDLE &&
+               context.physicsDebugPipelineLayout == VK_NULL_HANDLE;
+    }
 };
 
 class GameObjectTestAccess {
@@ -147,6 +164,14 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    EmptyScene editingScene;
+    EmptyScene runtimeScene;
+    if (!VulkanContextTestAccess::physicsDebugShapeKeyIgnoresScene(
+            &editingScene, &runtimeScene)) {
+        std::cerr << "Physics debug shape key still depends on Scene identity\n";
+        return 1;
+    }
+
     Platform platform;
     const Result platformResult = platform.initialize();
     if (!platformResult) {
@@ -187,7 +212,8 @@ int main(int argc, char** argv) {
     const bool secondPartialCleanup = context.cleanup();
 
     if (!firstPartialCleanup || !secondPartialCleanup ||
-        !VulkanContextTestAccess::ambientOcclusionIsReset(context)) {
+        !VulkanContextTestAccess::ambientOcclusionIsReset(context) ||
+        !VulkanContextTestAccess::physicsDebugPipelinesAreReset(context)) {
         std::cerr << "Repeated partial Vulkan cleanup did not complete\n";
         return 1;
     }
@@ -284,6 +310,8 @@ int main(int argc, char** argv) {
         if (!initializedContext.cleanup() ||
             !initializedContext.cleanup() ||
             !VulkanContextTestAccess::ambientOcclusionIsReset(initializedContext) ||
+            !VulkanContextTestAccess::physicsDebugPipelinesAreReset(
+                initializedContext) ||
             !GameObjectTestAccess::mutableTopology(
                 *resourceScene.gameObjects().front())) {
             std::cerr << "Repeated full Vulkan cleanup did not complete\n";

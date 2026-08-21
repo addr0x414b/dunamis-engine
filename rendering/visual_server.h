@@ -13,11 +13,14 @@
 
 #include "vulkan_context.h"
 
+class PhysicsServer;
+
 class VisualServer {
 public:
     ~VisualServer() noexcept;
 
-    [[nodiscard]] Result initialize(SDL_Window* window, Scene* scene);
+    [[nodiscard]] Result initialize(SDL_Window* window, Scene* scene,
+                                    PhysicsServer* physicsServer = nullptr);
     [[nodiscard]] Result run(Scene* scene, const Camera& renderCamera,
                              SceneRunState runState);
     void processEvent(const SDL_Event& event) noexcept;

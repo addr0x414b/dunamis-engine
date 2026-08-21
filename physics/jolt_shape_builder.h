@@ -5,6 +5,7 @@
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/Collision/Shape/Shape.h>
 
+#include <chrono>
 #include <cstddef>
 
 #include <glm/glm.hpp>
@@ -18,9 +19,15 @@ class Character;
 
 namespace physics {
 
+struct ShapeBuildTimings {
+    std::chrono::steady_clock::duration geometryConversion{};
+    std::chrono::steady_clock::duration joltCooking{};
+};
+
 struct CookedShape {
     JPH::ShapeRefC shape;
     ShapeDiagnostics diagnostics;
+    ShapeBuildTimings timings;
 };
 
 // These functions are the single source of shape cooking semantics for runtime

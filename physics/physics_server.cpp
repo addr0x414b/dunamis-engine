@@ -162,6 +162,56 @@ double milliseconds(std::chrono::steady_clock::duration duration) {
     return std::chrono::duration<double, std::milli>(duration).count();
 }
 
+using Clock = std::chrono::steady_clock;
+
+struct StaticShapeAcquisitionStats {
+    Clock::duration geometryFingerprint{};
+    Clock::duration diskRead{};
+    Clock::duration diskRestore{};
+    Clock::duration diskWrite{};
+    Clock::duration meshConversion{};
+    Clock::duration shapeCooking{};
+    std::size_t ramHits = 0;
+    std::size_t ramMisses = 0;
+    std::size_t diskHits = 0;
+    std::size_t diskMisses = 0;
+    std::size_t diskInvalid = 0;
+};
+
+Result makeCachedStaticMeshShape(const GameObject& object,
+                                 const JPH::ShapeRefC& shape,
+                                 physics::CookedShape& output) {
+    if (shape == nullptr || shape->GetType() != JPH::EShapeType::Mesh) {
+        return Result::failure("cached static shape is not a Jolt mesh");
+    }
+
+    physics::ShapeDiagnostics diagnostics;
+    diagnostics.representation =
+        physics::ShapeDiagnostics::Representation::TriangleMesh;
+    for (const MeshInstance& instance :
+         object.modelRenderable().meshInstances()) {
+        const Mesh& mesh = instance.mesh;
+        if (mesh.indices.size() % 3 != 0) {
+            return Result::failure("static collision mesh index count is not divisible by three");
+        }
+        for (const std::uint32_t index : mesh.indices) {
+            if (index >= mesh.vertices.size()) {
+                return Result::failure("static collision mesh contains an out-of-range index");
+            }
+        }
+        diagnostics.inputVertices += mesh.vertices.size();
+        diagnostics.inputTriangles += mesh.indices.size() / 3;
+    }
+
+    const JPH::Shape::Stats stats = shape->GetStats();
+    diagnostics.joltTriangles = stats.mNumTriangles;
+    diagnostics.joltBytes = stats.mSizeBytes;
+    output = {};
+    output.shape = shape;
+    output.diagnostics = diagnostics;
+    return Result::success();
+}
+
 }  // namespace
 
 struct PhysicsServer::Impl {
@@ -207,6 +257,10 @@ struct PhysicsServer::Impl {
         return key;
     }
 
+    [[nodiscard]] Result acquireStaticShape(
+        const GameObject& object, physics::CookedShape& output,
+        StaticShapeAcquisitionStats* stats);
+
     struct RuntimeBody {
         JPH::BodyID id;
         GameObject* object = nullptr;
@@ -235,6 +289,90 @@ struct PhysicsServer::Impl {
     bool typesRegistered = false;
     bool initialized = false;
 };
+
+Result PhysicsServer::Impl::acquireStaticShape(
+    const GameObject& object, physics::CookedShape& output,
+    StaticShapeAcquisitionStats* stats) {
+    output = {};
+    if (!object.physics.enabled) {
+        return Result::failure("physics is disabled");
+    }
+    if (object.physics.motionType != GameObject::PhysicsMotionType::Static ||
+        object.physics.colliderType != GameObject::PhysicsColliderType::Mesh) {
+        return Result::failure("shared static shape acquisition requires a static mesh collider");
+    }
+
+    const StaticShapeKey key = makeStaticShapeKey(object);
+    const auto cached = staticShapeCache.find(key);
+    if (cached != staticShapeCache.end()) {
+        if (stats != nullptr) ++stats->ramHits;
+        spdlog::info("Static Jolt shape cache RAM HIT: {}", object.name);
+        return makeCachedStaticMeshShape(object, cached->second, output);
+    }
+
+    if (stats != nullptr) ++stats->ramMisses;
+    spdlog::info("Static Jolt shape cache MISS: {}", object.name);
+    const Clock::time_point fingerprintStart = Clock::now();
+    const physics::StaticMeshShapeCacheKey diskKey =
+        physics::makeStaticMeshShapeCacheKey(
+            key.modelIdentity, object.modelRenderable().meshInstances(),
+            object.scale, static_cast<std::uint8_t>(key.collider));
+    if (stats != nullptr) {
+        stats->geometryFingerprint += Clock::now() - fingerprintStart;
+    }
+
+    physics::ShapeCacheLoadResult diskResult = persistentShapeCache.load(diskKey);
+    if (stats != nullptr) {
+        stats->diskRead += diskResult.readDuration;
+        stats->diskRestore += diskResult.restoreDuration;
+    }
+    JPH::ShapeRefC shape;
+    if (diskResult.status == physics::ShapeCacheLoadStatus::Hit) {
+        shape = diskResult.shape;
+        if (stats != nullptr) ++stats->diskHits;
+        spdlog::info("Static Jolt shape cache DISK HIT: {} ({:.2f} ms restore)",
+                     object.name, milliseconds(diskResult.restoreDuration));
+        staticShapeCache.emplace(key, shape);
+        return makeCachedStaticMeshShape(object, shape, output);
+    }
+
+    if (diskResult.status == physics::ShapeCacheLoadStatus::Invalid) {
+        if (stats != nullptr) ++stats->diskInvalid;
+        spdlog::warn("Physics disk cache INVALID: {} ({}) for {}",
+                     persistentShapeCache.pathFor(diskKey).string(),
+                     diskResult.message, objectDescription(object));
+        persistentShapeCache.discard(diskKey);
+    } else {
+        if (stats != nullptr) ++stats->diskMisses;
+        spdlog::info("Static Jolt shape cache DISK MISS/COOK: {}", object.name);
+    }
+
+    physics::CookedShape cooked;
+    const Result buildResult = physics::buildGameObjectShape(object, cooked);
+    if (!buildResult) return buildResult;
+    if (stats != nullptr) {
+        stats->meshConversion += cooked.timings.geometryConversion;
+        stats->shapeCooking += cooked.timings.joltCooking;
+    }
+    if (cooked.shape == nullptr) {
+        return Result::failure("Jolt did not produce a static mesh shape");
+    }
+
+    shape = cooked.shape;
+    const Clock::time_point writeStart = Clock::now();
+    std::string cacheWriteError;
+    if (persistentShapeCache.save(diskKey, *shape, cacheWriteError)) {
+        spdlog::info("Physics disk cache WRITE: {}",
+                     persistentShapeCache.pathFor(diskKey).string());
+    } else {
+        spdlog::warn("Physics disk cache write failed for {}: {}",
+                     objectDescription(object), cacheWriteError);
+    }
+    if (stats != nullptr) stats->diskWrite += Clock::now() - writeStart;
+    staticShapeCache.emplace(key, shape);
+    output = std::move(cooked);
+    return Result::success();
+}
 
 std::size_t PhysicsStepAccumulator::addFrameDelta(float deltaTime) noexcept {
     if (!(deltaTime > 0.0f) || !std::isfinite(deltaTime)) {
@@ -297,6 +435,26 @@ Result PhysicsServer::initialize() {
     }
 }
 
+Result PhysicsServer::acquireCollisionShape(const GameObject& object,
+                                             physics::CookedShape& output) {
+    output = {};
+    if (!impl_ || !impl_->initialized) {
+        return Result::failure("PhysicsServer is not initialized");
+    }
+    try {
+        if (object.physics.motionType == GameObject::PhysicsMotionType::Static &&
+            object.physics.colliderType == GameObject::PhysicsColliderType::Mesh) {
+            return impl_->acquireStaticShape(object, output, nullptr);
+        }
+        return physics::buildGameObjectShape(object, output);
+    } catch (const std::exception& exception) {
+        return Result::failure("Collision shape acquisition failed: " +
+                               std::string(exception.what()));
+    } catch (...) {
+        return Result::failure("Collision shape acquisition failed unexpectedly");
+    }
+}
+
 Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
     if (!impl_->initialized) {
         return Result::failure("PhysicsServer is not initialized");
@@ -307,14 +465,9 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
 
     accumulator_.reset();
     try {
-        using Clock = std::chrono::steady_clock;
         const Clock::time_point totalStart = Clock::now();
-        Clock::duration staticMeshConversion{};
-        Clock::duration staticShapeCooking{};
-        Clock::duration geometryFingerprint{};
-        Clock::duration diskRead{};
-        Clock::duration diskRestore{};
-        Clock::duration diskWrite{};
+        StaticShapeAcquisitionStats staticShapeStats;
+        Clock::duration convexGeometryConversion{};
         Clock::duration convexCooking{};
         Clock::duration bodyCreation{};
         Clock::duration broadPhaseOptimization{};
@@ -329,11 +482,6 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
         JPH::BodyInterface& bodies = impl_->physicsSystem->GetBodyInterface();
         std::size_t staticCount = 0;
         std::size_t dynamicCount = 0;
-        std::size_t staticShapeCacheHits = 0;
-        std::size_t staticShapeCacheMisses = 0;
-        std::size_t diskCacheHits = 0;
-        std::size_t diskCacheMisses = 0;
-        std::size_t diskCacheInvalid = 0;
         std::vector<Character*> characters;
 
         for (const std::unique_ptr<GameObject>& objectOwner :
@@ -367,77 +515,20 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
 
             JPH::BodyID bodyId;
             if (settings.motionType == GameObject::PhysicsMotionType::Static) {
-                const Impl::StaticShapeKey key =
-                    Impl::makeStaticShapeKey(object);
-                JPH::ShapeRefC shape;
-                const auto cached = impl_->staticShapeCache.find(key);
-                if (cached != impl_->staticShapeCache.end()) {
-                    shape = cached->second;
-                    ++staticShapeCacheHits;
-                    spdlog::info("Physics RAM shape cache HIT: {}", object.name);
-                } else {
-                    ++staticShapeCacheMisses;
-                    spdlog::info("Physics RAM shape cache MISS: {}", object.name);
-                    const Clock::time_point fingerprintStart = Clock::now();
-                    const physics::StaticMeshShapeCacheKey diskKey =
-                        physics::makeStaticMeshShapeCacheKey(
-                            key.modelIdentity,
-                            object.modelRenderable().meshInstances(), object.scale,
-                            static_cast<std::uint8_t>(settings.colliderType));
-                    geometryFingerprint += Clock::now() - fingerprintStart;
-                    physics::ShapeCacheLoadResult diskResult =
-                        impl_->persistentShapeCache.load(diskKey);
-                    diskRead += diskResult.readDuration;
-                    diskRestore += diskResult.restoreDuration;
-                    if (diskResult.status == physics::ShapeCacheLoadStatus::Hit) {
-                        shape = diskResult.shape;
-                        ++diskCacheHits;
-                        spdlog::info("Physics disk cache HIT: {} ({:.2f} ms restore)",
-                                     object.name,
-                                     milliseconds(diskResult.restoreDuration));
-                    } else {
-                        if (diskResult.status == physics::ShapeCacheLoadStatus::Invalid) {
-                            ++diskCacheInvalid;
-                            spdlog::warn("Physics disk cache INVALID: {} ({}) for {}",
-                                         impl_->persistentShapeCache.pathFor(diskKey).string(),
-                                         diskResult.message, objectDescription(object));
-                            impl_->persistentShapeCache.discard(diskKey);
-                        } else {
-                            ++diskCacheMisses;
-                            spdlog::info("Physics disk cache MISS: {}", object.name);
-                        }
-                        const Clock::time_point conversionStart = Clock::now();
-                        physics::CookedShape cooked;
-                        Result meshResult = physics::buildGameObjectShape(object, cooked);
-                        staticMeshConversion += Clock::now() - conversionStart;
-                        if (!meshResult) {
-                            endRuntimeSession();
-                            return Result::failure("Failed to build static collision for " +
-                                                   objectDescription(object) + ": " +
-                                                   meshResult.error());
-                        }
-                        const Clock::time_point cookingStart = Clock::now();
-                        JPH::ShapeRefC cookedShape = cooked.shape;
-                        staticShapeCooking += Clock::now() - cookingStart;
-                        if (cookedShape == nullptr) {
-                            endRuntimeSession();
-                            return Result::failure("Failed to create mesh shape for " +
-                                                   objectDescription(object));
-                        }
-                        shape = std::move(cookedShape);
-                        const Clock::time_point writeStart = Clock::now();
-                        std::string cacheWriteError;
-                        if (impl_->persistentShapeCache.save(
-                                diskKey, *shape, cacheWriteError)) {
-                            spdlog::info("Physics disk cache WRITE: {}",
-                                         impl_->persistentShapeCache.pathFor(diskKey).string());
-                        } else {
-                            spdlog::warn("Physics disk cache write failed for {}: {}",
-                                         objectDescription(object), cacheWriteError);
-                        }
-                        diskWrite += Clock::now() - writeStart;
-                    }
-                    impl_->staticShapeCache.emplace(key, shape);
+                physics::CookedShape cooked;
+                const Result shapeResult = impl_->acquireStaticShape(
+                    object, cooked, &staticShapeStats);
+                if (!shapeResult) {
+                    endRuntimeSession();
+                    return Result::failure("Failed to build static collision for " +
+                                           objectDescription(object) + ": " +
+                                           shapeResult.error());
+                }
+                JPH::ShapeRefC shape = cooked.shape;
+                if (shape == nullptr) {
+                    endRuntimeSession();
+                    return Result::failure("Failed to create mesh shape for " +
+                                           objectDescription(object));
                 }
                 JPH::BodyCreationSettings bodySettings(
                     shape.GetPtr(), toJoltPosition(object.position),
@@ -455,10 +546,10 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                 ++staticCount;
             } else {
                 JPH::ShapeRefC shape;
-                const Clock::time_point cookingStart = Clock::now();
                 physics::CookedShape cooked;
                 Result shapeBuild = physics::buildGameObjectShape(object, cooked);
-                convexCooking += Clock::now() - cookingStart;
+                convexGeometryConversion += cooked.timings.geometryConversion;
+                convexCooking += cooked.timings.joltCooking;
                 if (!shapeBuild) {
                     endRuntimeSession();
                     return Result::failure("Failed to create dynamic collider for " +
@@ -521,15 +612,20 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
         }
         spdlog::info("Runtime physics world created: {} static, {} dynamic, {} characters",
                      staticCount, dynamicCount, characters.size());
-        spdlog::info("Physics startup: geometry fingerprint {:.2f} ms, disk read {:.2f} ms, Jolt restore {:.2f} ms, static mesh conversion {:.2f} ms, static shape cooking {:.2f} ms, disk write {:.2f} ms, dynamic convex cooking {:.2f} ms, body creation {:.2f} ms, broadphase optimization {:.2f} ms, total {:.2f} ms; RAM hits {}, misses {}; disk hits {}, misses {}, invalid {}",
-                     milliseconds(geometryFingerprint), milliseconds(diskRead),
-                     milliseconds(diskRestore), milliseconds(staticMeshConversion),
-                     milliseconds(staticShapeCooking), milliseconds(diskWrite),
+        spdlog::info("Physics startup: geometry fingerprint {:.2f} ms, disk read {:.2f} ms, Jolt restore {:.2f} ms, static mesh conversion {:.2f} ms, static Jolt shape cooking {:.2f} ms, disk write {:.2f} ms, dynamic convex conversion {:.2f} ms, dynamic convex Jolt cooking {:.2f} ms, body creation {:.2f} ms, broadphase optimization {:.2f} ms, total {:.2f} ms; RAM hits {}, misses {}; disk hits {}, misses {}, invalid {}",
+                     milliseconds(staticShapeStats.geometryFingerprint),
+                     milliseconds(staticShapeStats.diskRead),
+                     milliseconds(staticShapeStats.diskRestore),
+                     milliseconds(staticShapeStats.meshConversion),
+                     milliseconds(staticShapeStats.shapeCooking),
+                     milliseconds(staticShapeStats.diskWrite),
+                     milliseconds(convexGeometryConversion),
                      milliseconds(convexCooking), milliseconds(bodyCreation),
                      milliseconds(broadPhaseOptimization),
                      milliseconds(Clock::now() - totalStart),
-                     staticShapeCacheHits, staticShapeCacheMisses, diskCacheHits,
-                     diskCacheMisses, diskCacheInvalid);
+                     staticShapeStats.ramHits, staticShapeStats.ramMisses,
+                     staticShapeStats.diskHits, staticShapeStats.diskMisses,
+                     staticShapeStats.diskInvalid);
         return Result::success();
     } catch (const std::exception& exception) {
         endRuntimeSession();

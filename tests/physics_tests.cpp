@@ -16,6 +16,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -213,6 +214,10 @@ void testShapeDefinitionSignatures() {
     object.scale.x = 2.0f;
     expect(meshSignature != physics::makeGameObjectShapeDefinitionSignature(object),
            "mesh scale did not change the shape signature");
+    object.scale.x = 1.0f;
+    object.physics.colliderType = GameObject::PhysicsColliderType::ConvexHull;
+    expect(meshSignature != physics::makeGameObjectShapeDefinitionSignature(object),
+           "collider type did not change the shape signature");
 
     MeshInstance modelAInput = triangleInstance(glm::vec3(0.0f));
     MeshInstance modelBInput = triangleInstance(glm::vec3(0.0f));
@@ -259,6 +264,69 @@ void testShapeDefinitionSignatures() {
     expect(characterSignature !=
                physics::makeCharacterShapeDefinitionSignature(character),
            "character radius did not change the shape signature");
+}
+
+void testPhysicsServerStaticShapeSharing() {
+    TestScene runtimeScene;
+    const std::string modelIdentity =
+        "__dunamis_static_shape_sharing_" +
+        std::to_string(reinterpret_cast<std::uintptr_t>(&runtimeScene));
+
+    GameObject editingObject;
+    editingObject.name = "Static Shape Editing Object";
+    editingObject.persistentId = "shared-static-shape";
+    editingObject.modelPath = modelIdentity.c_str();
+    editingObject.physics.enabled = true;
+    editingObject.physics.motionType = GameObject::PhysicsMotionType::Static;
+    editingObject.physics.colliderType = GameObject::PhysicsColliderType::Mesh;
+    expect(static_cast<bool>(editingObject.modelRenderable().addMeshInstance(
+               triangleInstance(glm::vec3(0.0f)))),
+           "failed to create editing static mesh");
+
+    auto runtimeObject = std::make_unique<GameObject>();
+    runtimeObject->name = "Static Shape Runtime Clone";
+    runtimeObject->persistentId = editingObject.persistentId;
+    runtimeObject->modelPath = modelIdentity.c_str();
+    runtimeObject->physics = editingObject.physics;
+    expect(static_cast<bool>(runtimeObject->modelRenderable().addMeshInstance(
+               triangleInstance(glm::vec3(0.0f)))),
+           "failed to create runtime static mesh");
+    expect(static_cast<bool>(runtimeScene.addGameObject(std::move(runtimeObject))),
+           "failed to add runtime static mesh");
+
+    PhysicsServer server;
+    expect(static_cast<bool>(server.initialize()),
+           "failed to initialize PhysicsServer for shared-shape test");
+    physics::CookedShape first;
+    physics::CookedShape second;
+    expect(static_cast<bool>(server.acquireCollisionShape(editingObject, first)),
+           "failed to acquire editing static collision shape");
+    expect(static_cast<bool>(server.acquireCollisionShape(editingObject, second)),
+           "failed to reacquire editing static collision shape");
+    expect(first.shape && second.shape && first.shape.GetPtr() == second.shape.GetPtr(),
+           "repeated static collision acquisition did not reuse the Jolt shape");
+    expect(first.diagnostics.inputVertices == 3 &&
+               first.diagnostics.inputTriangles == 1,
+           "shared static collision diagnostics were not populated");
+
+    expect(static_cast<bool>(server.beginRuntimeSession(runtimeScene)),
+           "runtime clone could not acquire the shared static collision shape");
+    server.endRuntimeSession();
+
+    physics::CookedShape afterRuntime;
+    expect(static_cast<bool>(server.acquireCollisionShape(editingObject, afterRuntime)),
+           "static collision acquisition failed after runtime teardown");
+    expect(afterRuntime.shape && afterRuntime.shape.GetPtr() == first.shape.GetPtr(),
+           "static collision RAM cache did not survive runtime teardown");
+    server.shutdown();
+
+    physics::PhysicsShapeCache cache;
+    const physics::StaticMeshShapeCacheKey key =
+        physics::makeStaticMeshShapeCacheKey(
+            modelIdentity, editingObject.modelRenderable().meshInstances(),
+            editingObject.scale);
+    std::error_code error;
+    std::filesystem::remove(cache.pathFor(key), error);
 }
 
 void testShapeDiagnostics() {
@@ -939,6 +1007,7 @@ int main() {
     testShapeDefinitionSignatures();
     testShapeDiagnostics();
     testCookedShapeCache();
+    testPhysicsServerStaticShapeSharing();
     testOffOriginBodyPivot();
     testDynamicConvexRotationIntegration();
     testFloorSphere();

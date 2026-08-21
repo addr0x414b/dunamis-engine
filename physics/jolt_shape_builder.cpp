@@ -8,6 +8,7 @@
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 
 #include <cmath>
+#include <chrono>
 #include <cstring>
 
 #include <glm/gtc/quaternion.hpp>
@@ -46,6 +47,8 @@ void setStats(const JPH::Shape& shape, ShapeDiagnostics& diagnostics) {
 }
 
 Result cookMesh(const GameObject& object, CookedShape& output) {
+    using Clock = std::chrono::steady_clock;
+    const Clock::time_point geometryStart = Clock::now();
     ScaledLocalTriangleMesh mesh;
     Result result = buildScaledLocalTriangleMesh(
         object.modelRenderable().meshInstances(), object.scale, mesh);
@@ -62,10 +65,15 @@ Result cookMesh(const GameObject& object, CookedShape& output) {
     }
     JPH::MeshShapeSettings settings(std::move(triangles));
     settings.SetEmbedded();
+    const Clock::duration geometryConversion = Clock::now() - geometryStart;
+    const Clock::time_point cookingStart = Clock::now();
     JPH::ShapeSettings::ShapeResult shapeResult = settings.Create();
+    const Clock::duration joltCooking = Clock::now() - cookingStart;
     if (shapeResult.HasError()) return Result::failure(shapeResult.GetError().c_str());
     output = {};
     output.shape = shapeResult.Get();
+    output.timings.geometryConversion = geometryConversion;
+    output.timings.joltCooking = joltCooking;
     output.diagnostics.representation = ShapeDiagnostics::Representation::TriangleMesh;
     output.diagnostics.inputVertices = mesh.vertices.size();
     output.diagnostics.inputTriangles = mesh.indices.size() / 3;
@@ -74,6 +82,8 @@ Result cookMesh(const GameObject& object, CookedShape& output) {
 }
 
 Result cookConvexHull(const GameObject& object, CookedShape& output) {
+    using Clock = std::chrono::steady_clock;
+    const Clock::time_point geometryStart = Clock::now();
     LocalConvexHull hull;
     Result result = buildScaledLocalConvexHull(
         object.modelRenderable().meshInstances(), object.scale, hull);
@@ -82,10 +92,15 @@ Result cookConvexHull(const GameObject& object, CookedShape& output) {
     points.reserve(hull.points.size());
     for (const glm::vec3& point : hull.points) points.emplace_back(point.x, point.y, point.z);
     JPH::ConvexHullShapeSettings settings(points);
+    const Clock::duration geometryConversion = Clock::now() - geometryStart;
+    const Clock::time_point cookingStart = Clock::now();
     JPH::ShapeSettings::ShapeResult shapeResult = settings.Create();
+    const Clock::duration joltCooking = Clock::now() - cookingStart;
     if (shapeResult.HasError()) return Result::failure(shapeResult.GetError().c_str());
     output = {};
     output.shape = shapeResult.Get();
+    output.timings.geometryConversion = geometryConversion;
+    output.timings.joltCooking = joltCooking;
     output.diagnostics.representation = ShapeDiagnostics::Representation::ConvexHull;
     output.diagnostics.inputPoints = hull.points.size();
     if (output.shape->GetSubType() == JPH::EShapeSubType::ConvexHull)
@@ -172,7 +187,9 @@ Result buildGameObjectShape(const GameObject& object, CookedShape& output) {
         if (!(object.physics.sphereRadius > 0.0f) || !std::isfinite(object.physics.sphereRadius))
             return Result::failure("sphere radius must be finite and positive");
         output = {};
+        const auto cookingStart = std::chrono::steady_clock::now();
         output.shape = new JPH::SphereShape(dunamisToMeters(object.physics.sphereRadius));
+        output.timings.joltCooking = std::chrono::steady_clock::now() - cookingStart;
         output.diagnostics.representation = ShapeDiagnostics::Representation::AnalyticSphere;
         output.diagnostics.radius = object.physics.sphereRadius;
         setStats(*output.shape, output.diagnostics);
@@ -186,15 +203,21 @@ Result buildCharacterShape(const Character& character, CookedShape& output) {
         !(character.capsuleRadius > 0.0f) || !std::isfinite(character.capsuleHeight) ||
         !std::isfinite(character.capsuleRadius))
         return Result::failure("capsule dimensions must be finite, positive, and taller than its diameter");
+    const auto geometryStart = std::chrono::steady_clock::now();
     const float radius = dunamisToMeters(character.capsuleRadius);
     const float halfCylinder = dunamisToMeters(0.5f * character.capsuleHeight - character.capsuleRadius);
+    const auto geometryConversion = std::chrono::steady_clock::now() - geometryStart;
+    const auto cookingStart = std::chrono::steady_clock::now();
     JPH::RotatedTranslatedShapeSettings settings(
         JPH::Vec3(0.0f, 0.5f * dunamisToMeters(character.capsuleHeight), 0.0f),
         JPH::Quat::sIdentity(), new JPH::CapsuleShape(halfCylinder, radius));
     JPH::ShapeSettings::ShapeResult shapeResult = settings.Create();
+    const auto joltCooking = std::chrono::steady_clock::now() - cookingStart;
     if (shapeResult.HasError()) return Result::failure(shapeResult.GetError().c_str());
     output = {};
     output.shape = shapeResult.Get();
+    output.timings.geometryConversion = geometryConversion;
+    output.timings.joltCooking = joltCooking;
     output.diagnostics.representation = ShapeDiagnostics::Representation::AnalyticCapsule;
     output.diagnostics.radius = character.capsuleRadius;
     output.diagnostics.height = character.capsuleHeight;

@@ -55,6 +55,7 @@ struct SwapchainSupportDetails {
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
 class VisualServer;
+class PhysicsServer;
 class VulkanContextTestAccess;
 
 class VulkanContext {
@@ -326,6 +327,7 @@ private:
     [[nodiscard]] Result createRenderFinishedSemaphores();
     void destroyRenderFinishedSemaphores() noexcept;
     [[nodiscard]] Result initializeImGui();
+    void setPhysicsServer(PhysicsServer* physicsServer) noexcept;
     void prepareSelectedPhysicsDiagnostics(Scene* scene,
                                            SceneRunState runState);
     [[nodiscard]] Result preparePhysicsDebugDraws(Scene* scene, SceneRunState runState);
@@ -339,24 +341,19 @@ private:
     };
 
     struct PhysicsDebugShapeKey {
-        const Scene* scene = nullptr;
         std::string objectId;
         bool character = false;
 
         [[nodiscard]] bool operator==(const PhysicsDebugShapeKey& other) const
             noexcept {
-            return scene == other.scene && objectId == other.objectId &&
-                   character == other.character;
+            return objectId == other.objectId && character == other.character;
         }
     };
 
     struct PhysicsDebugShapeKeyHash {
         [[nodiscard]] std::size_t operator()(
             const PhysicsDebugShapeKey& key) const noexcept {
-            std::size_t result = std::hash<const Scene*>{}(key.scene);
-            result ^= std::hash<std::string>{}(key.objectId) +
-                      static_cast<std::size_t>(0x9e3779b9) + (result << 6) +
-                      (result >> 2);
+            std::size_t result = std::hash<std::string>{}(key.objectId);
             result ^= std::hash<bool>{}(key.character) +
                       static_cast<std::size_t>(0x9e3779b9) + (result << 6) +
                       (result >> 2);
@@ -375,7 +372,6 @@ private:
         const physics::ShapeDefinitionSignature& signature,
         std::chrono::nanoseconds& preparationDuration, bool& rebuilt,
         std::string& error);
-    void clearPhysicsDebugCache() noexcept;
     void retirePhysicsDebugGpuBatches() noexcept;
     void collectPhysicsDebugGpuBatches() noexcept;
     void destroyPhysicsDebugGpuBatch(PhysicsDebugGpuBatch& batch) noexcept;
@@ -383,6 +379,9 @@ private:
 
     SDL_Window* window = nullptr;
     Scene* currentScene = nullptr;
+    // Non-owning. Dunamis owns PhysicsServer and shuts down VisualServer
+    // before PhysicsServer; cleanup resets this pointer before returning.
+    PhysicsServer* physicsServer_ = nullptr;
     bool initialized = false;
     bool framebufferResized = false;
     bool hasSubmittedWork = false;

@@ -107,7 +107,8 @@ Result Dunamis::initialize() {
         }
 
         result = visualServer.initialize(platform.window(),
-                                         sceneManager_.editingScene());
+                                         sceneManager_.editingScene(),
+                                         &physicsServer_);
         if (!result) {
             (void)shutdown();
             return Result::failure("Visual Server initialization failed: " +

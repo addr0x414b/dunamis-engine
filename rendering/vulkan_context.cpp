@@ -2,6 +2,7 @@
 
 #include "editor_picking.h"
 #include "renderer_configuration.h"
+#include "../physics/physics_server.h"
 #include "../scene/model_renderable.h"
 #include "../scene/character.h"
 
@@ -562,9 +563,17 @@ Result VulkanContext::switchScene(Scene* scene) {
         return Result::failure(
             "Incoming scene rendering resources are not loaded");
     }
-    clearPhysicsDebugCache();
+    // Scene swaps do not invalidate authored collider definitions. Clear only
+    // transient frame state; cached Jolt shapes, batches, and GPU buffers are
+    // intentionally reusable by editing/runtime clones.
+    if (physicsDebugRenderer_) physicsDebugRenderer_->beginFrame();
+    imguiLayer.setPhysicsDiagnostics(nullptr, std::nullopt, {});
     currentScene = scene;
     return Result::success();
+}
+
+void VulkanContext::setPhysicsServer(PhysicsServer* physicsServer) noexcept {
+    physicsServer_ = physicsServer;
 }
 
 bool VulkanContext::hasSceneResources(const Scene* scene) const noexcept {
@@ -4967,7 +4976,7 @@ const physics::CookedShape* VulkanContext::ensurePhysicsDebugShape(
     const std::string objectId = object.persistentId.empty()
                                      ? std::to_string(reinterpret_cast<std::uintptr_t>(&object))
                                      : object.persistentId;
-    const PhysicsDebugShapeKey key{scene, objectId, character};
+    const PhysicsDebugShapeKey key{objectId, character};
     auto found = physicsDebugShapes_.find(key);
     if (found != physicsDebugShapes_.end() &&
         found->second.signature == signature) {
@@ -4986,10 +4995,23 @@ const physics::CookedShape* VulkanContext::ensurePhysicsDebugShape(
     const auto preparationStart = std::chrono::steady_clock::now();
     try {
         physics::CookedShape cooked;
-        const Result result =
-            character
-                ? physics::buildCharacterShape(static_cast<const Character&>(object), cooked)
-                : physics::buildGameObjectShape(object, cooked);
+        const Result result = [&]() {
+            if (character) {
+                return physics::buildCharacterShape(
+                    static_cast<const Character&>(object), cooked);
+            }
+            if (object.physics.motionType ==
+                    GameObject::PhysicsMotionType::Static &&
+                object.physics.colliderType ==
+                    GameObject::PhysicsColliderType::Mesh) {
+                if (physicsServer_ == nullptr) {
+                    return Result::failure(
+                        "PhysicsServer is unavailable for static collider debug acquisition");
+                }
+                return physicsServer_->acquireCollisionShape(object, cooked);
+            }
+            return physics::buildGameObjectShape(object, cooked);
+        }();
         if (!result) {
             entry.error = result.error();
         } else {
@@ -5011,7 +5033,7 @@ const physics::CookedShape* VulkanContext::ensurePhysicsDebugShape(
         scene != nullptr && !scene->name.empty() ? scene->name : "<unnamed scene>";
     const std::string objectName = object.name.empty() ? objectId : object.name;
     if (cached.cooked) {
-        spdlog::info("Collider debug preparation '{}/{}': shape cook/load: {:.2f} ms",
+        spdlog::info("Collider debug preparation '{}/{}': shape acquisition: {:.2f} ms",
                      sceneName, objectName, milliseconds);
     } else {
         spdlog::warn("Unable to prepare collider debug shape for '{}/{}': {}",
@@ -5069,13 +5091,6 @@ Result VulkanContext::preparePhysicsDebugDraws(Scene* scene, SceneRunState runSt
             geometryMilliseconds, conversionMilliseconds, stats.batches);
     }
     return Result::success();
-}
-
-void VulkanContext::clearPhysicsDebugCache() noexcept {
-    retirePhysicsDebugGpuBatches();
-    physicsDebugShapes_.clear();
-    if (physicsDebugRenderer_) physicsDebugRenderer_->beginFrame();
-    imguiLayer.setPhysicsDiagnostics(nullptr, std::nullopt, {});
 }
 
 void VulkanContext::retirePhysicsDebugGpuBatches() noexcept {
@@ -5883,6 +5898,10 @@ bool VulkanContext::cleanup() noexcept {
             vkDestroyPipeline(device, doubleSidedGraphicsPipeline, nullptr);
             doubleSidedGraphicsPipeline = VK_NULL_HANDLE;
         }
+        if (physicsDebugPipeline != VK_NULL_HANDLE) {
+            vkDestroyPipeline(device, physicsDebugPipeline, nullptr);
+            physicsDebugPipeline = VK_NULL_HANDLE;
+        }
         if (directionalShadowPipeline != VK_NULL_HANDLE) {
             vkDestroyPipeline(device, directionalShadowPipeline, nullptr);
             directionalShadowPipeline = VK_NULL_HANDLE;
@@ -5920,6 +5939,10 @@ bool VulkanContext::cleanup() noexcept {
         if (pipelineLayout != VK_NULL_HANDLE) {
             vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
             pipelineLayout = VK_NULL_HANDLE;
+        }
+        if (physicsDebugPipelineLayout != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(device, physicsDebugPipelineLayout, nullptr);
+            physicsDebugPipelineLayout = VK_NULL_HANDLE;
         }
         if (directionalShadowPipelineLayout != VK_NULL_HANDLE) {
             vkDestroyPipelineLayout(device, directionalShadowPipelineLayout,
@@ -6105,6 +6128,7 @@ bool VulkanContext::cleanup() noexcept {
     initialized = false;
     currentScene = nullptr;
     sceneResourceLoadTarget_ = nullptr;
+    physicsServer_ = nullptr;
     window = nullptr;
 
     if (hadResources) {

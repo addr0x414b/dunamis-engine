@@ -8,6 +8,11 @@
 #include "../scene/runtime_transform_edit.h"
 
 class Scene;
+class GameObject;
+
+namespace physics {
+struct CookedShape;
+}
 
 class PhysicsStepAccumulator {
 public:
@@ -29,6 +34,11 @@ public:
     PhysicsServer& operator=(const PhysicsServer&) = delete;
 
     [[nodiscard]] Result initialize();
+    // Acquires the authored collision shape without creating a body or
+    // changing runtime physics state. Static mesh shapes use the same RAM /
+    // persistent cache path as runtime physics.
+    [[nodiscard]] Result acquireCollisionShape(const GameObject& object,
+                                               physics::CookedShape& output);
     [[nodiscard]] Result beginRuntimeSession(Scene& runtimeScene);
     void applyRuntimeTransformEdit(const RuntimeTransformEdit& edit);
     void update();

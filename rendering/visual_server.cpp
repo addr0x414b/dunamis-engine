@@ -4,7 +4,8 @@
 
 #include <chrono>
 
-Result VisualServer::initialize(SDL_Window* window, Scene* scene) {
+Result VisualServer::initialize(SDL_Window* window, Scene* scene,
+                                PhysicsServer* physicsServer) {
     spdlog::info("Initializing Visual Server...");
 
     if (initialized) {
@@ -43,6 +44,7 @@ Result VisualServer::initialize(SDL_Window* window, Scene* scene) {
         return Result::failure("Failed to initialize Vulkan Context: " +
                                result.error());
     }
+    vulkanContext.setPhysicsServer(physicsServer);
 
     result = initGameObjects();
     if (!result) {
