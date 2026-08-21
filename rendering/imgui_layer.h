@@ -23,6 +23,7 @@ class GameObject;
 class Camera;
 class PointLight;
 class DirectionalLight;
+class Character;
 struct NativeFileDialogState;
 
 class ImGuiLayer final {
@@ -109,6 +110,9 @@ private:
     void drawDirectionalLightVisualization(
         const DirectionalLight& light, const GameObject* selectionTarget,
         const glm::mat4& editorView, const glm::mat4& projection);
+    void drawCharacterVisualization(
+        const Character& character, const GameObject* selectionTarget,
+        const glm::mat4& editorView, const glm::mat4& projection);
     void processWorldSelection(Scene* scene, const glm::mat4& view,
                                const glm::mat4& projection,
                                SceneRunState runState);
@@ -117,6 +121,7 @@ private:
         Camera,
         PointLight,
         DirectionalLight,
+        Character,
     };
 
     struct EditorHelperSegment {
@@ -129,7 +134,7 @@ private:
         const GameObject* selectionTarget = nullptr;
         glm::vec2 point{0.0f};
         bool pointValid = false;
-        std::array<EditorHelperSegment, 12> segments{};
+        std::array<EditorHelperSegment, 128> segments{};
         std::size_t segmentCount = 0;
         float viewDepth = 0.0f;
     };

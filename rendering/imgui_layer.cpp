@@ -25,6 +25,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include "editor_picking.h"
+#include "../scene/character.h"
 #include "../scene/directional_light.h"
 #include "../scene/game_object.h"
 #include "../scene/model_renderable.h"
@@ -129,6 +130,9 @@ constexpr float directionalLightVisualizationRadius = 5.0f;
 constexpr float directionalLightArrowheadLength = 9.0f;
 constexpr float directionalLightArrowheadHalfWidth = 4.0f;
 constexpr float directionalLightCenterRadius = 2.5f;
+constexpr std::size_t characterVisualizationRadialSegments = 12;
+constexpr float characterVisualizationTwoPi = 6.28318530717958647692f;
+constexpr float characterVisualizationDiagonalRatio = 0.70710678118654752440f;
 constexpr float minimumLightVisualizationPixelRadius = 1.0f;
 constexpr float editorHelperLineHitTolerance = 7.0f;
 constexpr float editorHelperPointHitRadius = 8.0f;
@@ -1393,6 +1397,10 @@ void ImGuiLayer::drawCameraVisualizations(
     }
 
     for (const GameObject* object : objects) {
+        if (const auto* character = dynamic_cast<const Character*>(object)) {
+            drawCharacterVisualization(*character, object, editorView,
+                                        projection);
+        }
         if (const auto* pointLight = dynamic_cast<const PointLight*>(object)) {
             drawPointLightVisualization(*pointLight, object, editorView,
                                         projection);
@@ -1700,6 +1708,142 @@ void ImGuiLayer::drawDirectionalLightVisualization(
             directionalLightCenterRadius, centerRadius)) {
         drawList->AddCircleFilled(ImVec2(center.x, center.y), centerRadius,
                                    color);
+    }
+    drawList->PopClipRect();
+}
+
+void ImGuiLayer::drawCharacterVisualization(
+    const Character& character, const GameObject* selectionTarget,
+    const glm::mat4& editorView, const glm::mat4& projection) {
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    if (viewport == nullptr || viewport->Size.x <= 0.0f ||
+        viewport->Size.y <= 0.0f || !isFiniteMatrix(projection)) {
+        return;
+    }
+
+    const float height = character.capsuleHeight;
+    const float radius = character.capsuleRadius;
+    if (!isFiniteVector(character.position) || !std::isfinite(height) ||
+        !std::isfinite(radius) || radius <= 0.0f ||
+        height <= 2.0f * radius) {
+        return;
+    }
+
+    const float lowerHemisphereCenterY = radius;
+    const float upperHemisphereCenterY = height - radius;
+    const float diagonalRadius =
+        radius * characterVisualizationDiagonalRatio;
+    const glm::vec3 capsuleCenter =
+        character.position + glm::vec3(0.0f, 0.5f * height, 0.0f);
+    if (!isFiniteVector(capsuleCenter) ||
+        !std::isfinite(lowerHemisphereCenterY) ||
+        !std::isfinite(upperHemisphereCenterY) ||
+        !std::isfinite(diagonalRadius)) {
+        return;
+    }
+
+    EditorHelperGeometry geometry;
+    geometry.kind = EditorHelperKind::Character;
+    geometry.selectionTarget = selectionTarget;
+    geometry.viewDepth = viewDepthForWorldPoint(capsuleCenter, editorView);
+
+    const auto projectPoint = [&](const glm::vec3& worldPoint,
+                                  glm::vec2& screenPoint) {
+        return projectWorldToImGui(worldPoint, editorView, projection,
+                                   *viewport, screenPoint);
+    };
+    const auto appendSegment = [&](const glm::vec3& first,
+                                   const glm::vec3& second) {
+        if (geometry.segmentCount >= geometry.segments.size()) {
+            return;
+        }
+
+        glm::vec2 firstScreen;
+        glm::vec2 secondScreen;
+        if (!projectPoint(first, firstScreen) ||
+            !projectPoint(second, secondScreen)) {
+            return;
+        }
+        geometry.segments[geometry.segmentCount++] = {
+            firstScreen, secondScreen};
+    };
+    const auto ringPoint = [&](float y, float ringRadius, float angle) {
+        return character.position + glm::vec3(
+            std::cos(angle) * ringRadius, y,
+            std::sin(angle) * ringRadius);
+    };
+    const auto appendRing = [&](float y, float ringRadius) {
+        const float angleStep = characterVisualizationTwoPi /
+            static_cast<float>(characterVisualizationRadialSegments);
+        for (std::size_t index = 0;
+             index < characterVisualizationRadialSegments; ++index) {
+            const float angle = angleStep * static_cast<float>(index);
+            const float nextAngle = angleStep * static_cast<float>(
+                (index + 1) % characterVisualizationRadialSegments);
+            appendSegment(ringPoint(y, ringRadius, angle),
+                          ringPoint(y, ringRadius, nextAngle));
+        }
+    };
+
+    appendRing(lowerHemisphereCenterY - diagonalRadius, diagonalRadius);
+    appendRing(lowerHemisphereCenterY, radius);
+    appendRing(0.5f * height, radius);
+    appendRing(upperHemisphereCenterY, radius);
+    appendRing(upperHemisphereCenterY + diagonalRadius, diagonalRadius);
+
+    const std::array<glm::vec2, 6> meridianProfile{
+        glm::vec2(0.0f, 0.0f),
+        glm::vec2(diagonalRadius,
+                  lowerHemisphereCenterY - diagonalRadius),
+        glm::vec2(radius, lowerHemisphereCenterY),
+        glm::vec2(radius, upperHemisphereCenterY),
+        glm::vec2(diagonalRadius,
+                  upperHemisphereCenterY + diagonalRadius),
+        glm::vec2(0.0f, height)};
+    const float angleStep = characterVisualizationTwoPi /
+        static_cast<float>(characterVisualizationRadialSegments);
+    for (std::size_t index = 0;
+         index < characterVisualizationRadialSegments; ++index) {
+        const float angle = angleStep * static_cast<float>(index);
+        const float axisX = std::cos(angle);
+        const float axisZ = std::sin(angle);
+        std::array<glm::vec3, 6> meridianPoints{};
+        for (std::size_t profileIndex = 0;
+             profileIndex < meridianProfile.size(); ++profileIndex) {
+            const glm::vec2& profilePoint = meridianProfile[profileIndex];
+            meridianPoints[profileIndex] = character.position + glm::vec3(
+                profilePoint.x * axisX, profilePoint.y,
+                profilePoint.x * axisZ);
+        }
+        for (std::size_t profileIndex = 1;
+             profileIndex < meridianPoints.size(); ++profileIndex) {
+            appendSegment(meridianPoints[profileIndex - 1],
+                          meridianPoints[profileIndex]);
+        }
+    }
+
+    editorHelperGeometry_.push_back(geometry);
+
+    ImDrawList* drawList = ImGui::GetForegroundDrawList(viewport);
+    if (drawList == nullptr) {
+        return;
+    }
+    const ImVec2 clipMin(sceneInteractionRect_.x, sceneInteractionRect_.y);
+    const ImVec2 clipMax(
+        sceneInteractionRect_.x + sceneInteractionRect_.width,
+        sceneInteractionRect_.y + sceneInteractionRect_.height);
+    const bool selected = selectedGameObject_ == selectionTarget;
+    const ImGuiCol accent = selected ? ImGuiCol_ButtonActive
+                                     : ImGuiCol_ButtonHovered;
+    const ImU32 color = ImGui::ColorConvertFloat4ToU32(
+        ImGui::GetStyle().Colors[accent]);
+    drawList->PushClipRect(clipMin, clipMax, true);
+    const float lineThickness = selected ? 2.5f : 2.0f;
+    for (std::size_t index = 0; index < geometry.segmentCount; ++index) {
+        const EditorHelperSegment& segment = geometry.segments[index];
+        drawList->AddLine(ImVec2(segment.start.x, segment.start.y),
+                          ImVec2(segment.end.x, segment.end.y), color,
+                          lineThickness);
     }
     drawList->PopClipRect();
 }
