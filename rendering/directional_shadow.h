@@ -10,7 +10,7 @@
 
 namespace directional_shadow {
 
-constexpr uint32_t mapResolution = 2048;
+constexpr uint32_t mapResolution = 4096;
 constexpr float depthBiasConstantFactor = 1.25f;
 constexpr float depthBiasSlopeFactor = 1.75f;
 constexpr float depthBiasClamp = 0.0f;

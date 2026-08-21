@@ -12,7 +12,7 @@ layout(location = 7) in vec4 directionalShadowClipPosition;
 layout(set = 0, binding = 1) uniform sampler2D baseColorSampler;
 layout(set = 0, binding = 2) uniform sampler2D normalSampler;
 layout(set = 0, binding = 3) uniform sampler2D metallicRoughnessSampler;
-layout(set = 2, binding = 1) uniform sampler2D directionalShadowMap;
+layout(set = 2, binding = 1) uniform sampler2DShadow directionalShadowMap;
 layout(set = 3, binding = 3) uniform sampler2D ambientOcclusionMap;
 
 struct LightData {
@@ -144,15 +144,19 @@ float calculateDirectionalShadowVisibility(vec3 normal, vec3 lightDirection) {
                              DIRECTIONAL_SHADOW_RECEIVER_BIAS * 0.25);
     vec2 texelSize = 1.0 / vec2(textureSize(directionalShadowMap, 0));
     float visibility = 0.0;
-    for (int x = -1; x <= 1; ++x) {
-        for (int y = -1; y <= 1; ++y) {
-            float storedDepth = texture(directionalShadowMap,
-                shadowCoordinates.xy + vec2(x, y) * texelSize).r;
-            visibility += shadowCoordinates.z - receiverBias > storedDepth
-                ? 0.0 : 1.0;
+    float totalWeight = 0.0;
+    for (int x = -2; x <= 2; ++x) {
+        for (int y = -2; y <= 2; ++y) {
+            float sampleVisibility = texture(directionalShadowMap,
+                vec3(shadowCoordinates.xy + vec2(x, y) * texelSize,
+                     shadowCoordinates.z - receiverBias));
+            float weight = (3.0 - abs(float(x))) *
+                           (3.0 - abs(float(y)));
+            visibility += sampleVisibility * weight;
+            totalWeight += weight;
         }
     }
-    return visibility / 9.0;
+    return visibility / totalWeight;
 }
 
 void main() {
