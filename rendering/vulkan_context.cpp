@@ -184,6 +184,25 @@ void clearGpuAliases(MeshInstance& instance) noexcept {
     instance.gpuAsset.reset();
 }
 
+std::uint32_t physicsDebugFloatBits(float value) noexcept {
+    const float normalized = value == 0.0f ? 0.0f : value;
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &normalized, sizeof(bits));
+    return bits;
+}
+
+std::string physicsDebugModelIdentity(const GameObject& object) {
+    std::string identity = object.authoredModelPath();
+    if (!identity.empty()) return identity;
+    for (const MeshInstance& instance : object.modelRenderable().meshInstances()) {
+        if (instance.mesh.modelPath != nullptr &&
+            instance.mesh.modelPath[0] != '\0') {
+            return instance.mesh.modelPath;
+        }
+    }
+    return {};
+}
+
 }  // namespace
 
 VulkanContext::~VulkanContext() noexcept {
@@ -4938,6 +4957,43 @@ Result VulkanContext::ensurePhysicsDebugBatch(const PhysicsDebugRenderer::BatchD
     return Result::success();
 }
 
+VulkanContext::PhysicsDebugShapeSignature
+VulkanContext::makePhysicsDebugShapeSignature(const GameObject& object) {
+    PhysicsDebugShapeSignature signature;
+    switch (object.physics.colliderType) {
+    case GameObject::PhysicsColliderType::Mesh:
+        signature.type = PhysicsDebugShapeSignature::Type::Mesh;
+        signature.modelIdentity = physicsDebugModelIdentity(object);
+        signature.scaleBits = {
+            physicsDebugFloatBits(object.scale.x),
+            physicsDebugFloatBits(object.scale.y),
+            physicsDebugFloatBits(object.scale.z)};
+        break;
+    case GameObject::PhysicsColliderType::ConvexHull:
+        signature.type = PhysicsDebugShapeSignature::Type::ConvexHull;
+        signature.modelIdentity = physicsDebugModelIdentity(object);
+        signature.scaleBits = {
+            physicsDebugFloatBits(object.scale.x),
+            physicsDebugFloatBits(object.scale.y),
+            physicsDebugFloatBits(object.scale.z)};
+        break;
+    case GameObject::PhysicsColliderType::Sphere:
+        signature.type = PhysicsDebugShapeSignature::Type::Sphere;
+        signature.radiusBits = physicsDebugFloatBits(object.physics.sphereRadius);
+        break;
+    }
+    return signature;
+}
+
+VulkanContext::PhysicsDebugShapeSignature
+VulkanContext::makeCharacterDebugShapeSignature(const Character& character) {
+    PhysicsDebugShapeSignature signature;
+    signature.type = PhysicsDebugShapeSignature::Type::CharacterCapsule;
+    signature.radiusBits = physicsDebugFloatBits(character.capsuleRadius);
+    signature.heightBits = physicsDebugFloatBits(character.capsuleHeight);
+    return signature;
+}
+
 void VulkanContext::prepareSelectedPhysicsDiagnostics(Scene* scene,
                                                       SceneRunState runState) {
     imguiLayer.setPhysicsDiagnostics(nullptr, std::nullopt, {});
@@ -4948,11 +5004,11 @@ void VulkanContext::prepareSelectedPhysicsDiagnostics(Scene* scene,
     const bool character = dynamic_cast<const Character*>(selected) != nullptr;
     if (!character && !selected->physics.enabled) return;
 
-    const physics::ShapeDefinitionSignature signature =
+    const PhysicsDebugShapeSignature signature =
         character
-            ? physics::makeCharacterShapeDefinitionSignature(
+            ? makeCharacterDebugShapeSignature(
                   static_cast<const Character&>(*selected))
-            : physics::makeGameObjectShapeDefinitionSignature(*selected);
+            : makePhysicsDebugShapeSignature(*selected);
     std::chrono::nanoseconds preparationDuration{};
     bool rebuilt = false;
     std::string error;
@@ -4968,7 +5024,7 @@ void VulkanContext::prepareSelectedPhysicsDiagnostics(Scene* scene,
 
 const physics::CookedShape* VulkanContext::ensurePhysicsDebugShape(
     Scene* scene, const GameObject& object, bool character,
-    const physics::ShapeDefinitionSignature& signature,
+    const PhysicsDebugShapeSignature& signature,
     std::chrono::nanoseconds& preparationDuration, bool& rebuilt,
     std::string& error) {
     error.clear();
@@ -5057,11 +5113,11 @@ Result VulkanContext::preparePhysicsDebugDraws(Scene* scene, SceneRunState runSt
             (!object.physics.enabled || !imguiLayer.renderColliderEnabled(object))) {
             continue;
         }
-        const physics::ShapeDefinitionSignature signature =
+        const PhysicsDebugShapeSignature signature =
             character
-                ? physics::makeCharacterShapeDefinitionSignature(
+                ? makeCharacterDebugShapeSignature(
                       static_cast<const Character&>(object))
-                : physics::makeGameObjectShapeDefinitionSignature(object);
+                : makePhysicsDebugShapeSignature(object);
         std::chrono::nanoseconds preparationDuration{};
         bool rebuilt = false;
         std::string error;

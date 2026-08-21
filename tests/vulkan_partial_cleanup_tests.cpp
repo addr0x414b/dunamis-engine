@@ -1,6 +1,7 @@
 #include "core/platform.h"
 #include "rendering/visual_server.h"
 #include "rendering/vulkan_context.h"
+#include "scene/character.h"
 #include "scene/scene.h"
 #include "scene/model_renderable.h"
 
@@ -86,6 +87,89 @@ public:
         return first == second;
     }
 
+    [[nodiscard]] static bool physicsDebugShapeSignatures() {
+        GameObject object;
+        object.physics.enabled = true;
+        object.physics.colliderType = GameObject::PhysicsColliderType::Mesh;
+        object.scale = glm::vec3(1.0f);
+        const auto meshSignature =
+            VulkanContext::makePhysicsDebugShapeSignature(object);
+        object.position = glm::vec3(100.0f);
+        object.rotation = glm::vec3(20.0f, 30.0f, 40.0f);
+        if (meshSignature !=
+            VulkanContext::makePhysicsDebugShapeSignature(object)) {
+            return false;
+        }
+        object.scale.x = 2.0f;
+        if (meshSignature ==
+            VulkanContext::makePhysicsDebugShapeSignature(object)) {
+            return false;
+        }
+        object.scale.x = 1.0f;
+        object.physics.colliderType = GameObject::PhysicsColliderType::ConvexHull;
+        if (meshSignature ==
+            VulkanContext::makePhysicsDebugShapeSignature(object)) {
+            return false;
+        }
+
+        const auto triangle = [](const char* modelPath) {
+            MeshInstance input;
+            input.mesh.vertices = {
+                {{0.0f, 0.0f, 0.0f}, {}, {}, {}, {}},
+                {{0.0f, 1.0f, 0.0f}, {}, {}, {}, {}},
+                {{0.0f, 0.0f, 1.0f}, {}, {}, {}, {}}};
+            input.mesh.indices = {0, 1, 2};
+            input.mesh.modelPath = modelPath;
+            return input;
+        };
+        GameObject modelA;
+        GameObject modelB;
+        modelA.physics.enabled = true;
+        modelB.physics.enabled = true;
+        if (!modelA.modelRenderable().addMeshInstance(triangle("model-a")) ||
+            !modelB.modelRenderable().addMeshInstance(triangle("model-b"))) {
+            return false;
+        }
+        if (VulkanContext::makePhysicsDebugShapeSignature(modelA) ==
+            VulkanContext::makePhysicsDebugShapeSignature(modelB)) {
+            return false;
+        }
+
+        object.physics.colliderType = GameObject::PhysicsColliderType::Sphere;
+        object.physics.sphereRadius = 25.0f;
+        const auto sphereSignature =
+            VulkanContext::makePhysicsDebugShapeSignature(object);
+        object.position.y += 5.0f;
+        if (sphereSignature !=
+            VulkanContext::makePhysicsDebugShapeSignature(object)) {
+            return false;
+        }
+        object.physics.sphereRadius = 30.0f;
+        if (sphereSignature ==
+            VulkanContext::makePhysicsDebugShapeSignature(object)) {
+            return false;
+        }
+
+        Character character;
+        const auto characterSignature =
+            VulkanContext::makeCharacterDebugShapeSignature(character);
+        character.position = glm::vec3(1.0f, 2.0f, 3.0f);
+        character.rotation = glm::vec3(10.0f, 20.0f, 30.0f);
+        if (characterSignature !=
+            VulkanContext::makeCharacterDebugShapeSignature(character)) {
+            return false;
+        }
+        character.capsuleHeight += 1.0f;
+        if (characterSignature ==
+            VulkanContext::makeCharacterDebugShapeSignature(character)) {
+            return false;
+        }
+        character.capsuleHeight -= 1.0f;
+        character.capsuleRadius += 1.0f;
+        return characterSignature !=
+               VulkanContext::makeCharacterDebugShapeSignature(character);
+    }
+
     [[nodiscard]] static bool physicsDebugPipelinesAreReset(
         const VulkanContext& context) {
         return context.physicsDebugPipeline == VK_NULL_HANDLE &&
@@ -169,6 +253,10 @@ int main(int argc, char** argv) {
     if (!VulkanContextTestAccess::physicsDebugShapeKeyIgnoresScene(
             &editingScene, &runtimeScene)) {
         std::cerr << "Physics debug shape key still depends on Scene identity\n";
+        return 1;
+    }
+    if (!VulkanContextTestAccess::physicsDebugShapeSignatures()) {
+        std::cerr << "Physics debug shape signature invalidation changed\n";
         return 1;
     }
 

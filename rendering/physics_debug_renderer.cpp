@@ -3,7 +3,7 @@
 #include <limits>
 
 #include "../physics/physics_units.h"
-#include "../physics/jolt_shape_builder.h"
+#include "../physics/collision_shapes.h"
 
 namespace {
 glm::vec3 toRender(const JPH::Float3& point) noexcept {

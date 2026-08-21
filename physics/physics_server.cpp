@@ -6,15 +6,9 @@
 #include <Jolt/Core/Factory.h>
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
-#include <Jolt/Geometry/Triangle.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
-#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
-#include <Jolt/Physics/Collision/Shape/MeshShape.h>
-#include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
-#include <Jolt/Physics/Collision/Shape/SphereShape.h>
-#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
@@ -44,8 +38,7 @@
 #include "../scene/loading_cache_key.h"
 #include "../scene/model_renderable.h"
 #include "../scene/scene.h"
-#include "jolt_shape_builder.h"
-#include "physics_mesh_builder.h"
+#include "collision_shapes.h"
 #include "physics_shape_cache.h"
 #include "physics_units.h"
 
@@ -138,24 +131,10 @@ std::string objectDescription(const GameObject& object) {
            object.persistentId + "')";
 }
 
-JPH::RVec3 toJoltPosition(const glm::vec3& positionDunamisUnits) {
-    const glm::vec3 positionMeters =
-        physics::dunamisToMeters(positionDunamisUnits);
-    return JPH::RVec3(positionMeters.x, positionMeters.y, positionMeters.z);
-}
-
-JPH::Quat toJoltRotation(const glm::vec3& rotation) {
-    const glm::quat quaternion = glm::quat_cast(
-        physics::makeDunamisRotationMatrix(rotation));
-    return JPH::Quat(quaternion.x, quaternion.y, quaternion.z, quaternion.w)
-        .Normalized();
-}
-
 bool fromJoltRotation(const JPH::Quat& quaternion, glm::vec3& rotation) {
     const glm::quat glmQuaternion(quaternion.GetW(), quaternion.GetX(),
                                   quaternion.GetY(), quaternion.GetZ());
-    return physics::extractDunamisRotation(glm::mat4_cast(glmQuaternion),
-                                           rotation);
+    return physics::extractDunamisRotation(glm::mat4_cast(glmQuaternion), rotation);
 }
 
 double milliseconds(std::chrono::steady_clock::duration duration) {
@@ -178,37 +157,36 @@ struct StaticShapeAcquisitionStats {
     std::size_t diskInvalid = 0;
 };
 
-Result makeCachedStaticMeshShape(const GameObject& object,
-                                 const JPH::ShapeRefC& shape,
-                                 physics::CookedShape& output) {
-    if (shape == nullptr || shape->GetType() != JPH::EShapeType::Mesh) {
-        return Result::failure("cached static shape is not a Jolt mesh");
-    }
+struct CachedStaticShape {
+    JPH::ShapeRefC shape;
+    physics::ShapeDiagnostics diagnostics;
+};
 
+physics::ShapeDiagnostics makeStaticMeshDiagnostics(
+    const GameObject& object, const JPH::Shape& shape) {
     physics::ShapeDiagnostics diagnostics;
     diagnostics.representation =
         physics::ShapeDiagnostics::Representation::TriangleMesh;
     for (const MeshInstance& instance :
          object.modelRenderable().meshInstances()) {
-        const Mesh& mesh = instance.mesh;
-        if (mesh.indices.size() % 3 != 0) {
-            return Result::failure("static collision mesh index count is not divisible by three");
-        }
-        for (const std::uint32_t index : mesh.indices) {
-            if (index >= mesh.vertices.size()) {
-                return Result::failure("static collision mesh contains an out-of-range index");
-            }
-        }
-        diagnostics.inputVertices += mesh.vertices.size();
-        diagnostics.inputTriangles += mesh.indices.size() / 3;
+        diagnostics.inputVertices += instance.mesh.vertices.size();
+        diagnostics.inputTriangles += instance.mesh.indices.size() / 3;
     }
-
-    const JPH::Shape::Stats stats = shape->GetStats();
+    const JPH::Shape::Stats stats = shape.GetStats();
     diagnostics.joltTriangles = stats.mNumTriangles;
     diagnostics.joltBytes = stats.mSizeBytes;
+    return diagnostics;
+}
+
+Result makeCachedStaticMeshShape(const CachedStaticShape& cached,
+                                 physics::CookedShape& output) {
+    if (cached.shape == nullptr ||
+        cached.shape->GetType() != JPH::EShapeType::Mesh) {
+        return Result::failure("cached static shape is not a Jolt mesh");
+    }
     output = {};
-    output.shape = shape;
-    output.diagnostics = diagnostics;
+    output.shape = cached.shape;
+    output.diagnostics = cached.diagnostics;
     return Result::success();
 }
 
@@ -282,7 +260,7 @@ struct PhysicsServer::Impl {
     std::unique_ptr<JPH::PhysicsSystem> physicsSystem;
     std::vector<RuntimeBody> runtimeBodies;
     std::vector<RuntimeCharacter> runtimeCharacters;
-    std::unordered_map<StaticShapeKey, JPH::ShapeRefC, StaticShapeKeyHash>
+    std::unordered_map<StaticShapeKey, CachedStaticShape, StaticShapeKeyHash>
         staticShapeCache;
     physics::PhysicsShapeCache persistentShapeCache;
     bool factoryCreated = false;
@@ -307,7 +285,7 @@ Result PhysicsServer::Impl::acquireStaticShape(
     if (cached != staticShapeCache.end()) {
         if (stats != nullptr) ++stats->ramHits;
         spdlog::info("Static Jolt shape cache RAM HIT: {}", object.name);
-        return makeCachedStaticMeshShape(object, cached->second, output);
+        return makeCachedStaticMeshShape(cached->second, output);
     }
 
     if (stats != nullptr) ++stats->ramMisses;
@@ -328,12 +306,18 @@ Result PhysicsServer::Impl::acquireStaticShape(
     }
     JPH::ShapeRefC shape;
     if (diskResult.status == physics::ShapeCacheLoadStatus::Hit) {
-        shape = diskResult.shape;
+        if (diskResult.shape == nullptr) {
+            return Result::failure("cached static shape is not a Jolt mesh");
+        }
+        const CachedStaticShape restored{
+            diskResult.shape,
+            makeStaticMeshDiagnostics(object, *diskResult.shape)};
         if (stats != nullptr) ++stats->diskHits;
         spdlog::info("Static Jolt shape cache DISK HIT: {} ({:.2f} ms restore)",
                      object.name, milliseconds(diskResult.restoreDuration));
-        staticShapeCache.emplace(key, shape);
-        return makeCachedStaticMeshShape(object, shape, output);
+        const auto [cached, inserted] = staticShapeCache.emplace(key, restored);
+        (void)inserted;
+        return makeCachedStaticMeshShape(cached->second, output);
     }
 
     if (diskResult.status == physics::ShapeCacheLoadStatus::Invalid) {
@@ -369,7 +353,8 @@ Result PhysicsServer::Impl::acquireStaticShape(
                      objectDescription(object), cacheWriteError);
     }
     if (stats != nullptr) stats->diskWrite += Clock::now() - writeStart;
-    staticShapeCache.emplace(key, shape);
+    staticShapeCache.emplace(key,
+                             CachedStaticShape{shape, cooked.diagnostics});
     output = std::move(cooked);
     return Result::success();
 }
@@ -531,8 +516,8 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                                            objectDescription(object));
                 }
                 JPH::BodyCreationSettings bodySettings(
-                    shape.GetPtr(), toJoltPosition(object.position),
-                    toJoltRotation(object.rotation), JPH::EMotionType::Static,
+                    shape.GetPtr(), physics::toJoltPosition(object.position),
+                    physics::toJoltRotation(object.rotation), JPH::EMotionType::Static,
                     layers::nonMoving);
                 const Clock::time_point creationStart = Clock::now();
                 bodyId = bodies.CreateAndAddBody(bodySettings,
@@ -557,8 +542,8 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                 }
                 shape = cooked.shape;
                 JPH::BodyCreationSettings bodySettings(
-                    shape.GetPtr(), toJoltPosition(object.position),
-                    toJoltRotation(object.rotation), JPH::EMotionType::Dynamic,
+                    shape.GetPtr(), physics::toJoltPosition(object.position),
+                    physics::toJoltRotation(object.rotation), JPH::EMotionType::Dynamic,
                     layers::moving);
                 const Clock::time_point creationStart = Clock::now();
                 bodyId = bodies.CreateAndAddBody(bodySettings,
@@ -604,7 +589,7 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
             characterSettings.mEnhancedInternalEdgeRemoval = true;
             JPH::Ref<JPH::CharacterVirtual> virtualCharacter =
                 new JPH::CharacterVirtual(&characterSettings,
-                                          toJoltPosition(character->position),
+                                          physics::toJoltPosition(character->position),
                                           JPH::Quat::sIdentity(),
                                           impl_->physicsSystem.get());
             impl_->runtimeCharacters.push_back(
@@ -651,8 +636,9 @@ void PhysicsServer::applyRuntimeTransformEdit(const RuntimeTransformEdit& edit) 
         if (body.object != edit.object) {
             continue;
         }
-        bodies.SetPositionAndRotation(body.id, toJoltPosition(edit.position),
-                                      toJoltRotation(edit.rotation),
+        bodies.SetPositionAndRotation(body.id,
+                                      physics::toJoltPosition(edit.position),
+                                      physics::toJoltRotation(edit.rotation),
                                       body.isDynamic ? JPH::EActivation::Activate
                                                      : JPH::EActivation::DontActivate);
         if (body.isDynamic) {

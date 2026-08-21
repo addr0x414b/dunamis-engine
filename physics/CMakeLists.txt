@@ -1,7 +1,6 @@
 add_library(Physics STATIC
         physics_server.cpp
-        jolt_shape_builder.cpp
-        physics_mesh_builder.cpp
+        collision_shapes.cpp
         physics_shape_cache.cpp)
 
 target_include_directories(Physics PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

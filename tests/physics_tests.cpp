@@ -14,6 +14,9 @@
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
 
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
+
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -27,8 +30,7 @@
 #include <utility>
 
 #include "../core/time.h"
-#include "../physics/physics_mesh_builder.h"
-#include "../physics/jolt_shape_builder.h"
+#include "../physics/collision_shapes.h"
 #include "../physics/physics_shape_cache.h"
 #include "../physics/physics_server.h"
 #include "../physics/physics_units.h"
@@ -41,6 +43,13 @@ class TimeTestAccess {
 public:
     static void initialize() { Time::initialize(); }
     static void update() { Time::update(); }
+};
+
+class GameObjectTestAccess {
+public:
+    static auto& mutableMeshInstances(ModelRenderable& renderable) {
+        return renderable.meshInstances_;
+    }
 };
 
 namespace {
@@ -200,72 +209,6 @@ void testCharacterShapeCenterOfMassTransform() {
     shutdownJoltForShapeTests();
 }
 
-void testShapeDefinitionSignatures() {
-    GameObject object;
-    object.physics.enabled = true;
-    object.physics.colliderType = GameObject::PhysicsColliderType::Mesh;
-    object.scale = glm::vec3(1.0f);
-    const physics::ShapeDefinitionSignature meshSignature =
-        physics::makeGameObjectShapeDefinitionSignature(object);
-    object.position = glm::vec3(100.0f);
-    object.rotation = glm::vec3(20.0f, 30.0f, 40.0f);
-    expect(meshSignature == physics::makeGameObjectShapeDefinitionSignature(object),
-           "position or rotation changed the mesh shape signature");
-    object.scale.x = 2.0f;
-    expect(meshSignature != physics::makeGameObjectShapeDefinitionSignature(object),
-           "mesh scale did not change the shape signature");
-    object.scale.x = 1.0f;
-    object.physics.colliderType = GameObject::PhysicsColliderType::ConvexHull;
-    expect(meshSignature != physics::makeGameObjectShapeDefinitionSignature(object),
-           "collider type did not change the shape signature");
-
-    MeshInstance modelAInput = triangleInstance(glm::vec3(0.0f));
-    MeshInstance modelBInput = triangleInstance(glm::vec3(0.0f));
-    modelAInput.mesh.modelPath = "model-a";
-    modelBInput.mesh.modelPath = "model-b";
-    GameObject modelA;
-    GameObject modelB;
-    modelA.physics.enabled = true;
-    modelB.physics.enabled = true;
-    expect(static_cast<bool>(modelA.modelRenderable().addMeshInstance(
-               std::move(modelAInput))) &&
-               static_cast<bool>(modelB.modelRenderable().addMeshInstance(
-                   std::move(modelBInput))),
-           "failed to add model identity signature inputs");
-    expect(physics::makeGameObjectShapeDefinitionSignature(modelA) !=
-               physics::makeGameObjectShapeDefinitionSignature(modelB),
-           "mesh model identity did not change the shape signature");
-
-    object.physics.colliderType = GameObject::PhysicsColliderType::Sphere;
-    object.physics.sphereRadius = 25.0f;
-    const physics::ShapeDefinitionSignature sphereSignature =
-        physics::makeGameObjectShapeDefinitionSignature(object);
-    object.position.y += 5.0f;
-    expect(sphereSignature == physics::makeGameObjectShapeDefinitionSignature(object),
-           "position changed the sphere shape signature");
-    object.physics.sphereRadius = 30.0f;
-    expect(sphereSignature != physics::makeGameObjectShapeDefinitionSignature(object),
-           "sphere radius did not change the shape signature");
-
-    Character character;
-    const physics::ShapeDefinitionSignature characterSignature =
-        physics::makeCharacterShapeDefinitionSignature(character);
-    character.position = glm::vec3(1.0f, 2.0f, 3.0f);
-    character.rotation = glm::vec3(10.0f, 20.0f, 30.0f);
-    expect(characterSignature ==
-               physics::makeCharacterShapeDefinitionSignature(character),
-           "position or rotation changed the character shape signature");
-    character.capsuleHeight += 1.0f;
-    expect(characterSignature !=
-               physics::makeCharacterShapeDefinitionSignature(character),
-           "character height did not change the shape signature");
-    character.capsuleHeight -= 1.0f;
-    character.capsuleRadius += 1.0f;
-    expect(characterSignature !=
-               physics::makeCharacterShapeDefinitionSignature(character),
-           "character radius did not change the shape signature");
-}
-
 void testPhysicsServerStaticShapeSharing() {
     TestScene runtimeScene;
     const std::string modelIdentity =
@@ -306,7 +249,13 @@ void testPhysicsServerStaticShapeSharing() {
     expect(first.shape && second.shape && first.shape.GetPtr() == second.shape.GetPtr(),
            "repeated static collision acquisition did not reuse the Jolt shape");
     expect(first.diagnostics.inputVertices == 3 &&
-               first.diagnostics.inputTriangles == 1,
+               first.diagnostics.inputTriangles == 1 &&
+               first.diagnostics.joltTriangles > 0 &&
+               first.diagnostics.joltBytes > 0 &&
+               second.diagnostics.inputVertices == 3 &&
+               second.diagnostics.inputTriangles == 1 &&
+               second.diagnostics.joltTriangles == first.diagnostics.joltTriangles &&
+               second.diagnostics.joltBytes == first.diagnostics.joltBytes,
            "shared static collision diagnostics were not populated");
 
     expect(static_cast<bool>(server.beginRuntimeSession(runtimeScene)),
@@ -318,6 +267,11 @@ void testPhysicsServerStaticShapeSharing() {
            "static collision acquisition failed after runtime teardown");
     expect(afterRuntime.shape && afterRuntime.shape.GetPtr() == first.shape.GetPtr(),
            "static collision RAM cache did not survive runtime teardown");
+    expect(afterRuntime.diagnostics.inputVertices == 3 &&
+               afterRuntime.diagnostics.inputTriangles == 1 &&
+               afterRuntime.diagnostics.joltTriangles == first.diagnostics.joltTriangles &&
+               afterRuntime.diagnostics.joltBytes == first.diagnostics.joltBytes,
+           "static collision diagnostics did not survive runtime teardown");
     server.shutdown();
 
     physics::PhysicsShapeCache cache;
@@ -426,44 +380,95 @@ void testPhysicsUnits() {
 }
 
 void testScaledLocalTriangleMesh() {
-    physics::ScaledLocalTriangleMesh output;
-    const glm::vec3 one(1.0f);
-    MeshInstance instance = triangleInstance(glm::vec3(1.0f, 2.0f, 3.0f));
-    expect(static_cast<bool>(physics::buildScaledLocalTriangleMesh(
-               {instance}, glm::vec3(2.0f, 3.0f, 4.0f), output)),
+    initializeJoltForShapeTests();
+    GameObject object;
+    object.physics.enabled = true;
+    object.physics.colliderType = GameObject::PhysicsColliderType::Mesh;
+    object.scale = glm::vec3(2.0f, 3.0f, 4.0f);
+    expect(static_cast<bool>(object.modelRenderable().addMeshInstance(
+               triangleInstance(glm::vec3(1.0f, 2.0f, 3.0f)))),
+           "failed to add scaled mesh input");
+
+    physics::CookedShape output;
+    expect(static_cast<bool>(physics::buildGameObjectShape(object, output)),
            "scaled local triangle conversion failed");
-    expect(output.vertices[0] == glm::vec3(0.02f, 0.06f, 0.12f),
-           "static mesh must apply scale and DU-to-meter conversion locally");
-    // Position and rotation are intentionally not inputs: the static body,
-    // rather than the mesh vertices, owns their world placement.
-    instance.mesh.indices = {0, 1, 3};
-    expect(!physics::buildScaledLocalTriangleMesh({instance}, one, output),
+    const JPH::AABox bounds = output.shape->GetLocalBounds();
+    expect(near(bounds.mMin.GetX(), 0.0f) && near(bounds.mMin.GetY(), 0.0f) &&
+               near(bounds.mMin.GetZ(), 0.0f) &&
+               near(bounds.mMax.GetX(), 0.02f) &&
+               near(bounds.mMax.GetY(), 0.06f) &&
+               near(bounds.mMax.GetZ(), 0.12f),
+           "static mesh did not preserve authored scale and DU-to-meter conversion");
+
+    GameObject invalidObject;
+    invalidObject.physics.enabled = true;
+    invalidObject.physics.colliderType = GameObject::PhysicsColliderType::Mesh;
+    expect(static_cast<bool>(invalidObject.modelRenderable().addMeshInstance(
+               triangleInstance(glm::vec3(0.0f)))),
+           "failed to add invalid mesh input");
+    GameObjectTestAccess::mutableMeshInstances(invalidObject.modelRenderable())
+        .front()
+        .mesh.indices = {0, 1, 3};
+    expect(!physics::buildGameObjectShape(invalidObject, output),
            "invalid mesh index was accepted");
-    instance = triangleInstance(glm::vec3(0.0f));
-    expect(!physics::buildScaledLocalTriangleMesh(
-               {instance}, glm::vec3(NAN, 0.0f, 0.0f), output),
+
+    object.scale = glm::vec3(NAN, 0.0f, 0.0f);
+    expect(!physics::buildGameObjectShape(object, output),
            "non-finite transform was accepted");
+    shutdownJoltForShapeTests();
 }
 
 void testConvexHullInputAndRotation() {
+    initializeJoltForShapeTests();
     MeshInstance instance;
     instance.mesh.vertices = {
         {{1.0f, 2.0f, 3.0f}, {}, {}, {}, {}},
         {{2.0f, 2.0f, 3.0f}, {}, {}, {}, {}},
         {{1.0f, 3.0f, 3.0f}, {}, {}, {}, {}},
         {{1.0f, 2.0f, 4.0f}, {}, {}, {}, {}}};
-    physics::LocalConvexHull hull;
-    expect(static_cast<bool>(physics::buildScaledLocalConvexHull(
-               {instance}, glm::vec3(2.0f, 3.0f, 4.0f), hull)),
+    MeshInstance nonFiniteInstance = instance;
+    GameObject object;
+    object.physics.enabled = true;
+    object.physics.colliderType = GameObject::PhysicsColliderType::ConvexHull;
+    object.scale = glm::vec3(2.0f, 3.0f, 4.0f);
+    expect(static_cast<bool>(object.modelRenderable().addMeshInstance(
+               std::move(instance))),
+           "failed to add convex hull input");
+    physics::CookedShape cooked;
+    expect(static_cast<bool>(physics::buildGameObjectShape(object, cooked)),
            "scaled convex hull conversion failed");
-    expect(hull.points.size() == 4 && hull.points[0] == glm::vec3(0.02f, 0.06f, 0.12f),
-           "convex hull points do not preserve scaled local meter coordinates");
-    expect(!physics::buildScaledLocalConvexHull({instance}, glm::vec3(0.0f), hull),
+    expect(cooked.shape->GetSubType() == JPH::EShapeSubType::ConvexHull,
+           "convex hull did not produce a Jolt convex hull shape");
+    const JPH::AABox bounds = cooked.shape->GetLocalBounds();
+    const JPH::Vec3 centerOfMass = cooked.shape->GetCenterOfMass();
+    expect(near(centerOfMass.GetX() + bounds.mMin.GetX(), 0.02f) &&
+               near(centerOfMass.GetY() + bounds.mMin.GetY(), 0.06f) &&
+               near(centerOfMass.GetZ() + bounds.mMin.GetZ(), 0.12f) &&
+               near(centerOfMass.GetX() + bounds.mMax.GetX(), 0.04f) &&
+               near(centerOfMass.GetY() + bounds.mMax.GetY(), 0.09f) &&
+               near(centerOfMass.GetZ() + bounds.mMax.GetZ(), 0.16f),
+           "convex hull points did not preserve scaled local meter coordinates");
+
+    object.scale = glm::vec3(0.0f);
+    expect(!physics::buildGameObjectShape(object, cooked),
            "near-zero convex scale was accepted");
-    expect(!physics::buildScaledLocalConvexHull({}, glm::vec3(1.0f), hull),
+    GameObject emptyObject;
+    emptyObject.physics.enabled = true;
+    emptyObject.physics.colliderType = GameObject::PhysicsColliderType::ConvexHull;
+    expect(!physics::buildGameObjectShape(emptyObject, cooked),
            "empty convex geometry was accepted");
-    instance.mesh.vertices[0].pos.x = std::numeric_limits<float>::quiet_NaN();
-    expect(!physics::buildScaledLocalConvexHull({instance}, glm::vec3(1.0f), hull),
+    object.scale = glm::vec3(1.0f);
+    GameObject nonFiniteObject;
+    nonFiniteObject.physics.enabled = true;
+    nonFiniteObject.physics.colliderType = GameObject::PhysicsColliderType::ConvexHull;
+    expect(static_cast<bool>(nonFiniteObject.modelRenderable().addMeshInstance(
+               std::move(nonFiniteInstance))),
+           "failed to add non-finite convex input");
+    GameObjectTestAccess::mutableMeshInstances(nonFiniteObject.modelRenderable())
+        .front()
+        .mesh.vertices[0]
+        .pos.x = std::numeric_limits<float>::quiet_NaN();
+    expect(!physics::buildGameObjectShape(nonFiniteObject, cooked),
            "non-finite convex vertex was accepted");
 
     const glm::vec3 rotations[] = {
@@ -471,12 +476,33 @@ void testConvexHullInputAndRotation() {
         {23.0f, -41.0f, 67.0f}, {-31.0f, 44.0f, -72.0f}, {10.0f, 89.0f, -15.0f}};
     for (const glm::vec3& rotation : rotations) {
         glm::vec3 extracted;
-        const glm::mat4 original = physics::makeDunamisRotationMatrix(rotation);
+        glm::mat4 original(1.0f);
+        original = glm::rotate(original, glm::radians(rotation.x),
+                               glm::vec3(1.0f, 0.0f, 0.0f));
+        original = glm::rotate(original, glm::radians(rotation.y),
+                               glm::vec3(0.0f, 1.0f, 0.0f));
+        original = glm::rotate(original, glm::radians(rotation.z),
+                               glm::vec3(0.0f, 0.0f, 1.0f));
         expect(physics::extractDunamisRotation(original, extracted),
                "Dunamis rotation extraction failed");
-        expect(matrixNear(physics::makeDunamisRotationMatrix(extracted), original),
+        glm::mat4 roundTrip(1.0f);
+        roundTrip = glm::rotate(roundTrip, glm::radians(extracted.x),
+                                glm::vec3(1.0f, 0.0f, 0.0f));
+        roundTrip = glm::rotate(roundTrip, glm::radians(extracted.y),
+                                glm::vec3(0.0f, 1.0f, 0.0f));
+        roundTrip = glm::rotate(roundTrip, glm::radians(extracted.z),
+                                glm::vec3(0.0f, 0.0f, 1.0f));
+        expect(matrixNear(roundTrip, original),
                "Dunamis rotation matrix round trip changed orientation");
+        const glm::quat expectedQuaternion = glm::quat_cast(original);
+        const JPH::Quat expectedJoltRotation(
+            expectedQuaternion.x, expectedQuaternion.y, expectedQuaternion.z,
+            expectedQuaternion.w);
+        expect(physics::toJoltRotation(rotation).IsClose(
+                   expectedJoltRotation.Normalized(), 2.0e-5f),
+               "Dunamis authored rotation convention changed");
     }
+    shutdownJoltForShapeTests();
 }
 
 JPH::ShapeRefC makeOffOriginHull() {
@@ -1004,7 +1030,6 @@ int main() {
     testConvexHullInputAndRotation();
     testShapeCenterOfMassTransform();
     testCharacterShapeCenterOfMassTransform();
-    testShapeDefinitionSignatures();
     testShapeDiagnostics();
     testCookedShapeCache();
     testPhysicsServerStaticShapeSharing();

@@ -28,7 +28,7 @@
 #include "directional_shadow.h"
 #include "ambient_occlusion.h"
 #include "physics_debug_renderer.h"
-#include "../physics/jolt_shape_builder.h"
+#include "../physics/collision_shapes.h"
 #include "utils/vulkan_utils.h"
 
 #ifdef NDEBUG
@@ -56,6 +56,7 @@ const int MAX_FRAMES_IN_FLIGHT = 2;
 
 class VisualServer;
 class PhysicsServer;
+class Character;
 class VulkanContextTestAccess;
 
 class VulkanContext {
@@ -361,15 +362,49 @@ private:
         }
     };
 
+    struct PhysicsDebugShapeSignature {
+        enum class Type : std::uint8_t {
+            Mesh,
+            ConvexHull,
+            Sphere,
+            CharacterCapsule,
+        };
+
+        Type type = Type::Mesh;
+        std::string modelIdentity;
+        std::array<std::uint32_t, 3> scaleBits{};
+        std::uint32_t radiusBits = 0;
+        std::uint32_t heightBits = 0;
+
+        [[nodiscard]] bool operator==(
+            const PhysicsDebugShapeSignature& other) const noexcept {
+            return type == other.type &&
+                   modelIdentity == other.modelIdentity &&
+                   scaleBits == other.scaleBits &&
+                   radiusBits == other.radiusBits &&
+                   heightBits == other.heightBits;
+        }
+
+        [[nodiscard]] bool operator!=(
+            const PhysicsDebugShapeSignature& other) const noexcept {
+            return !(*this == other);
+        }
+    };
+
+    [[nodiscard]] static PhysicsDebugShapeSignature
+    makePhysicsDebugShapeSignature(const GameObject& object);
+    [[nodiscard]] static PhysicsDebugShapeSignature
+    makeCharacterDebugShapeSignature(const Character& character);
+
     struct PhysicsDebugShapeCacheEntry {
-        physics::ShapeDefinitionSignature signature;
+        PhysicsDebugShapeSignature signature;
         std::optional<physics::CookedShape> cooked;
         std::string error;
     };
 
     [[nodiscard]] const physics::CookedShape* ensurePhysicsDebugShape(
         Scene* scene, const GameObject& object, bool character,
-        const physics::ShapeDefinitionSignature& signature,
+        const PhysicsDebugShapeSignature& signature,
         std::chrono::nanoseconds& preparationDuration, bool& rebuilt,
         std::string& error);
     void retirePhysicsDebugGpuBatches() noexcept;
