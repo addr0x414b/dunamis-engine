@@ -1380,13 +1380,6 @@ VkSurfaceFormatKHR VulkanContext::chooseSwapSurfaceFormat(
 VkPresentModeKHR VulkanContext::chooseSwapPresentMode(
     const std::vector<VkPresentModeKHR>& availablePresentModes) const
 {
-    for (const auto mode : availablePresentModes)
-    {
-        if (mode == VK_PRESENT_MODE_IMMEDIATE_KHR)
-        {
-            return mode;
-        }
-    }
     return VK_PRESENT_MODE_FIFO_KHR;
 }
 
