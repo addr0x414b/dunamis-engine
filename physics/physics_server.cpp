@@ -44,6 +44,7 @@
 #include "../scene/loading_cache_key.h"
 #include "../scene/model_renderable.h"
 #include "../scene/scene.h"
+#include "jolt_shape_builder.h"
 #include "physics_mesh_builder.h"
 #include "physics_shape_cache.h"
 #include "physics_units.h"
@@ -405,11 +406,9 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                             ++diskCacheMisses;
                             spdlog::info("Physics disk cache MISS: {}", object.name);
                         }
-                        physics::ScaledLocalTriangleMesh mesh;
                         const Clock::time_point conversionStart = Clock::now();
-                        Result meshResult = physics::buildScaledLocalTriangleMesh(
-                            object.modelRenderable().meshInstances(), object.scale,
-                            mesh);
+                        physics::CookedShape cooked;
+                        Result meshResult = physics::buildGameObjectShape(object, cooked);
                         staticMeshConversion += Clock::now() - conversionStart;
                         if (!meshResult) {
                             endRuntimeSession();
@@ -417,28 +416,15 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                                                    objectDescription(object) + ": " +
                                                    meshResult.error());
                         }
-                        JPH::TriangleList triangles;
-                        triangles.reserve(mesh.indices.size() / 3);
-                        for (std::size_t index = 0; index < mesh.indices.size(); index += 3) {
-                            const glm::vec3& a = mesh.vertices[mesh.indices[index]];
-                            const glm::vec3& b = mesh.vertices[mesh.indices[index + 1]];
-                            const glm::vec3& c = mesh.vertices[mesh.indices[index + 2]];
-                            triangles.emplace_back(JPH::Vec3(a.x, a.y, a.z),
-                                                   JPH::Vec3(b.x, b.y, b.z),
-                                                   JPH::Vec3(c.x, c.y, c.z));
-                        }
                         const Clock::time_point cookingStart = Clock::now();
-                        JPH::MeshShapeSettings shapeSettings(std::move(triangles));
-                        shapeSettings.SetEmbedded();
-                        JPH::ShapeSettings::ShapeResult shapeResult = shapeSettings.Create();
+                        JPH::ShapeRefC cookedShape = cooked.shape;
                         staticShapeCooking += Clock::now() - cookingStart;
-                        if (shapeResult.HasError()) {
+                        if (cookedShape == nullptr) {
                             endRuntimeSession();
                             return Result::failure("Failed to create mesh shape for " +
-                                                   objectDescription(object) + ": " +
-                                                   shapeResult.GetError().c_str());
+                                                   objectDescription(object));
                         }
-                        shape = shapeResult.Get();
+                        shape = std::move(cookedShape);
                         const Clock::time_point writeStart = Clock::now();
                         std::string cacheWriteError;
                         if (impl_->persistentShapeCache.save(
@@ -469,44 +455,16 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                 ++staticCount;
             } else {
                 JPH::ShapeRefC shape;
-                if (settings.colliderType == GameObject::PhysicsColliderType::Sphere) {
-                    if (!(settings.sphereRadius > 0.0f) ||
-                        !std::isfinite(settings.sphereRadius)) {
-                        endRuntimeSession();
-                        return Result::failure("Dynamic sphere radius must be finite and positive for " +
-                                               objectDescription(object));
-                    }
-                    shape = new JPH::SphereShape(
-                        physics::dunamisToMeters(settings.sphereRadius));
-                } else {
-                    physics::LocalConvexHull hull;
-                    Result hullResult = physics::buildScaledLocalConvexHull(
-                        object.modelRenderable().meshInstances(), object.scale, hull);
-                    if (!hullResult) {
-                        endRuntimeSession();
-                        return Result::failure("Failed to build dynamic convex hull for " +
-                                               objectDescription(object) + ": " + hullResult.error());
-                    }
-                    JPH::Array<JPH::Vec3> points;
-                    points.reserve(hull.points.size());
-                    for (const glm::vec3& point : hull.points) {
-                        points.emplace_back(point.x, point.y, point.z);
-                    }
-                    const Clock::time_point cookingStart = Clock::now();
-                    JPH::ConvexHullShapeSettings shapeSettings(points);
-                    JPH::ShapeSettings::ShapeResult shapeResult = shapeSettings.Create();
-                    convexCooking += Clock::now() - cookingStart;
-                    if (shapeResult.HasError()) {
-                        endRuntimeSession();
-                        return Result::failure("Failed to create dynamic convex hull for " +
-                                               objectDescription(object) + " (" +
-                                               std::to_string(hull.points.size()) + " input points): " +
-                                               shapeResult.GetError().c_str());
-                    }
-                    shape = shapeResult.Get();
-                    spdlog::info("{} convex hull collider: {} local scaled input points",
-                                 object.name, hull.points.size());
+                const Clock::time_point cookingStart = Clock::now();
+                physics::CookedShape cooked;
+                Result shapeBuild = physics::buildGameObjectShape(object, cooked);
+                convexCooking += Clock::now() - cookingStart;
+                if (!shapeBuild) {
+                    endRuntimeSession();
+                    return Result::failure("Failed to create dynamic collider for " +
+                                           objectDescription(object) + ": " + shapeBuild.error());
                 }
+                shape = cooked.shape;
                 JPH::BodyCreationSettings bodySettings(
                     shape.GetPtr(), toJoltPosition(object.position),
                     toJoltRotation(object.rotation), JPH::EMotionType::Dynamic,
@@ -539,27 +497,19 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                 return Result::failure("Character capsule dimensions must be finite, positive, and taller than its diameter");
             }
 
-            const float radiusMeters =
-                physics::dunamisToMeters(character->capsuleRadius);
-            const float halfCylinderHeightMeters = physics::dunamisToMeters(
-                0.5f * character->capsuleHeight - character->capsuleRadius);
-            JPH::RotatedTranslatedShapeSettings shapeSettings(
-                JPH::Vec3(0.0f, 0.5f * physics::dunamisToMeters(
-                    character->capsuleHeight), 0.0f),
-                JPH::Quat::sIdentity(),
-                new JPH::CapsuleShape(halfCylinderHeightMeters, radiusMeters));
-            JPH::ShapeSettings::ShapeResult shapeResult = shapeSettings.Create();
-            if (shapeResult.HasError()) {
+            physics::CookedShape cooked;
+            Result shapeBuild = physics::buildCharacterShape(*character, cooked);
+            if (!shapeBuild) {
                 endRuntimeSession();
                 return Result::failure("Failed to create character capsule for " +
                                        objectDescription(*character) + ": " +
-                                       shapeResult.GetError().c_str());
+                                       shapeBuild.error());
             }
 
             JPH::CharacterVirtualSettings characterSettings;
-            characterSettings.mShape = shapeResult.Get();
+            characterSettings.mShape = cooked.shape;
             characterSettings.mSupportingVolume = JPH::Plane(
-                JPH::Vec3::sAxisY(), -radiusMeters);
+                JPH::Vec3::sAxisY(), -physics::dunamisToMeters(character->capsuleRadius));
             characterSettings.mEnhancedInternalEdgeRemoval = true;
             JPH::Ref<JPH::CharacterVirtual> virtualCharacter =
                 new JPH::CharacterVirtual(&characterSettings,

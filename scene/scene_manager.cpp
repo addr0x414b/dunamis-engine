@@ -1,6 +1,7 @@
 #include "scene_manager.h"
 
 #include <exception>
+#include <algorithm>
 #include <fstream>
 #include <filesystem>
 #include <system_error>
@@ -152,7 +153,7 @@ Result SceneManager::saveEditingSceneTo(
 
     nlohmann::json document;
     Result result = SceneSerializer::serializeFull(
-        *editingScene_, typeRegistry_, editorCamera, document);
+        *editingScene_, typeRegistry_, editorCamera, editorRenderColliders_, document);
     if (!result) return Result::failure("Failed to serialize scene: " + result.error());
 
     const std::filesystem::path parent = path.parent_path();
@@ -244,6 +245,16 @@ SceneManager::preparedEditorCamera() const noexcept {
     return preparedLoadData_.editorCamera;
 }
 
+const std::vector<std::string>& SceneManager::preparedRenderColliders() const noexcept {
+    return preparedLoadData_.renderColliders;
+}
+
+void SceneManager::setEditorRenderColliders(std::vector<std::string> ids) {
+    std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+    editorRenderColliders_ = std::move(ids);
+}
+
 Result SceneManager::commitPreparedEditingSceneLoad() {
     if (!preparedEditingScene_) return Result::failure("No prepared editing scene exists");
     if (previousEditingScene_) return Result::failure("A previous editing scene is still retained");
@@ -254,6 +265,7 @@ Result SceneManager::commitPreparedEditingSceneLoad() {
     authoredBaseline_ = std::move(preparedLoadData_.authoredBaseline);
     authoredBaselineAvailable_ = true;
     persistenceWarnings_ = std::move(preparedLoadData_.warnings);
+    editorRenderColliders_ = std::move(preparedLoadData_.renderColliders);
     preparedLoadData_ = {};
     return Result::success();
 }
@@ -385,4 +397,5 @@ void SceneManager::shutdown() noexcept {
     preparedScenePath_.clear();
     preparedLoadData_ = {};
     persistenceWarnings_.clear();
+    editorRenderColliders_.clear();
 }

@@ -20,6 +20,7 @@ struct EditorCameraState {
 
 struct SceneLoadData {
     std::optional<EditorCameraState> editorCamera;
+    std::vector<std::string> renderColliders;
     nlohmann::json authoredBaseline;
     std::vector<std::string> warnings;
 };
@@ -34,6 +35,10 @@ public:
     [[nodiscard]] static Result serializeFull(
         const Scene& scene, const TypeRegistry& registry,
         const Camera& editorCamera, nlohmann::json& output);
+    [[nodiscard]] static Result serializeFull(
+        const Scene& scene, const TypeRegistry& registry,
+        const Camera& editorCamera, const std::vector<std::string>& renderColliders,
+        nlohmann::json& output);
     [[nodiscard]] static Result applyDocument(
         const nlohmann::json& document, Scene& candidate,
         const TypeRegistry& registry, SceneLoadData& loadData);

@@ -171,12 +171,23 @@ Result SceneSerializer::serializeFull(const Scene& scene,
                                       const TypeRegistry& registry,
                                       const Camera& editorCamera,
                                       nlohmann::json& output) {
+    return serializeFull(scene, registry, editorCamera, {}, output);
+}
+
+Result SceneSerializer::serializeFull(const Scene& scene,
+                                      const TypeRegistry& registry,
+                                      const Camera& editorCamera,
+                                      const std::vector<std::string>& renderColliders,
+                                      nlohmann::json& output) {
     Result result = serializeAuthored(scene, registry, output);
     if (!result) return result;
     nlohmann::json camera = nlohmann::json::object();
     result = encodeCamera(editorCamera, camera);
     if (!result) return Result::failure("Invalid editor camera: " + result.error());
-    output["editor"] = {{"camera", std::move(camera)}};
+    std::vector<std::string> ids = renderColliders;
+    std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+    output["editor"] = {{"camera", std::move(camera)}, {"renderColliders", ids}};
     return Result::success();
 }
 
@@ -293,6 +304,22 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
             result = decodeCamera(document.at("editor").at("camera"), state);
             if (result) loadData.editorCamera = state;
             else loadData.warnings.push_back("Ignoring invalid editor camera: " + result.error());
+        }
+        if (document.contains("editor") && document.at("editor").is_object() &&
+            document.at("editor").contains("renderColliders")) {
+            const auto& ids = document.at("editor").at("renderColliders");
+            if (!ids.is_array()) {
+                loadData.warnings.push_back("Ignoring editor.renderColliders: expected an array");
+            } else {
+                std::unordered_set<std::string> uniqueIds;
+                for (const auto& id : ids) {
+                    if (!id.is_string() || id.get<std::string>().empty()) {
+                        loadData.warnings.push_back("Ignoring invalid editor.renderColliders ID");
+                    } else if (uniqueIds.insert(id.get<std::string>()).second) {
+                        loadData.renderColliders.push_back(id.get<std::string>());
+                    }
+                }
+            }
         }
 
         result = serializeAuthored(candidate, registry, loadData.authoredBaseline);

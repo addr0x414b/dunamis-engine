@@ -24,6 +24,8 @@
 #include "imgui_layer.h"
 #include "directional_shadow.h"
 #include "ambient_occlusion.h"
+#include "physics_debug_renderer.h"
+#include "../physics/jolt_shape_builder.h"
 #include "utils/vulkan_utils.h"
 
 #ifdef NDEBUG
@@ -270,6 +272,7 @@ private:
     [[nodiscard]] Result rewriteAmbientOcclusionDescriptors();
 
     [[nodiscard]] Result createGraphicsPipeline();
+    [[nodiscard]] Result createPhysicsDebugPipeline();
     [[nodiscard]] Result createDirectionalShadowPipelines();
     [[nodiscard]] Result createSelectionOutlinePipeline();
     [[nodiscard]] Result createAmbientOcclusionPipelines();
@@ -320,6 +323,8 @@ private:
     [[nodiscard]] Result createRenderFinishedSemaphores();
     void destroyRenderFinishedSemaphores() noexcept;
     [[nodiscard]] Result initializeImGui();
+    [[nodiscard]] Result preparePhysicsDebugDraws(Scene* scene, SceneRunState runState);
+    [[nodiscard]] Result ensurePhysicsDebugBatch(const PhysicsDebugRenderer::BatchData& batch);
 
     SDL_Window* window = nullptr;
     Scene* currentScene = nullptr;
@@ -424,6 +429,8 @@ private:
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkPipeline graphicsPipeline = VK_NULL_HANDLE;
     VkPipeline doubleSidedGraphicsPipeline = VK_NULL_HANDLE;
+    VkPipelineLayout physicsDebugPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline physicsDebugPipeline = VK_NULL_HANDLE;
     VkRenderPass directionalShadowRenderPass = VK_NULL_HANDLE;
     VkPipelineLayout directionalShadowPipelineLayout = VK_NULL_HANDLE;
     VkPipeline directionalShadowPipeline = VK_NULL_HANDLE;
@@ -464,6 +471,10 @@ private:
     std::vector<OwnedSampler> ownedSceneSamplers;
     std::vector<OwnedDescriptorSets> ownedSceneDescriptorSets;
     std::vector<RenderData*> ownedRenderData;
+    struct PhysicsDebugGpuBatch { VkBuffer vertices = VK_NULL_HANDLE; VkDeviceMemory vertexMemory = VK_NULL_HANDLE; VkBuffer indices = VK_NULL_HANDLE; VkDeviceMemory indexMemory = VK_NULL_HANDLE; };
+    std::unordered_map<const PhysicsDebugRenderer::BatchData*, PhysicsDebugGpuBatch> physicsDebugGpuBatches_;
+    std::unordered_map<std::string, physics::CookedShape> physicsDebugShapes_;
+    std::unique_ptr<PhysicsDebugRenderer> physicsDebugRenderer_;
     std::unordered_map<const Scene*, SceneResourceOwnership>
         sceneResourceOwnership_;
     std::unordered_map<model_loading::ModelAssetCacheKey,

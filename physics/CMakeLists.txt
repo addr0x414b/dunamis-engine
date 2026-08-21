@@ -1,5 +1,6 @@
 add_library(Physics STATIC
         physics_server.cpp
+        jolt_shape_builder.cpp
         physics_mesh_builder.cpp
         physics_shape_cache.cpp)
 

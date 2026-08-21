@@ -3,6 +3,7 @@
 #include "editor_picking.h"
 #include "renderer_configuration.h"
 #include "../scene/model_renderable.h"
+#include "../scene/character.h"
 
 #include <cmath>
 #include <cstdio>
@@ -676,6 +677,10 @@ Result VulkanContext::init(SDL_Window* w, Scene* scene) {
     }
     window = w;
     currentScene = scene;
+    // DebugRenderer touches Jolt globals; VisualServer is constructed before
+    // PhysicsServer initialization, so create it only once initialization is
+    // actively requested after the physics backend is ready.
+    physicsDebugRenderer_ = std::make_unique<PhysicsDebugRenderer>();
 
     const auto initializeStep = [this](Result result,
                                        const char* description) -> Result {
@@ -728,6 +733,9 @@ Result VulkanContext::init(SDL_Window* w, Scene* scene) {
         if (!result) return result;
         result = initializeStep(createGraphicsPipeline(),
                                 "Graphics-pipeline creation");
+        if (!result) return result;
+        result = initializeStep(createPhysicsDebugPipeline(),
+                                "Physics-debug pipeline creation");
         if (!result) return result;
         result = initializeStep(createDirectionalShadowPipelines(),
                                 "Directional-shadow pipeline creation");
@@ -1949,6 +1957,25 @@ Result VulkanContext::createLightsUBO() {
     if (result != VK_SUCCESS) {
         lightsDescriptorSets.fill(VK_NULL_HANDLE);
         destroyLightsUBOs();
+
+        for (const auto& [batch, gpu] : physicsDebugGpuBatches_) {
+            (void)batch;
+            if (gpu.vertices != VK_NULL_HANDLE) vkDestroyBuffer(device, gpu.vertices, nullptr);
+            if (gpu.vertexMemory != VK_NULL_HANDLE) vkFreeMemory(device, gpu.vertexMemory, nullptr);
+            if (gpu.indices != VK_NULL_HANDLE) vkDestroyBuffer(device, gpu.indices, nullptr);
+            if (gpu.indexMemory != VK_NULL_HANDLE) vkFreeMemory(device, gpu.indexMemory, nullptr);
+        }
+        physicsDebugGpuBatches_.clear();
+        physicsDebugShapes_.clear();
+
+        if (physicsDebugPipeline != VK_NULL_HANDLE) {
+            vkDestroyPipeline(device, physicsDebugPipeline, nullptr);
+            physicsDebugPipeline = VK_NULL_HANDLE;
+        }
+        if (physicsDebugPipelineLayout != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(device, physicsDebugPipelineLayout, nullptr);
+            physicsDebugPipelineLayout = VK_NULL_HANDLE;
+        }
         return vkFailure("vkAllocateDescriptorSets(lights)", result);
     }
 
@@ -2622,6 +2649,42 @@ Result VulkanContext::createGraphicsPipeline() {
     }
 
     spdlog::info("Successfully created graphics pipelines");
+    return Result::success();
+}
+
+Result VulkanContext::createPhysicsDebugPipeline() {
+    std::vector<char> vertexCode, fragmentCode;
+    Result result = readFile("rendering/shaders/physics_debug.vert.spv", vertexCode);
+    if (!result) return result;
+    result = readFile("rendering/shaders/physics_debug.frag.spv", fragmentCode);
+    if (!result) return result;
+    ScopedShaderModule vertex(device), fragment(device);
+    result = createShaderModule(vertexCode, vertex.module); if (!result) return result;
+    result = createShaderModule(fragmentCode, fragment.module); if (!result) return result;
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    for (auto& stage : stages) stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT; stages[0].module = vertex.module; stages[0].pName = "main";
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; stages[1].module = fragment.module; stages[1].pName = "main";
+    VkVertexInputBindingDescription binding{0, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX};
+    VkVertexInputAttributeDescription attribute{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
+    VkPipelineVertexInputStateCreateInfo input{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    input.vertexBindingDescriptionCount = 1; input.pVertexBindingDescriptions = &binding;
+    input.vertexAttributeDescriptionCount = 1; input.pVertexAttributeDescriptions = &attribute;
+    VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO}; assembly.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    VkPipelineViewportStateCreateInfo viewport{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO}; viewport.viewportCount = 1; viewport.scissorCount = 1;
+    VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO}; raster.polygonMode = VK_POLYGON_MODE_FILL; raster.cullMode = VK_CULL_MODE_NONE; raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; raster.lineWidth = 1.0f;
+    VkPipelineMultisampleStateCreateInfo samples{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO}; samples.rasterizationSamples = msaaSamples;
+    VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO}; depth.depthTestEnable = VK_TRUE; depth.depthWriteEnable = VK_FALSE; depth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    VkPipelineColorBlendAttachmentState attachment{}; attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO}; blend.attachmentCount = 1; blend.pAttachments = &attachment;
+    VkDynamicState dynamics[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR}; VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO}; dynamic.dynamicStateCount = 2; dynamic.pDynamicStates = dynamics;
+    VkPushConstantRange push{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4)};
+    VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO}; layout.setLayoutCount = 1; layout.pSetLayouts = &descriptorSetLayout; layout.pushConstantRangeCount = 1; layout.pPushConstantRanges = &push;
+    VkResult vkResult = vkCreatePipelineLayout(device, &layout, nullptr, &physicsDebugPipelineLayout);
+    if (vkResult != VK_SUCCESS) return vkFailure("vkCreatePipelineLayout(physics debug)", vkResult);
+    VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO}; info.stageCount = 2; info.pStages = stages; info.pVertexInputState = &input; info.pInputAssemblyState = &assembly; info.pViewportState = &viewport; info.pRasterizationState = &raster; info.pMultisampleState = &samples; info.pDepthStencilState = &depth; info.pColorBlendState = &blend; info.pDynamicState = &dynamic; info.layout = physicsDebugPipelineLayout; info.renderPass = renderPass;
+    vkResult = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &physicsDebugPipeline);
+    if (vkResult != VK_SUCCESS) return vkFailure("vkCreateGraphicsPipelines(physics debug)", vkResult);
     return Result::success();
 }
 
@@ -4750,6 +4813,9 @@ Result VulkanContext::drawFrame(Scene* scene, const Camera& renderCamera,
     imguiLayer.drawEditor(scene, view, projection, runState);
     imguiLayer.finishFrame();
 
+    Result physicsDebugResult = preparePhysicsDebugDraws(scene, runState);
+    if (!physicsDebugResult) return physicsDebugResult;
+
     for (const auto& obj : scene->gameObjects()) {
         updateUniformBuffer(currentFrame, obj, view, projection,
                             renderCamera.position);
@@ -4828,6 +4894,48 @@ Result VulkanContext::drawFrame(Scene* scene, const Camera& renderCamera,
     }
 
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+    return Result::success();
+}
+
+Result VulkanContext::ensurePhysicsDebugBatch(const PhysicsDebugRenderer::BatchData& batch) {
+    if (physicsDebugGpuBatches_.count(&batch) != 0) return Result::success();
+    PhysicsDebugGpuBatch gpu;
+    Result result = createBuffer(batch.vertices.size() * sizeof(glm::vec3), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, gpu.vertices, gpu.vertexMemory);
+    if (!result) return result;
+    result = createBuffer(batch.lineIndices.size() * sizeof(std::uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, gpu.indices, gpu.indexMemory);
+    if (!result) { vkDestroyBuffer(device, gpu.vertices, nullptr); vkFreeMemory(device, gpu.vertexMemory, nullptr); return result; }
+    void* mapped = nullptr;
+    if (vkMapMemory(device, gpu.vertexMemory, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS) return Result::failure("Failed to map physics debug vertex buffer");
+    std::memcpy(mapped, batch.vertices.data(), batch.vertices.size() * sizeof(glm::vec3)); vkUnmapMemory(device, gpu.vertexMemory);
+    if (vkMapMemory(device, gpu.indexMemory, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS) return Result::failure("Failed to map physics debug index buffer");
+    std::memcpy(mapped, batch.lineIndices.data(), batch.lineIndices.size() * sizeof(std::uint32_t)); vkUnmapMemory(device, gpu.indexMemory);
+    physicsDebugGpuBatches_.emplace(&batch, gpu);
+    return Result::success();
+}
+
+Result VulkanContext::preparePhysicsDebugDraws(Scene* scene, SceneRunState runState) {
+    if (!physicsDebugRenderer_) return Result::success();
+    physicsDebugRenderer_->beginFrame();
+    if (!editorToolsEnabled(runState)) return Result::success();
+    for (const auto& owner : scene->gameObjects()) {
+        if (!owner) continue;
+        const GameObject& object = *owner;
+        const bool character = dynamic_cast<const Character*>(&object) != nullptr;
+        if (!character && !imguiLayer.renderColliderEnabled(object)) continue;
+        const std::string key = character ? "character:" + object.persistentId : object.persistentId;
+        auto iterator = physicsDebugShapes_.find(key);
+        if (iterator == physicsDebugShapes_.end()) {
+            physics::CookedShape cooked;
+            Result result = character ? physics::buildCharacterShape(static_cast<const Character&>(object), cooked)
+                                      : physics::buildGameObjectShape(object, cooked);
+            if (!result) { spdlog::warn("Unable to prepare collider debug shape for '{}': {}", object.name, result.error()); continue; }
+            iterator = physicsDebugShapes_.emplace(key, std::move(cooked)).first;
+        }
+        iterator->second.shape->Draw(physicsDebugRenderer_.get(), physics::centerOfMassTransform(object.position, object.rotation),
+                                     JPH::Vec3::sReplicate(1.0f), JPH::Color(0, 140, 255, 255), false, true);
+    }
     return Result::success();
 }
 
@@ -5135,6 +5243,29 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
             vkCmdDrawIndexed(commandBuffer,
                              static_cast<uint32_t>(instance.mesh.indices.size()),
                              1, 0, 0, 0);
+        }
+    }
+
+    if (physicsDebugPipeline != VK_NULL_HANDLE && !scene->gameObjects().empty()) {
+        const GameObject* cameraObject = nullptr;
+        for (const auto& object : scene->gameObjects()) {
+            if (object && !object->modelRenderable().meshInstances_.empty()) { cameraObject = object.get(); break; }
+        }
+        if (cameraObject != nullptr) {
+            const VkDescriptorSet cameraSet = cameraObject->modelRenderable().meshInstances_.front().renderData.descriptorSets[currentFrame];
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, physicsDebugPipeline);
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, physicsDebugPipelineLayout, 0, 1, &cameraSet, 0, nullptr);
+            for (const PhysicsDebugRenderer::DrawCommand& command : physicsDebugRenderer_->drawCommands()) {
+                if (command.batch == nullptr) continue;
+                Result result = ensurePhysicsDebugBatch(*command.batch);
+                if (!result) return result;
+                const PhysicsDebugGpuBatch& gpu = physicsDebugGpuBatches_.at(command.batch);
+                VkDeviceSize offset = 0;
+                vkCmdBindVertexBuffers(commandBuffer, 0, 1, &gpu.vertices, &offset);
+                vkCmdBindIndexBuffer(commandBuffer, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
+                vkCmdPushConstants(commandBuffer, physicsDebugPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &command.model);
+                vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(command.batch->lineIndices.size()), 1, 0, 0, 0);
+            }
         }
     }
 
@@ -5715,6 +5846,7 @@ bool VulkanContext::cleanup() noexcept {
     }
 
     debugMessenger = VK_NULL_HANDLE;
+    physicsDebugRenderer_.reset();
     surface = VK_NULL_HANDLE;
     descriptorPool = VK_NULL_HANDLE;
     lightsDescriptorSets.fill(VK_NULL_HANDLE);
@@ -5735,6 +5867,8 @@ bool VulkanContext::cleanup() noexcept {
     ambientOcclusionDescriptorSetLayout = VK_NULL_HANDLE;
     graphicsPipeline = VK_NULL_HANDLE;
     doubleSidedGraphicsPipeline = VK_NULL_HANDLE;
+    physicsDebugPipeline = VK_NULL_HANDLE;
+    physicsDebugPipelineLayout = VK_NULL_HANDLE;
     directionalShadowPipeline = VK_NULL_HANDLE;
     directionalShadowDoubleSidedPipeline = VK_NULL_HANDLE;
     selectionOutlinePipeline = VK_NULL_HANDLE;

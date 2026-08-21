@@ -15,16 +15,16 @@ add_compile_definitions(
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/dependencies.cmake)
 
 add_subdirectory(core)
-add_subdirectory(rendering)
 add_subdirectory(scene)
 add_subdirectory(physics)
+add_subdirectory(rendering)
 add_subdirectory(game)
 add_subdirectory(third_party)
 add_subdirectory(input)
 
 add_executable(DunamisEngine main.cpp)
 
-target_link_libraries(DunamisEngine PRIVATE Dunamis VulkanUtils assimp spdlog)
+target_link_libraries(DunamisEngine PRIVATE Dunamis Physics Jolt VulkanUtils assimp spdlog)
 
 set(SHADER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/rendering/shaders")
 set(SHADER_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/rendering/shaders")

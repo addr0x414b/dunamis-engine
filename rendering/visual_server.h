@@ -33,6 +33,8 @@ public:
     void requestLoadConfirmation();
     void requestSaveAsOverwriteConfirmation(const std::string& path);
     void requestQuitConfirmation();
+    void setRenderColliderIds(const std::vector<std::string>& ids);
+    [[nodiscard]] std::vector<std::string> renderColliderIds() const;
     [[nodiscard]] Result loadSceneResources(Scene* scene);
     [[nodiscard]] Result unloadSceneResources(Scene* scene);
     [[nodiscard]] Result switchScene(Scene* scene);

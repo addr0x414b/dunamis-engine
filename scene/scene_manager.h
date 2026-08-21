@@ -70,6 +70,8 @@ public:
     [[nodiscard]] Scene* preparedEditingScene() noexcept;
     [[nodiscard]] const std::optional<EditorCameraState>&
     preparedEditorCamera() const noexcept;
+    [[nodiscard]] const std::vector<std::string>& preparedRenderColliders() const noexcept;
+    void setEditorRenderColliders(std::vector<std::string> ids);
     [[nodiscard]] Result commitPreparedEditingSceneLoad();
     void cancelPreparedEditingSceneLoad() noexcept;
     [[nodiscard]] Scene* previousEditingScene() noexcept;
@@ -117,6 +119,7 @@ private:
     std::filesystem::path preparedScenePath_;
     SceneLoadData preparedLoadData_;
     std::vector<std::string> persistenceWarnings_;
+    std::vector<std::string> editorRenderColliders_;
 };
 
 #endif

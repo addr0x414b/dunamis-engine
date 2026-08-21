@@ -65,6 +65,7 @@ Result Dunamis::initialize() {
         std::error_code sceneFileQueryError;
         const bool sceneFileExists = std::filesystem::exists(
             startupScenePath, sceneFileQueryError);
+        std::vector<std::string> restoredColliderIds;
         if (sceneFileQueryError) {
             (void)shutdown();
             return Result::failure(
@@ -80,6 +81,7 @@ Result Dunamis::initialize() {
                                        result.error());
             }
             const auto restoredCamera = sceneManager_.preparedEditorCamera();
+            restoredColliderIds = sceneManager_.preparedRenderColliders();
             result = sceneManager_.commitPreparedEditingSceneLoad();
             if (!result) {
                 (void)shutdown();
@@ -111,6 +113,7 @@ Result Dunamis::initialize() {
             return Result::failure("Visual Server initialization failed: " +
                                    result.error());
         }
+        visualServer.setRenderColliderIds(restoredColliderIds);
         runState = SceneRunState::Editing;
         visualServer.setCurrentScenePath(
             sceneManager_.currentScenePath().string());
@@ -266,6 +269,10 @@ Result Dunamis::run() {
 
             const EditorCommand command =
                 visualServer.consumeEditorCommand();
+            const auto captureColliderVisibility = [&] {
+                sceneManager_.setEditorRenderColliders(
+                    visualServer.renderColliderIds());
+            };
             if (command == EditorCommand::Play) {
                 result = beginRuntimeSession(SceneRunState::Playing);
             } else if (command == EditorCommand::Simulate) {
@@ -273,6 +280,7 @@ Result Dunamis::run() {
             } else if (command == EditorCommand::Stop) {
                 result = stopRuntimeSession();
             } else if (command == EditorCommand::SaveScene) {
+                captureColliderVisibility();
                 result = sceneManager_.saveEditingScene(
                     editorCameraController.camera());
                 reportPersistenceResult(result, "Scene saved");
@@ -325,6 +333,7 @@ Result Dunamis::run() {
                                 pendingSaveAsPath_.string());
                         }
                     } else {
+                        captureColliderVisibility();
                         result = sceneManager_.saveEditingSceneAs(
                             pendingSaveAsPath_,
                             editorCameraController.camera());
@@ -350,6 +359,7 @@ Result Dunamis::run() {
                         Result::failure("No Save As destination is pending"),
                         {});
                 } else {
+                    captureColliderVisibility();
                     result = sceneManager_.saveEditingSceneAs(
                         pendingSaveAsPath_, editorCameraController.camera());
                     if (result) {
@@ -377,6 +387,7 @@ Result Dunamis::run() {
                     result = Result::success();
                 }
             } else if (command == EditorCommand::SaveAndLoad) {
+                captureColliderVisibility();
                 result = sceneManager_.saveEditingScene(
                     editorCameraController.camera());
                 if (result) result = loadEditingScene(pendingLoadPath_);
@@ -389,6 +400,7 @@ Result Dunamis::run() {
                 if (result) pendingLoadPath_.clear();
                 result = Result::success();
             } else if (command == EditorCommand::SaveAndQuit) {
+                captureColliderVisibility();
                 result = sceneManager_.saveEditingScene(
                     editorCameraController.camera());
                 if (result) running = false;
@@ -431,6 +443,7 @@ Result Dunamis::loadEditingScene(const std::filesystem::path& path) {
     if (!result) return result;
     Scene* candidate = sceneManager_.preparedEditingScene();
     const auto restoredCamera = sceneManager_.preparedEditorCamera();
+    const auto restoredColliderIds = sceneManager_.preparedRenderColliders();
     Scene* oldScene = sceneManager_.editingScene();
 
     result = visualServer.loadSceneResources(candidate);
@@ -466,6 +479,7 @@ Result Dunamis::loadEditingScene(const std::filesystem::path& path) {
         if (!result) return Result::failure("Loaded scene committed but editor camera restore failed: " + result.error());
     }
     sceneManager_.finishEditingSceneLoad();
+    visualServer.setRenderColliderIds(restoredColliderIds);
     visualServer.setCurrentScenePath(sceneManager_.currentScenePath().string());
     for (const std::string& warning : sceneManager_.persistenceWarnings()) {
         spdlog::warn("{}", warning);

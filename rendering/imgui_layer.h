@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <unordered_set>
 
 #include <SDL3/SDL.h>
 #include <glm/vec2.hpp>
@@ -62,6 +63,9 @@ public:
     void requestLoadConfirmation();
     void requestSaveAsOverwriteConfirmation(const std::string& path);
     void requestQuitConfirmation();
+    void setRenderColliderIds(const std::vector<std::string>& ids);
+    [[nodiscard]] std::vector<std::string> renderColliderIds() const;
+    [[nodiscard]] bool renderColliderEnabled(const GameObject& object) const noexcept;
 
     [[nodiscard]] Result onSwapchainRecreated(
         VkRenderPass renderPass, VkSampleCountFlagBits msaaSamples,
@@ -176,6 +180,7 @@ private:
     std::shared_ptr<NativeFileDialogState> nativeFileDialogState_;
     bool sceneInteractionAreaHovered_ = false;
     SceneInteractionRect sceneInteractionRect_;
+    std::unordered_set<std::string> renderColliderIds_;
     std::vector<EditorHelperGeometry> editorHelperGeometry_;
     std::string currentScenePath_;
     std::string requestedScenePath_;

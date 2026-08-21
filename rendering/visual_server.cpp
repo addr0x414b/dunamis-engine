@@ -347,6 +347,14 @@ void VisualServer::requestQuitConfirmation() {
     vulkanContext.requestQuitConfirmation();
 }
 
+void VisualServer::setRenderColliderIds(const std::vector<std::string>& ids) {
+    vulkanContext.imguiLayer.setRenderColliderIds(ids);
+}
+
+std::vector<std::string> VisualServer::renderColliderIds() const {
+    return vulkanContext.imguiLayer.renderColliderIds();
+}
+
 bool VisualServer::shutdown() noexcept {
     if (!initialized && !currentScene) {
         return vulkanContext.cleanup();

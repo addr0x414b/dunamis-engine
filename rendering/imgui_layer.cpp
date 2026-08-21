@@ -1050,6 +1050,19 @@ void ImGuiLayer::requestSaveAsOverwriteConfirmation(const std::string& path) {
 }
 void ImGuiLayer::requestQuitConfirmation() { openQuitConfirmationPopup_ = true; }
 
+void ImGuiLayer::setRenderColliderIds(const std::vector<std::string>& ids) {
+    renderColliderIds_.clear();
+    for (const std::string& id : ids) if (!id.empty()) renderColliderIds_.insert(id);
+}
+
+std::vector<std::string> ImGuiLayer::renderColliderIds() const {
+    return {renderColliderIds_.begin(), renderColliderIds_.end()};
+}
+
+bool ImGuiLayer::renderColliderEnabled(const GameObject& object) const noexcept {
+    return renderColliderIds_.count(object.persistentId) != 0;
+}
+
 const GameObject* ImGuiLayer::selectedGameObjectForScene(
     const Scene* scene) const noexcept {
     if (scene == nullptr || scene != selectionScene_ ||
@@ -1824,29 +1837,8 @@ void ImGuiLayer::drawCharacterVisualization(
 
     editorHelperGeometry_.push_back(geometry);
 
-    ImDrawList* drawList = ImGui::GetForegroundDrawList(viewport);
-    if (drawList == nullptr) {
-        return;
-    }
-    const ImVec2 clipMin(sceneInteractionRect_.x, sceneInteractionRect_.y);
-    const ImVec2 clipMax(
-        sceneInteractionRect_.x + sceneInteractionRect_.width,
-        sceneInteractionRect_.y + sceneInteractionRect_.height);
-    const bool selected = selectedGameObject_ == selectionTarget;
-    const ImGuiCol accent = selected ? ImGuiCol_ButtonActive
-                                     : ImGuiCol_ButtonHovered;
-    //const ImU32 color = ImGui::ColorConvertFloat4ToU32(
-    //    ImGui::GetStyle().Colors[accent]);
-    const ImU32 color = IM_COL32(0, 140, 255, 255);
-    drawList->PushClipRect(clipMin, clipMax, true);
-    const float lineThickness = selected ? 1.25f : 1.0f;
-    for (std::size_t index = 0; index < geometry.segmentCount; ++index) {
-        const EditorHelperSegment& segment = geometry.segments[index];
-        drawList->AddLine(ImVec2(segment.start.x, segment.start.y),
-                          ImVec2(segment.end.x, segment.end.y), color,
-                          lineThickness);
-    }
-    drawList->PopClipRect();
+    // The projected segments above remain only as editor picking metadata.
+    // Character drawing itself is performed by the Jolt/Vulkan debug pass.
 }
 
 void ImGuiLayer::processWorldSelection(Scene* scene, const glm::mat4& view,
@@ -2064,6 +2056,24 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
             inspectorError_.clear();
         } else {
             inspectorError_ = "Transform values must be finite.";
+        }
+    }
+
+    if (selectedGameObject_->physics.enabled) {
+        ImGui::SeparatorText("Physics");
+        const char* motion = selectedGameObject_->physics.motionType == GameObject::PhysicsMotionType::Static ? "Static" : "Dynamic";
+        const auto collider = selectedGameObject_->physics.colliderType;
+        const char* type = collider == GameObject::PhysicsColliderType::Mesh ? "Mesh" : collider == GameObject::PhysicsColliderType::Sphere ? "Sphere" : "ConvexHull";
+        ImGui::Text("Motion Type: %s", motion);
+        ImGui::Text("Collider Type: %s", type);
+        if (collider == GameObject::PhysicsColliderType::Sphere) {
+            ImGui::Text("Radius: %.3f", selectedGameObject_->physics.sphereRadius);
+            ImGui::TextUnformatted("Collision Representation: Analytic");
+        }
+        bool enabled = renderColliderEnabled(*selectedGameObject_);
+        if (ImGui::Checkbox("Render Collider", &enabled)) {
+            if (enabled) renderColliderIds_.insert(selectedGameObject_->persistentId);
+            else renderColliderIds_.erase(selectedGameObject_->persistentId);
         }
     }
 

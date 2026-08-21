@@ -19,6 +19,7 @@ set(IMGUI_DIR ${PROJECT_SOURCE_DIR}/third_party/imgui)
 
 add_library(VulkanContext STATIC
         vulkan_context.cpp
+        physics_debug_renderer.cpp
         imgui_layer.cpp
         ${PROJECT_SOURCE_DIR}/third_party/imguizmo/ImGuizmo.cpp
         ${IMGUI_DIR}/imgui.cpp
@@ -28,6 +29,7 @@ add_library(VulkanContext STATIC
         ${IMGUI_DIR}/imgui_demo.cpp
         ${IMGUI_DIR}/backends/imgui_impl_sdl3.cpp
         ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp)
+set_source_files_properties(physics_debug_renderer.cpp PROPERTIES COMPILE_OPTIONS "-fno-rtti")
 target_compile_definitions(VulkanContext PRIVATE
         DUNAMIS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_include_directories(VulkanContext PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -35,8 +37,8 @@ target_include_directories(VulkanContext SYSTEM PRIVATE
         ${IMGUI_DIR}
         ${IMGUI_DIR}/backends
         ${PROJECT_SOURCE_DIR}/third_party/imguizmo)
-target_link_libraries(VulkanContext PRIVATE SDL3::SDL3 Vulkan::Vulkan spdlog VulkanUtils EditorPicking DirectionalShadow AmbientOcclusion GameObject Scene glm)
+target_link_libraries(VulkanContext PUBLIC Physics Jolt PRIVATE SDL3::SDL3 Vulkan::Vulkan spdlog VulkanUtils EditorPicking DirectionalShadow AmbientOcclusion GameObject Scene glm)
 
 add_library(VisualServer STATIC visual_server.cpp)
 target_include_directories(VisualServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(VisualServer PRIVATE SDL3::SDL3 VulkanContext VulkanUtils Scene assimp spdlog)
+target_link_libraries(VisualServer PUBLIC VulkanContext PRIVATE SDL3::SDL3 VulkanUtils Scene assimp spdlog)
