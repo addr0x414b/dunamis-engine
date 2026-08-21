@@ -1378,10 +1378,13 @@ VkSurfaceFormatKHR VulkanContext::chooseSwapSurfaceFormat(
 }
 
 VkPresentModeKHR VulkanContext::chooseSwapPresentMode(
-    const std::vector<VkPresentModeKHR>& availablePresentModes) const {
-    for (const auto& availablePresentMode : availablePresentModes) {
-        if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
-            return availablePresentMode;
+    const std::vector<VkPresentModeKHR>& availablePresentModes) const
+{
+    for (const auto mode : availablePresentModes)
+    {
+        if (mode == VK_PRESENT_MODE_IMMEDIATE_KHR)
+        {
+            return mode;
         }
     }
     return VK_PRESENT_MODE_FIFO_KHR;
@@ -4703,7 +4706,6 @@ Result VulkanContext::drawFrame(Scene* scene, const Camera& renderCamera,
         return Result::failure(
             "Cannot draw a scene that exceeds the point-light limit");
     }
-
     VkResult result = vkWaitForFences(
         device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
     if (result != VK_SUCCESS) {
