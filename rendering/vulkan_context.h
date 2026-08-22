@@ -70,7 +70,8 @@ public:
     VulkanContext& operator=(const VulkanContext&) = delete;
 
     [[nodiscard]] Result init(SDL_Window* window, Scene* scene,
-                              EditorSession& editorSession);
+                              EditorSession& editorSession,
+                              PhysicsServer* physicsServer = nullptr);
     bool cleanup() noexcept;
 
 private:
@@ -333,7 +334,6 @@ private:
     [[nodiscard]] Result createRenderFinishedSemaphores();
     void destroyRenderFinishedSemaphores() noexcept;
     [[nodiscard]] Result initializeImGui();
-    void setPhysicsServer(PhysicsServer* physicsServer) noexcept;
     void prepareSelectedPhysicsDiagnostics(Scene* scene,
                                            SceneRunState runState);
     [[nodiscard]] Result preparePhysicsDebugDraws(Scene* scene, SceneRunState runState);

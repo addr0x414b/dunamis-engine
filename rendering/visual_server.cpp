@@ -36,7 +36,8 @@ Result VisualServer::initialize(SDL_Window* window, Scene* scene,
     initialized = false;
     currentScene = scene;
 
-    result = vulkanContext.init(window, currentScene, editorSession);
+    result = vulkanContext.init(window, currentScene, editorSession,
+                                physicsServer);
     if (!result) {
         if (vulkanContext.cleanup()) {
             currentScene->deactivate();
@@ -45,8 +46,6 @@ Result VisualServer::initialize(SDL_Window* window, Scene* scene,
         return Result::failure("Failed to initialize Vulkan Context: " +
                                result.error());
     }
-    vulkanContext.setPhysicsServer(physicsServer);
-
     result = initGameObjects();
     if (!result) {
         if (vulkanContext.cleanup()) {

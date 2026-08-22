@@ -529,10 +529,6 @@ Result VulkanContext::switchScene(Scene* scene) {
     return Result::success();
 }
 
-void VulkanContext::setPhysicsServer(PhysicsServer* physicsServer) noexcept {
-    physicsServer_ = physicsServer;
-}
-
 bool VulkanContext::hasSceneResources(const Scene* scene) const noexcept {
     return scene && sceneResourceOwnership_.find(scene) !=
                         sceneResourceOwnership_.end() &&
@@ -622,7 +618,8 @@ Result VulkanContext::validateTextureData(
 }
 
 Result VulkanContext::init(SDL_Window* w, Scene* scene,
-                           EditorSession& editorSession) {
+                           EditorSession& editorSession,
+                           PhysicsServer* physicsServer) {
     spdlog::info("Initializing Vulkan Context...");
     if (!w) {
         return Result::failure(
@@ -646,10 +643,7 @@ Result VulkanContext::init(SDL_Window* w, Scene* scene,
     window = w;
     currentScene = scene;
     editorSession_ = &editorSession;
-    // DebugRenderer touches Jolt globals; VisualServer is constructed before
-    // PhysicsServer initialization, so create it only once initialization is
-    // actively requested after the physics backend is ready.
-    physicsDebugRenderer_ = std::make_unique<PhysicsDebugRenderer>();
+    physicsServer_ = physicsServer;
 
     const auto initializeStep = [this](Result result,
                                        const char* description) -> Result {
@@ -662,6 +656,12 @@ Result VulkanContext::init(SDL_Window* w, Scene* scene,
     };
 
     try {
+        // DebugRenderer touches Jolt globals. Only construct it when the
+        // caller supplies a PhysicsServer whose backend is already ready.
+        if (physicsServer_ != nullptr) {
+            physicsDebugRenderer_ = std::make_unique<PhysicsDebugRenderer>();
+        }
+
         result = initializeStep(createInstance(), "Instance creation");
         if (!result) return result;
         result = initializeStep(setupDebugMessenger(),
@@ -4983,7 +4983,10 @@ VulkanContext::makeCharacterDebugShapeSignature(const Character& character) {
 void VulkanContext::prepareSelectedPhysicsDiagnostics(Scene* scene,
                                                       SceneRunState runState) {
     imguiLayer.setPhysicsDiagnostics(nullptr, std::nullopt, {});
-    if (scene == nullptr || !editorToolsEnabled(runState)) return;
+    if (physicsDebugRenderer_ == nullptr || scene == nullptr ||
+        !editorToolsEnabled(runState)) {
+        return;
+    }
 
     const GameObject* selected =
         editorSession_->selectedGameObjectForScene(scene);
@@ -5551,7 +5554,8 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
         }
     }
 
-    if (physicsDebugPipeline != VK_NULL_HANDLE && !scene->gameObjects().empty()) {
+    if (physicsDebugRenderer_ != nullptr &&
+        physicsDebugPipeline != VK_NULL_HANDLE && !scene->gameObjects().empty()) {
         const GameObject* cameraObject = nullptr;
         for (const auto& object : scene->gameObjects()) {
             if (object && !object->modelRenderable().meshInstances_.empty()) { cameraObject = object.get(); break; }
