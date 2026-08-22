@@ -33,11 +33,6 @@ public:
     [[nodiscard]] Result setActiveCameraReference(Camera* camera);
     [[nodiscard]] Result validateForActivation() const;
     [[nodiscard]] Result validateAuthoredState() const;
-    // A future engine property/serialization system will allow arbitrary
-    // custom game properties exposed in the editor to transfer to the
-    // runtime scene. Runtime reset remains automatic because the disposable
-    // runtime scene is destroyed on Stop.
-    [[nodiscard]] Result copyAuthoringStateTo(Scene& destination) const;
 
     [[nodiscard]] const std::vector<std::unique_ptr<GameObject>>&
     gameObjects() const noexcept;

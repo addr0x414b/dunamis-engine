@@ -1,5 +1,7 @@
 #include "scene/scene.h"
 #include "scene/scene_manager.h"
+#include "scene/scene_serializer.h"
+#include "scene/type_registry.h"
 #include "scene/model_renderable.h"
 #include "game/level_1.h"
 #include "input/input_manager.h"
@@ -50,8 +52,16 @@ class ManagedScene final : public Scene {
 public:
     ManagedScene() { ++constructionCount; }
 
+    static Result registerTypes(TypeRegistry& registry) {
+        return registry.registerType<ManagedObject>(
+            "ManagedObject", "GameObject",
+            [] { return std::make_unique<ManagedObject>(); });
+    }
+
     void init() override {
-        Result result = addGameObject(std::make_unique<ManagedObject>());
+        auto object = std::make_unique<ManagedObject>();
+        object->persistentId = "managed-object";
+        Result result = addGameObject(std::move(object));
         if (!result) {
             throw std::runtime_error(result.error());
         }
@@ -61,6 +71,21 @@ public:
 
     inline static int constructionCount = 0;
 };
+
+Result registerInvariantTypes(TypeRegistry& registry) {
+    Result result = registerEngineTypes(registry);
+    if (!result) return result;
+    result = registry.registerType<Player>(
+        "Player", "GameObject", [] {
+            auto player = std::make_unique<Player>();
+            player->init();
+            return player;
+        });
+    if (!result) return result;
+    return registry.registerType<DerivedGameObject>(
+        "DerivedGameObject", "GameObject",
+        [] { return std::make_unique<DerivedGameObject>(); });
+}
 
 bool expect(bool condition, const char* message) {
     if (!condition) {
@@ -120,6 +145,10 @@ bool runLevel1FailurePropagationTest() {
 
 bool runAuthoringTransferTests() {
     bool passed = true;
+    TypeRegistry registry;
+    const Result registration = registerInvariantTypes(registry);
+    passed &= expect(static_cast<bool>(registration),
+                     "Could not register authoring-transfer types");
     GameObject baseObject;
     const GameObject& constBaseObject = baseObject;
     passed &= expect(baseObject.attachedCamera() == nullptr &&
@@ -138,6 +167,7 @@ bool runAuthoringTransferTests() {
 
     auto editingObject = std::make_unique<GameObject>();
     GameObject* editingObjectPointer = editingObject.get();
+    editingObject->persistentId = "object";
     editingObject->name = "Edited object";
     editingObject->position = {1.0f, 2.0f, 3.0f};
     editingObject->rotation = {4.0f, 5.0f, 6.0f};
@@ -148,6 +178,7 @@ bool runAuthoringTransferTests() {
     editingObject->physics.sphereRadius = 0.75f;
     auto runtimeObject = std::make_unique<GameObject>();
     GameObject* runtimeObjectPointer = runtimeObject.get();
+    runtimeObject->persistentId = "object";
     passed &= expect(static_cast<bool>(
                          editing.addGameObject(std::move(editingObject))),
                      "Could not add editing object for transfer test");
@@ -157,10 +188,12 @@ bool runAuthoringTransferTests() {
 
     auto editingPoint = std::make_unique<PointLight>();
     PointLight* editingPointPointer = editingPoint.get();
+    editingPoint->persistentId = "point";
     editingPoint->color = {0.2f, 0.3f, 0.4f};
     editingPoint->intensity = 11.0f;
     auto runtimePoint = std::make_unique<PointLight>();
     PointLight* runtimePointPointer = runtimePoint.get();
+    runtimePoint->persistentId = "point";
     passed &= expect(static_cast<bool>(
                          editing.addGameObject(std::move(editingPoint))),
                      "Could not add editing point light for transfer test");
@@ -170,6 +203,7 @@ bool runAuthoringTransferTests() {
 
     auto editingDirectional = std::make_unique<DirectionalLight>();
     DirectionalLight* editingDirectionalPointer = editingDirectional.get();
+    editingDirectional->persistentId = "directional";
     editingDirectional->rotation = {23.0f, -41.0f, 17.0f};
     editingDirectional->color = {0.7f, 0.8f, 0.9f};
     editingDirectional->intensity = 12.0f;
@@ -180,6 +214,7 @@ bool runAuthoringTransferTests() {
     editingDirectional->shadow.farPlane = 456.0f;
     auto runtimeDirectional = std::make_unique<DirectionalLight>();
     DirectionalLight* runtimeDirectionalPointer = runtimeDirectional.get();
+    runtimeDirectional->persistentId = "directional";
     passed &= expect(static_cast<bool>(editing.addGameObject(
                          std::move(editingDirectional))),
                      "Could not add editing directional light");
@@ -189,6 +224,7 @@ bool runAuthoringTransferTests() {
 
     auto editingCamera = std::make_unique<Camera>();
     Camera* editingCameraPointer = editingCamera.get();
+    editingCamera->persistentId = "camera";
     editingCamera->position = {31.0f, 32.0f, 33.0f};
     editingCamera->rotation = {34.0f, 35.0f, 36.0f};
     editingCamera->scale = {37.0f, 38.0f, 39.0f};
@@ -198,6 +234,7 @@ bool runAuthoringTransferTests() {
                      "Could not configure standalone camera FOV");
     auto runtimeCamera = std::make_unique<Camera>();
     Camera* runtimeCameraPointer = runtimeCamera.get();
+    runtimeCamera->persistentId = "camera";
     passed &= expect(static_cast<bool>(
                          editing.addGameObject(std::move(editingCamera))),
                      "Could not add editing camera for transfer test");
@@ -207,6 +244,7 @@ bool runAuthoringTransferTests() {
 
     auto editingPlayer = std::make_unique<Player>();
     Player* editingPlayerPointer = editingPlayer.get();
+    editingPlayer->persistentId = "player";
     editingPlayer->init();
     editingPlayer->position = {10.0f, 20.0f, 30.0f};
     editingPlayer->camera->position = {11.0f, 22.0f, 33.0f};
@@ -226,6 +264,7 @@ bool runAuthoringTransferTests() {
 
     auto runtimePlayer = std::make_unique<Player>();
     Player* runtimePlayerPointer = runtimePlayer.get();
+    runtimePlayer->persistentId = "player";
     runtimePlayer->init();
     runtimePlayer->camera->position = {-1.0f, -2.0f, -3.0f};
     runtimePlayer->camera->front = {1.0f, 0.0f, 0.0f};
@@ -237,7 +276,8 @@ bool runAuthoringTransferTests() {
                          runtime.addGameObject(std::move(runtimePlayer))),
                      "Could not add runtime Player for transfer test");
 
-    const Result transfer = editing.copyAuthoringStateTo(runtime);
+    const Result transfer = SceneSerializer::copyAuthoredState(
+        editing, runtime, registry);
     passed &= expect(static_cast<bool>(transfer),
                      "Matching authoring topology was rejected");
     passed &= expect(runtime.name == editing.name &&
@@ -308,34 +348,54 @@ bool runAuthoringTransferTests() {
     passed &= expect(editingObjectPointer->position == glm::vec3(1.0f, 2.0f, 3.0f),
                      "Authoring transfer mutated the editing scene");
 
-    TestScene countSource;
-    TestScene countDestination;
-    auto countDestinationObject = std::make_unique<GameObject>();
-    GameObject* countDestinationPointer = countDestinationObject.get();
-    countDestinationPointer->position = {91.0f, 92.0f, 93.0f};
-    passed &= expect(countSource.addGameObject(std::make_unique<GameObject>()) &&
-                         countSource.addGameObject(std::make_unique<GameObject>()) &&
-                         countDestination.addGameObject(
-                             std::move(countDestinationObject)),
-                     "Could not configure object-count mismatch test");
-    passed &= expect(!countSource.copyAuthoringStateTo(countDestination) &&
-                         countDestinationPointer->position ==
-                             glm::vec3(91.0f, 92.0f, 93.0f),
-                     "Object-count mismatch mutated the destination");
+    TestScene identitySource;
+    TestScene identityDestination;
+    auto firstSourceObject = std::make_unique<GameObject>();
+    firstSourceObject->persistentId = "first";
+    firstSourceObject->position = {1.0f, 2.0f, 3.0f};
+    auto secondSourceObject = std::make_unique<GameObject>();
+    secondSourceObject->persistentId = "second";
+    secondSourceObject->position = {4.0f, 5.0f, 6.0f};
+    auto secondDestinationObject = std::make_unique<GameObject>();
+    secondDestinationObject->persistentId = "second";
+    secondDestinationObject->position = {91.0f, 92.0f, 93.0f};
+    auto firstDestinationObject = std::make_unique<GameObject>();
+    firstDestinationObject->persistentId = "first";
+    firstDestinationObject->position = {81.0f, 82.0f, 83.0f};
+    passed &= expect(
+        identitySource.addGameObject(std::move(firstSourceObject)) &&
+            identitySource.addGameObject(std::move(secondSourceObject)) &&
+            identityDestination.addGameObject(std::move(secondDestinationObject)) &&
+            identityDestination.addGameObject(std::move(firstDestinationObject)),
+        "Could not configure persistent-identity transfer test");
+    const Result identityTransfer = SceneSerializer::copyAuthoredState(
+        identitySource, identityDestination, registry);
+    passed &= expect(
+        identityTransfer &&
+            identityDestination.findGameObject("first")->position ==
+                glm::vec3(1.0f, 2.0f, 3.0f) &&
+            identityDestination.findGameObject("second")->position ==
+                glm::vec3(4.0f, 5.0f, 6.0f),
+        "Runtime transfer did not pair objects by persistent ID");
 
     TestScene typeSource;
     TestScene typeDestination;
+    auto typeSourceObject = std::make_unique<GameObject>();
+    typeSourceObject->persistentId = "type-mismatch";
     auto typeDestinationObject = std::make_unique<DerivedGameObject>();
     GameObject* typeDestinationPointer = typeDestinationObject.get();
+    typeDestinationObject->persistentId = "type-mismatch";
     typeDestinationPointer->position = {81.0f, 82.0f, 83.0f};
-    passed &= expect(typeSource.addGameObject(std::make_unique<GameObject>()) &&
+    passed &= expect(typeSource.addGameObject(std::move(typeSourceObject)) &&
                          typeDestination.addGameObject(
                              std::move(typeDestinationObject)),
                      "Could not configure object-type mismatch test");
-    passed &= expect(!typeSource.copyAuthoringStateTo(typeDestination) &&
+    const Result typeResult = SceneSerializer::copyAuthoredState(
+        typeSource, typeDestination, registry);
+    passed &= expect(!typeResult &&
                          typeDestinationPointer->position ==
                              glm::vec3(81.0f, 82.0f, 83.0f),
-                     "Object-type mismatch mutated the destination");
+                     "Object-type mismatch was accepted or mutated the destination");
 
     TestScene attachedSource;
     TestScene attachedDestination;
@@ -343,9 +403,11 @@ bool runAuthoringTransferTests() {
     attachedDestination.name = "Attached destination";
     auto attachedSourcePlayer = std::make_unique<Player>();
     attachedSourcePlayer->init();
+    attachedSourcePlayer->persistentId = "attached";
     Player* attachedSourcePointer = attachedSourcePlayer.get();
     auto attachedDestinationPlayer = std::make_unique<Player>();
     attachedDestinationPlayer->init();
+    attachedDestinationPlayer->persistentId = "attached";
     attachedDestinationPlayer->camera.reset();
     Player* attachedDestinationPointer = attachedDestinationPlayer.get();
     attachedDestinationPointer->position = {71.0f, 72.0f, 73.0f};
@@ -356,19 +418,13 @@ bool runAuthoringTransferTests() {
                          static_cast<bool>(attachedDestination.addGameObject(
                              std::move(attachedDestinationPlayer))),
                      "Could not configure attached-camera mismatch test");
-    const Result attachedTopologyResult =
-        attachedSource.copyAuthoringStateTo(attachedDestination);
+    const Result attachedTopologyResult = SceneSerializer::copyAuthoredState(
+        attachedSource, attachedDestination, registry);
     passed &= expect(
         !attachedTopologyResult && attachedSourcePointer->attachedCamera() != nullptr &&
             attachedDestinationPointer->attachedCamera() == nullptr &&
-            attachedDestination.name == "Attached destination" &&
-            attachedDestinationPointer->position ==
-                glm::vec3(71.0f, 72.0f, 73.0f) &&
-            attachedDestinationPointer->rotation ==
-                glm::vec3(74.0f, 75.0f, 76.0f) &&
-            attachedDestinationPointer->scale ==
-                glm::vec3(77.0f, 78.0f, 79.0f),
-        "Attached-camera topology mismatch mutated the destination");
+            attachedTopologyResult.error().find("attached") != std::string::npos,
+        "Attached-camera topology mismatch was not rejected");
     return passed;
 }
 

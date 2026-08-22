@@ -93,11 +93,6 @@ Result SceneManager::prepareRuntimeScene() {
     result = SceneSerializer::copyAuthoredState(
         *editingScene_, *candidate, typeRegistry_);
     if (!result) {
-        // Preserve compatibility for intentionally non-persisted test/tool
-        // scenes whose objects have no registered authored metadata.
-        result = editingScene_->copyAuthoringStateTo(*candidate);
-    }
-    if (!result) {
         return Result::failure(
             "Failed to transfer editor-authored state: " + result.error());
     }

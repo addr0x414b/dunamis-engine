@@ -88,6 +88,77 @@ Result resolveActiveCamera(const nlohmann::json& reference, Scene& scene) {
     return scene.setActiveCameraReference(camera);
 }
 
+Result copyRuntimeTransferProperty(const PropertyDescriptor& descriptor,
+                                   const GameObject& source,
+                                   GameObject& destination,
+                                   const std::string& objectId,
+                                   const std::string& typeName) {
+    const std::string context = "Failed to transfer runtime-only property '" +
+        descriptor.name + "' on object '" + objectId + "' (" + typeName + ")";
+    if (!descriptor.copy) {
+        return Result::failure(context + ": descriptor has no copy callback");
+    }
+
+    try {
+        Result result = descriptor.copy(source, destination);
+        if (!result) return Result::failure(context + ": " + result.error());
+    } catch (const std::exception& exception) {
+        return Result::failure(context + ": " + exception.what());
+    } catch (...) {
+        return Result::failure(context + ": copy callback threw an unknown exception");
+    }
+    return Result::success();
+}
+
+Result copyRuntimeTransferProperties(const GameObject& source,
+                                     GameObject& destination,
+                                     const TypeDescriptor& type,
+                                     const TypeRegistry& registry,
+                                     const std::string& objectId) {
+    for (const PropertyDescriptor* descriptor :
+         registry.runtimeTransferProperties(type)) {
+        if (descriptor->lifecycle != PropertyLifecycle::RuntimeTransferOnly) {
+            continue;
+        }
+        Result result = copyRuntimeTransferProperty(
+            *descriptor, source, destination, objectId, type.name);
+        if (!result) return result;
+    }
+    return Result::success();
+}
+
+Result copyAttachedCameraRuntimeTransferProperties(
+    const GameObject& sourceObject, GameObject& destinationObject,
+    const TypeRegistry& registry, const std::string& objectId,
+    const std::string& ownerTypeName) {
+    const Camera* sourceCamera = sourceObject.attachedCamera();
+    Camera* destinationCamera = destinationObject.attachedCamera();
+    if ((sourceCamera != nullptr) != (destinationCamera != nullptr)) {
+        return Result::failure(
+            "Attached-camera topology does not match for object '" + objectId +
+            "' (" + ownerTypeName + ")");
+    }
+    if (!sourceCamera) return Result::success();
+
+    const TypeDescriptor* cameraDescriptor = registry.find("Camera");
+    if (!cameraDescriptor) {
+        return Result::failure(
+            "Cannot transfer attached-camera runtime-only properties for object '" +
+            objectId + "' (" + ownerTypeName + "): registered type 'Camera' was not found");
+    }
+
+    for (const PropertyDescriptor& descriptor : cameraDescriptor->properties) {
+        if (descriptor.lifecycle != PropertyLifecycle::RuntimeTransferOnly) {
+            continue;
+        }
+        Result result = copyRuntimeTransferProperty(
+            descriptor, *sourceCamera, *destinationCamera, objectId,
+            cameraDescriptor->name);
+        if (!result) return result;
+    }
+    return Result::success();
+}
+
 }  // namespace
 
 Result SceneSerializer::serializeObject(const GameObject& object,
@@ -157,10 +228,12 @@ Result SceneSerializer::serializeAuthored(const Scene& scene,
         if (!result) return result;
         output["objects"].push_back(std::move(record));
 
-        if (scene.activeCamera() == dynamic_cast<const Camera*>(object.get())) {
+        if (scene.activeCamera() != nullptr &&
+            scene.activeCamera() == dynamic_cast<const Camera*>(object.get())) {
             output["activeCamera"] = {{"ownerId", object->persistentId},
                                       {"kind", "object"}};
-        } else if (scene.activeCamera() == object->attachedCamera()) {
+        } else if (scene.activeCamera() != nullptr &&
+                   scene.activeCamera() == object->attachedCamera()) {
             output["activeCamera"] = {{"ownerId", object->persistentId},
                                       {"kind", "attached"}};
         }
@@ -342,13 +415,66 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
 Result SceneSerializer::copyAuthoredState(const Scene& source,
                                           Scene& destination,
                                           const TypeRegistry& registry) {
+    if (&source == &destination) {
+        return Result::failure(
+            "Authoring state destination must be a different scene");
+    }
+
     nlohmann::json document;
     Result result = serializeAuthored(source, registry, document);
     if (!result) return result;
     SceneLoadData ignored;
     result = applyDocument(document, destination, registry, ignored);
     if (!result) return result;
-    // FOV is intentionally not part of the persisted scene format yet, but it
-    // must survive the in-memory editor-to-runtime transfer.
-    return source.copyAuthoringStateTo(destination);
+
+    for (const auto& sourceObject : source.gameObjects()) {
+        if (!sourceObject) {
+            return Result::failure(
+                "Cannot transfer runtime-only properties from a null source object");
+        }
+        if (sourceObject->persistentId.empty()) {
+            return Result::failure(
+                "Cannot transfer runtime-only properties for an object without a persistent ID");
+        }
+
+        GameObject* destinationObject =
+            destination.findGameObject(sourceObject->persistentId);
+        if (!destinationObject) {
+            return Result::failure(
+                "Runtime destination is missing object '" +
+                sourceObject->persistentId + "'");
+        }
+
+        const TypeDescriptor* sourceType = registry.find(*sourceObject);
+        if (!sourceType) {
+            return Result::failure(
+                "Object '" + sourceObject->persistentId +
+                "' has an unregistered source C++ type");
+        }
+        const TypeDescriptor* destinationType = registry.find(*destinationObject);
+        if (!destinationType) {
+            return Result::failure(
+                "Runtime object '" + sourceObject->persistentId +
+                "' has an unregistered destination C++ type");
+        }
+        if (sourceType->name != destinationType->name ||
+            sourceType->type != destinationType->type) {
+            return Result::failure(
+                "Object '" + sourceObject->persistentId +
+                "' registered type mismatch: source '" + sourceType->name +
+                "', destination '" + destinationType->name + "'");
+        }
+
+        result = copyRuntimeTransferProperties(
+            *sourceObject, *destinationObject, *sourceType, registry,
+            sourceObject->persistentId);
+        if (!result) return result;
+
+        result = copyAttachedCameraRuntimeTransferProperties(
+            *sourceObject, *destinationObject, registry,
+            sourceObject->persistentId, sourceType->name);
+        if (!result) return result;
+    }
+
+    return Result::success();
 }

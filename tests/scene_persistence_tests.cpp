@@ -16,6 +16,8 @@ namespace {
 
 class CustomObject final : public GameObject {
 public:
+    inline static constexpr float transferFailureSentinel = -9876.5f;
+
     float spinSpeed = 0.0f;
     int value = 0;
     unsigned count = 0;
@@ -25,6 +27,7 @@ public:
     glm::vec4 tint{1.0f};
     std::string tag;
     float runtimeOnly = 0.0f;
+    float transferOnlyValue = 1.0f;
 };
 
 Result registerCustom(TypeRegistry& registry) {
@@ -44,9 +47,21 @@ Result registerCustom(TypeRegistry& registry) {
     REGISTER_CUSTOM(tint);
     REGISTER_CUSTOM(tag);
 #undef REGISTER_CUSTOM
-    return registry.registerProperty(
+    result = registry.registerProperty(
         "CustomObject", "runtimeOnly", &CustomObject::runtimeOnly,
         PropertyLifecycle::Transient);
+    if (!result) return result;
+    return registry.registerAccessor<CustomObject, float>(
+        "CustomObject", "transferOnlyValue",
+        [](const CustomObject& object) { return object.transferOnlyValue; },
+        [](CustomObject& object, const float value) {
+            if (value == CustomObject::transferFailureSentinel) {
+                return Result::failure("intentional transfer failure");
+            }
+            object.transferOnlyValue = value;
+            return Result::success();
+        },
+        PropertyLifecycle::RuntimeTransferOnly);
 }
 
 class PersistenceScene final : public Scene {
@@ -92,6 +107,7 @@ public:
         custom->tint = {0.1f, 0.2f, 0.3f, 0.4f};
         custom->tag = "metadata-only";
         custom->runtimeOnly = 99.0f;
+        custom->transferOnlyValue = 17.0f;
         require(addGameObject(std::move(custom)));
 
         require(setBackgroundColor({0.1f, 0.2f, 0.3f, 1.0f}));
@@ -161,19 +177,27 @@ bool registryTests() {
         registry.findProperty(*custom, "spinSpeed");
     const PropertyDescriptor* runtimeOnly =
         registry.findProperty(*custom, "runtimeOnly");
+    const PropertyDescriptor* transferOnly =
+        registry.findProperty(*custom, "transferOnlyValue");
     passed &= expect(contains(persisted, "position") &&
                          contains(persisted, "spinSpeed") &&
                          !contains(persisted, "runtimeOnly") &&
+                         !contains(persisted, "transferOnlyValue") &&
                          contains(runtimeTransfer, "position") &&
                          contains(runtimeTransfer, "spinSpeed") &&
                          contains(runtimeTransfer, "physics") &&
+                         contains(runtimeTransfer, "transferOnlyValue") &&
                          !contains(runtimeTransfer, "runtimeOnly") &&
                          spin &&
                          spin->lifecycle == PropertyLifecycle::Persisted &&
                          runtimeOnly &&
                          runtimeOnly->lifecycle == PropertyLifecycle::Transient &&
                          !runtimeOnly->read && !runtimeOnly->write &&
-                         !runtimeOnly->copy,
+                         !runtimeOnly->copy && transferOnly &&
+                         transferOnly->lifecycle ==
+                             PropertyLifecycle::RuntimeTransferOnly &&
+                         !transferOnly->read && !transferOnly->write &&
+                         transferOnly->copy,
                      "property lifecycle filtering or inheritance failed");
 
     const TypeDescriptor* cameraType = registry.find("Camera");
@@ -277,6 +301,7 @@ bool serializerTests() {
     passed &= expect(customRecord["properties"].contains("position") &&
                          customRecord["properties"].contains("spinSpeed") &&
                          !customRecord["properties"].contains("runtimeOnly") &&
+                         !customRecord["properties"].contains("transferOnlyValue") &&
                          !customRecord["properties"].contains("physics") &&
                          !cameraRecord["properties"].contains("fov") &&
                          !cameraRecord["properties"].contains("physics"),
@@ -288,7 +313,10 @@ bool serializerTests() {
     PersistenceScene candidate;
     candidate.name = "Defaults";
     candidate.init();
-    static_cast<CustomObject*>(candidate.findGameObject("custom"))->spinSpeed = 1.0f;
+    auto* candidateCustom =
+        static_cast<CustomObject*>(candidate.findGameObject("custom"));
+    candidateCustom->spinSpeed = 1.0f;
+    candidateCustom->transferOnlyValue = 1.0f;
     SceneLoadData load;
     result = SceneSerializer::applyDocument(document, candidate, registry, load);
     passed &= expect(static_cast<bool>(result), "scene round trip failed: " + result.error());
@@ -299,6 +327,7 @@ bool serializerTests() {
                          restored->range.y == 8.0f && restored->tint.w == 0.4f &&
                          restored->tag == "metadata-only" &&
                          restored->runtimeOnly == 99.0f &&
+                         restored->transferOnlyValue == 1.0f &&
                          restored->position.x == 1.0f,
                      "custom object did not round trip through metadata");
     const auto* point = dynamic_cast<const PointLight*>(candidate.findGameObject("point"));
@@ -419,9 +448,12 @@ bool managerDirtyTests() {
         manager.editingScene()->findGameObject("custom"));
     auto* editingCamera = static_cast<Camera*>(
         manager.editingScene()->findGameObject("camera"));
-    editingCustom->spinSpeed = 270.0f;
     editingCustom->runtimeOnly = 777.0f;
+    editingCustom->transferOnlyValue = 123.0f;
     const bool configuredCameraFov = editingCamera->setFov(90.0f);
+    passed &= expect(!manager.hasUnsavedChanges(),
+                     "runtime-only property changes became persisted dirty state");
+    editingCustom->spinSpeed = 270.0f;
     result = manager.prepareRuntimeScene();
     const auto* runtimeCustom = result
         ? static_cast<const CustomObject*>(
@@ -434,13 +466,38 @@ bool managerDirtyTests() {
     passed &= expect(result && runtimeCustom &&
                          runtimeCustom->spinSpeed == 270.0f &&
                          runtimeCustom->runtimeOnly == 99.0f &&
+                         runtimeCustom->transferOnlyValue == 123.0f &&
                          configuredCameraFov && runtimeCamera &&
                          runtimeCamera->fov() == 90.0f,
                      "generic runtime transfer omitted authored custom state or copied runtime-only state");
     manager.cancelPreparedRuntimeScene();
+
+    editingCustom->transferOnlyValue = CustomObject::transferFailureSentinel;
+    const Result failedTransfer = manager.prepareRuntimeScene();
+    passed &= expect(
+        !failedTransfer && manager.runtimeScene() == nullptr &&
+            failedTransfer.error().find("transferOnlyValue") != std::string::npos &&
+            failedTransfer.error().find("custom") != std::string::npos &&
+            failedTransfer.error().find("CustomObject") != std::string::npos &&
+            failedTransfer.error().find("intentional transfer failure") !=
+                std::string::npos,
+        "runtime-only descriptor failure was not surfaced by Scene Manager");
+    editingCustom->transferOnlyValue = 123.0f;
+
     result = manager.saveEditingScene(editor);
     passed &= expect(result && !manager.hasUnsavedChanges(),
                      "successful save did not establish a clean baseline");
+    const nlohmann::json savedDocument = readSceneDocument(path);
+    const nlohmann::json* savedCustom =
+        findObjectRecord(savedDocument, "custom");
+    const nlohmann::json* savedCamera =
+        findObjectRecord(savedDocument, "camera");
+    passed &= expect(savedDocument.at("formatVersion") == 1 && savedCustom &&
+                         savedCamera &&
+                         !savedCustom->at("properties").contains("physics") &&
+                         !savedCustom->at("properties").contains("transferOnlyValue") &&
+                         !savedCamera->at("properties").contains("fov"),
+                     "runtime-only state changed the persisted scene format");
     editor.position.x = 50.0f;
     passed &= expect(!manager.hasUnsavedChanges(),
                      "editor camera movement made authored state dirty");
