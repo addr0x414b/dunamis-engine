@@ -1,6 +1,7 @@
 #include "type_registry.h"
 
 #include "camera.h"
+#include "character.h"
 #include "directional_light.h"
 #include "point_light.h"
 
@@ -112,6 +113,18 @@ Result registerEngineTypes(TypeRegistry& registry) {
         [](GameObject& object, const std::string& path) {
             return object.setAuthoredModelPath(path);
         });
+    if (!result) return result;
+
+    result = registry.registerType<Character>(
+        "Character", "GameObject", [] { return std::make_unique<Character>(); });
+    if (!result) return result;
+    result = registry.registerProperty(
+        "Character", "capsuleHeight", &Character::capsuleHeight,
+        PropertyLifecycle::RuntimeTransferOnly);
+    if (!result) return result;
+    result = registry.registerProperty(
+        "Character", "capsuleRadius", &Character::capsuleRadius,
+        PropertyLifecycle::RuntimeTransferOnly);
     if (!result) return result;
 
     result = registry.registerType<Camera>(

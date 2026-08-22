@@ -17,7 +17,7 @@ void requireSuccess(Result result, const std::string& context) {
 
 Result Level1::registerTypes(TypeRegistry& registry) {
     Result result = registry.registerType<Player>(
-        "Player", "GameObject", [] {
+        "Player", "Character", [] {
             auto player = std::make_unique<Player>();
             player->init();
             return player;

@@ -1,6 +1,7 @@
 #include "scene/scene_manager.h"
 #include "scene/scene_serializer.h"
 #include "scene/type_registry.h"
+#include "scene/character.h"
 #include "input/input_manager.h"
 
 #include <chrono>
@@ -432,6 +433,50 @@ bool serializerTests() {
     return passed;
 }
 
+bool characterPersistenceTests() {
+    bool passed = true;
+    TypeRegistry registry = makeRegistry(passed);
+    EmptyScene source;
+    auto character = std::make_unique<Character>();
+    character->persistentId = "character";
+    character->capsuleHeight = 211.0f;
+    character->capsuleRadius = 41.0f;
+    passed &= expect(static_cast<bool>(source.addGameObject(std::move(character))),
+                     "could not create Character persistence fixture");
+
+    Camera editor;
+    nlohmann::json document;
+    Result result = SceneSerializer::serializeFull(source, registry, editor, document);
+    const nlohmann::json* record = result
+        ? findObjectRecord(document, "character")
+        : nullptr;
+    passed &= expect(
+        result && document.at("formatVersion") == 1 && record &&
+            !record->at("properties").contains("capsuleHeight") &&
+            !record->at("properties").contains("capsuleRadius"),
+        "Character capsule dimensions leaked into persisted JSON");
+
+    EmptyScene candidate;
+    SceneLoadData load;
+    result = result
+        ? SceneSerializer::applyDocument(document, candidate, registry, load)
+        : Result::failure("Character persistence serialization failed");
+    nlohmann::json roundTrip;
+    const Result roundTripResult = result
+        ? SceneSerializer::serializeAuthored(candidate, registry, roundTrip)
+        : Result::failure("Character persistence round trip could not be loaded");
+    const nlohmann::json* roundTripRecord = roundTripResult
+        ? findObjectRecord(roundTrip, "character")
+        : nullptr;
+    passed &= expect(
+        result && roundTripResult && roundTrip.at("formatVersion") == 1 &&
+            roundTripRecord &&
+            !roundTripRecord->at("properties").contains("capsuleHeight") &&
+            !roundTripRecord->at("properties").contains("capsuleRadius"),
+        "Character persistence round trip introduced capsule dimensions");
+    return passed;
+}
+
 bool managerDirtyTests() {
     bool passed = true;
     SceneManager manager;
@@ -657,6 +702,7 @@ bool managerSavePathTests() {
 int main() {
     bool passed = registryTests();
     passed &= serializerTests();
+    passed &= characterPersistenceTests();
     passed &= managerDirtyTests();
     passed &= managerSavePathTests();
     return passed ? 0 : 1;

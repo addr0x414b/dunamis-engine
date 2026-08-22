@@ -75,12 +75,7 @@ public:
 Result registerInvariantTypes(TypeRegistry& registry) {
     Result result = registerEngineTypes(registry);
     if (!result) return result;
-    result = registry.registerType<Player>(
-        "Player", "GameObject", [] {
-            auto player = std::make_unique<Player>();
-            player->init();
-            return player;
-        });
+    result = Level1::registerTypes(registry);
     if (!result) return result;
     return registry.registerType<DerivedGameObject>(
         "DerivedGameObject", "GameObject",
@@ -105,6 +100,71 @@ bool sameVector(const glm::vec3& first, const glm::vec3& second) {
 
 bool hasDirectionalLightError(const Result& result) {
     return result.error().find("Directional light") != std::string::npos;
+}
+
+bool runTypeRegistryHierarchyTests() {
+    bool passed = true;
+    TypeRegistry registry;
+    const Result registration = registerInvariantTypes(registry);
+    passed &= expect(static_cast<bool>(registration),
+                     "Could not register TypeRegistry hierarchy types");
+
+    const TypeDescriptor* gameObject = registry.find("GameObject");
+    const TypeDescriptor* character = registry.find("Character");
+    const TypeDescriptor* player = registry.find("Player");
+    passed &= expect(character != nullptr,
+                     "Character was not registered in the engine TypeRegistry");
+    passed &= expect(character && character->parentName == "GameObject" &&
+                         player && player->parentName == "Character",
+                     "Character/Player TypeRegistry parents do not match C++ inheritance");
+    passed &= expect(character && gameObject && registry.isA(*character, "GameObject") &&
+                         player && registry.isA(*player, "Character") &&
+                         registry.isA(*player, "GameObject"),
+                     "TypeRegistry hierarchy relationships are incorrect");
+
+    const auto contains = [](const auto& properties, const std::string& name) {
+        return std::any_of(
+            properties.begin(), properties.end(),
+            [&name](const PropertyDescriptor* property) {
+                return property->name == name;
+            });
+    };
+    const auto characterPersisted = character
+        ? registry.persistedProperties(*character)
+        : std::vector<const PropertyDescriptor*>{};
+    const auto characterRuntimeTransfer = character
+        ? registry.runtimeTransferProperties(*character)
+        : std::vector<const PropertyDescriptor*>{};
+    const auto playerRuntimeTransfer = player
+        ? registry.runtimeTransferProperties(*player)
+        : std::vector<const PropertyDescriptor*>{};
+    const PropertyDescriptor* capsuleHeight = character
+        ? registry.findProperty(*character, "capsuleHeight")
+        : nullptr;
+    const PropertyDescriptor* capsuleRadius = character
+        ? registry.findProperty(*character, "capsuleRadius")
+        : nullptr;
+    passed &= expect(
+        capsuleHeight && capsuleRadius &&
+            capsuleHeight->lifecycle == PropertyLifecycle::RuntimeTransferOnly &&
+            capsuleRadius->lifecycle == PropertyLifecycle::RuntimeTransferOnly &&
+            !contains(characterPersisted, "capsuleHeight") &&
+            !contains(characterPersisted, "capsuleRadius") &&
+            contains(characterRuntimeTransfer, "capsuleHeight") &&
+            contains(characterRuntimeTransfer, "capsuleRadius") &&
+            contains(playerRuntimeTransfer, "capsuleHeight") &&
+            contains(playerRuntimeTransfer, "capsuleRadius"),
+        "Character capsule properties have incorrect lifecycle or inheritance metadata");
+
+    const bool simulationStateUnregistered =
+        character && player &&
+        registry.findProperty(*character, "desiredVelocity") == nullptr &&
+        registry.findProperty(*character, "grounded") == nullptr &&
+        registry.findProperty(*player, "desiredVelocity") == nullptr &&
+        registry.findProperty(*player, "grounded") == nullptr;
+    passed &= expect(simulationStateUnregistered,
+                     "Character simulation state was registered as authored metadata");
+    return passed;
 }
 
 class CurrentPathGuard {
@@ -247,6 +307,10 @@ bool runAuthoringTransferTests() {
     editingPlayer->persistentId = "player";
     editingPlayer->init();
     editingPlayer->position = {10.0f, 20.0f, 30.0f};
+    editingPlayer->capsuleHeight = 211.0f;
+    editingPlayer->capsuleRadius = 41.0f;
+    editingPlayer->desiredVelocity = {12.0f, 34.0f, 56.0f};
+    editingPlayer->grounded = true;
     editingPlayer->camera->position = {11.0f, 22.0f, 33.0f};
     editingPlayer->camera->front = {0.25f, 0.5f, -0.75f};
     editingPlayer->camera->up = {0.0f, 0.8f, 0.2f};
@@ -337,6 +401,12 @@ bool runAuthoringTransferTests() {
             runtimePlayerPointer->attachedCamera()->fov() ==
                 editingPlayerPointer->attachedCamera()->fov(),
         "Attached camera authoring state was not transferred");
+    passed &= expect(
+        runtimePlayerPointer->capsuleHeight == 211.0f &&
+            runtimePlayerPointer->capsuleRadius == 41.0f &&
+            runtimePlayerPointer->desiredVelocity == glm::vec3(0.0f) &&
+            !runtimePlayerPointer->grounded,
+        "Character authored dimensions were not transferred or simulation state was copied");
     passed &= expect(
         editingPlayerPointer->attachedCamera()->position ==
                 editingPlayerCameraPosition &&
@@ -481,6 +551,71 @@ bool runSceneManagerTests() {
     manager.shutdown();
     passed &= expect(ManagedObject::liveCount == 0,
                      "Scene Manager shutdown leaked owned scenes");
+    return passed;
+}
+
+class PlayerTransferScene final : public Scene {
+public:
+    static Result registerTypes(TypeRegistry& registry) {
+        return Level1::registerTypes(registry);
+    }
+
+    void init() override {
+        auto player = std::make_unique<Player>();
+        player->persistentId = "player";
+        Player* playerPointer = player.get();
+        playerPointer->init();
+        Result result = addGameObject(std::move(player));
+        if (!result) throw std::runtime_error(result.error());
+        result = setActiveCamera(playerPointer->camera);
+        if (!result) throw std::runtime_error(result.error());
+    }
+
+    void start() override {}
+    void update() override {}
+};
+
+bool runPlayerRuntimeTransferTests() {
+    bool passed = true;
+    SceneManager manager;
+    Result result = manager.initialize<PlayerTransferScene>(
+        "Player Transfer", std::make_shared<InputManager>());
+    passed &= expect(static_cast<bool>(result),
+                     "Player runtime-transfer scene initialization failed");
+    if (!result) {
+        manager.shutdown();
+        return passed;
+    }
+
+    auto* editingPlayer = dynamic_cast<Player*>(
+        manager.editingScene()->findGameObject("player"));
+    passed &= expect(editingPlayer != nullptr,
+                     "Player runtime-transfer scene did not create its Player");
+    if (!editingPlayer) {
+        manager.shutdown();
+        return passed;
+    }
+
+    editingPlayer->capsuleHeight = 211.0f;
+    editingPlayer->capsuleRadius = 41.0f;
+    editingPlayer->desiredVelocity = {12.0f, 34.0f, 56.0f};
+    editingPlayer->grounded = true;
+
+    result = manager.prepareRuntimeScene();
+    auto* runtimePlayer = result
+        ? dynamic_cast<Player*>(
+              manager.runtimeScene()->findGameObject("player"))
+        : nullptr;
+    passed &= expect(
+        result && runtimePlayer && runtimePlayer->capsuleHeight == 211.0f &&
+            runtimePlayer->capsuleRadius == 41.0f &&
+            runtimePlayer->desiredVelocity == glm::vec3(0.0f) &&
+            !runtimePlayer->grounded && runtimePlayer->camera &&
+            runtimePlayer->attachedCamera() == runtimePlayer->camera.get(),
+        "SceneManager runtime transfer did not preserve Character configuration or fresh Player state");
+
+    manager.cancelPreparedRuntimeScene();
+    manager.shutdown();
     return passed;
 }
 
@@ -651,8 +786,10 @@ static_assert(alignof(MaterialPushConstants) % 4 == 0);
 int main() {
     bool passed = true;
     passed &= runLevel1FailurePropagationTest();
+    passed &= runTypeRegistryHierarchyTests();
     passed &= runAuthoringTransferTests();
     passed &= runSceneManagerTests();
+    passed &= runPlayerRuntimeTransferTests();
     passed &= runPlayerCameraInitializationTests();
     passed &= runPlayerMovementInvariantTests();
 
