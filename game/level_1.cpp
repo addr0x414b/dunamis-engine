@@ -65,6 +65,28 @@ void Level1::init() {
     requireSuccess(test3->loadModel(), "Failed to load Sponza");
     requireSuccess(addGameObject(std::move(test3)), "Failed to add Sponza");
 
+    auto test8 = std::make_unique<GameObject>();
+    test8->persistentId = "sponzaaaa";
+    test8->name = "Fox";
+    test8->scale = glm::vec3(1.0f, 1.0f, 1.0f);
+    test8->physics.enabled = true;
+    test8->physics.motionType = GameObject::PhysicsMotionType::Static;
+    test8->physics.colliderType = GameObject::PhysicsColliderType::Mesh;
+    test8->modelPath = "game/assets/models/glTF-Sample-Assets/Models/Fox/glTF/Fox.gltf";
+    requireSuccess(test8->loadModel(), "Failed to load Sponza");
+    requireSuccess(addGameObject(std::move(test8)), "Failed to add Sponza");
+
+    auto test9 = std::make_unique<GameObject>();
+    test9->persistentId = "sponzaaaa23123";
+    test9->name = "Pot";
+    test9->scale = glm::vec3(750.0f, 750.0f, 750.0f);
+    test9->physics.enabled = true;
+    test9->physics.motionType = GameObject::PhysicsMotionType::Static;
+    test9->physics.colliderType = GameObject::PhysicsColliderType::ConvexHull;
+    test9->modelPath = "game/assets/models/glTF-Sample-Assets/Models/PotOfCoals/glTF/PotOfCoals.gltf";
+    requireSuccess(test9->loadModel(), "Failed to load Sponza");
+    requireSuccess(addGameObject(std::move(test9)), "Failed to add Sponza");
+
     // The loaded CPU Sponza mesh has a horizontal surface at (x=0, z=0,
     // y≈-2.5). At 100 Dunamis units per meter, this gives the test body a
     // visible three-meter drop before it reaches the floor.

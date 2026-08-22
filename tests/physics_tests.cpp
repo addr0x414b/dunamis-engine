@@ -757,6 +757,83 @@ MeshInstance tetrahedronInstance() {
     return instance;
 }
 
+void advanceRuntimePhysics(PhysicsServer& server, int frameCount);
+
+void testPhysicsServerColliderCombinations() {
+    TestScene validScene;
+
+    auto staticConvex = std::make_unique<GameObject>();
+    GameObject* staticConvexPointer = staticConvex.get();
+    staticConvex->name = "Static Convex Hull";
+    staticConvex->position = {0.0f, 300.0f, 0.0f};
+    staticConvex->physics.enabled = true;
+    staticConvex->physics.motionType = GameObject::PhysicsMotionType::Static;
+    staticConvex->physics.colliderType =
+        GameObject::PhysicsColliderType::ConvexHull;
+    expect(static_cast<bool>(staticConvex->modelRenderable().addMeshInstance(
+               tetrahedronInstance())),
+           "failed to add static convex-hull mesh");
+    expect(static_cast<bool>(validScene.addGameObject(std::move(staticConvex))),
+           "failed to add static convex-hull object");
+
+    auto dynamicConvex = std::make_unique<GameObject>();
+    dynamicConvex->name = "Dynamic Convex Hull";
+    dynamicConvex->position = {100.0f, 300.0f, 0.0f};
+    dynamicConvex->physics.enabled = true;
+    dynamicConvex->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
+    dynamicConvex->physics.colliderType =
+        GameObject::PhysicsColliderType::ConvexHull;
+    expect(static_cast<bool>(dynamicConvex->modelRenderable().addMeshInstance(
+               tetrahedronInstance())),
+           "failed to add dynamic convex-hull mesh");
+    expect(static_cast<bool>(validScene.addGameObject(std::move(dynamicConvex))),
+           "failed to add dynamic convex-hull object");
+
+    auto dynamicSphere = std::make_unique<GameObject>();
+    dynamicSphere->name = "Dynamic Sphere";
+    dynamicSphere->position = {-100.0f, 300.0f, 0.0f};
+    dynamicSphere->physics.enabled = true;
+    dynamicSphere->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
+    dynamicSphere->physics.colliderType =
+        GameObject::PhysicsColliderType::Sphere;
+    dynamicSphere->physics.sphereRadius = 20.0f;
+    expect(static_cast<bool>(validScene.addGameObject(std::move(dynamicSphere))),
+           "failed to add dynamic sphere object");
+
+    PhysicsServer server;
+    expect(static_cast<bool>(server.initialize()),
+           "failed to initialize PhysicsServer for collider combinations");
+    expect(static_cast<bool>(server.beginRuntimeSession(validScene)),
+           "static convex hull or existing dynamic collider could not create a runtime body");
+    expect(server.runtimeSessionActive(),
+           "valid collider combinations did not keep the runtime session active");
+
+    const glm::vec3 stationaryPosition{0.0f, 450.0f, 0.0f};
+    server.applyRuntimeTransform(*staticConvexPointer, stationaryPosition,
+                                 glm::vec3(0.0f), false);
+    advanceRuntimePhysics(server, 6);
+    expect(near(staticConvexPointer->position.y, stationaryPosition.y),
+           "static convex hull was integrated as a dynamic body");
+    server.endRuntimeSession();
+
+    TestScene rejectedScene;
+    auto dynamicMesh = std::make_unique<GameObject>();
+    dynamicMesh->name = "Dynamic Mesh";
+    dynamicMesh->physics.enabled = true;
+    dynamicMesh->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
+    dynamicMesh->physics.colliderType = GameObject::PhysicsColliderType::Mesh;
+    expect(static_cast<bool>(dynamicMesh->modelRenderable().addMeshInstance(
+               triangleInstance(glm::vec3(0.0f)))),
+           "failed to add rejected dynamic-mesh input");
+    expect(static_cast<bool>(rejectedScene.addGameObject(std::move(dynamicMesh))),
+           "failed to add rejected dynamic-mesh object");
+    expect(!server.beginRuntimeSession(rejectedScene),
+           "dynamic mesh collider was accepted by the runtime session");
+    expect(!server.runtimeSessionActive(),
+           "rejected dynamic-mesh session remained active");
+    server.shutdown();
+}
+
 void testPhysicsServerEditorRelease() {
     TestScene scene;
     auto floor = std::make_unique<GameObject>();
@@ -1032,6 +1109,7 @@ int main() {
     testShapeDiagnostics();
     testCookedShapeCache();
     testPhysicsServerStaticShapeSharing();
+    testPhysicsServerColliderCombinations();
     testOffOriginBodyPivot();
     testDynamicConvexRotationIntegration();
     testFloorSphere();

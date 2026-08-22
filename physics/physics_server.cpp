@@ -485,9 +485,10 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
             }
             const GameObject::PhysicsBodySettings& settings = object.physics;
             if (settings.motionType == GameObject::PhysicsMotionType::Static &&
-                settings.colliderType != GameObject::PhysicsColliderType::Mesh) {
+                settings.colliderType != GameObject::PhysicsColliderType::Mesh &&
+                settings.colliderType != GameObject::PhysicsColliderType::ConvexHull) {
                 endRuntimeSession();
-                return Result::failure("Static physics requires a mesh collider for " +
+                return Result::failure("Static physics requires a mesh or convex-hull collider for " +
                                        objectDescription(object));
             }
             if (settings.motionType == GameObject::PhysicsMotionType::Dynamic &&
@@ -501,8 +502,11 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
             JPH::BodyID bodyId;
             if (settings.motionType == GameObject::PhysicsMotionType::Static) {
                 physics::CookedShape cooked;
-                const Result shapeResult = impl_->acquireStaticShape(
-                    object, cooked, &staticShapeStats);
+                const Result shapeResult =
+                    settings.colliderType == GameObject::PhysicsColliderType::Mesh
+                        ? impl_->acquireStaticShape(object, cooked,
+                                                    &staticShapeStats)
+                        : physics::buildGameObjectShape(object, cooked);
                 if (!shapeResult) {
                     endRuntimeSession();
                     return Result::failure("Failed to build static collision for " +
@@ -512,7 +516,7 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                 JPH::ShapeRefC shape = cooked.shape;
                 if (shape == nullptr) {
                     endRuntimeSession();
-                    return Result::failure("Failed to create mesh shape for " +
+                    return Result::failure("Failed to create static shape for " +
                                            objectDescription(object));
                 }
                 JPH::BodyCreationSettings bodySettings(
@@ -587,6 +591,7 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
             characterSettings.mSupportingVolume = JPH::Plane(
                 JPH::Vec3::sAxisY(), -physics::dunamisToMeters(character->capsuleRadius));
             characterSettings.mEnhancedInternalEdgeRemoval = false;
+            characterSettings.mBackFaceMode = JPH::EBackFaceMode::IgnoreBackFaces;
             JPH::Ref<JPH::CharacterVirtual> virtualCharacter =
                 new JPH::CharacterVirtual(&characterSettings,
                                           physics::toJoltPosition(character->position),
@@ -594,7 +599,6 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                                           impl_->physicsSystem.get());
             impl_->runtimeCharacters.push_back(
                 {character, std::move(virtualCharacter)});
-            characterSettings.mBackFaceMode = JPH::EBackFaceMode::IgnoreBackFaces;
         }
         spdlog::info("Runtime physics world created: {} static, {} dynamic, {} characters",
                      staticCount, dynamicCount, characters.size());

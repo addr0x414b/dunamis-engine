@@ -6,14 +6,14 @@
   "editor": {
     "camera": {
       "front": [
-        0.9834116697311401,
-        -0.12879560887813568,
-        -0.12772297859191895
+        0.7687321305274963,
+        -0.2923717200756073,
+        -0.5688318610191345
       ],
       "position": [
-        -745.8502197265625,
-        180.81307983398438,
-        4.252368927001953
+        -220.951904296875,
+        145.4671630859375,
+        84.64405059814453
       ],
       "up": [
         0.0,
@@ -22,7 +22,7 @@
       ]
     },
     "renderColliders": [
-      "sponza"
+      "sponzaaaa23123"
     ]
   },
   "formatVersion": 1,
@@ -46,6 +46,54 @@
           1.0,
           1.0,
           1.0
+        ],
+        "texturePath": ""
+      },
+      "type": "GameObject"
+    },
+    {
+      "id": "sponzaaaa",
+      "properties": {
+        "modelPath": "game/assets/models/glTF-Sample-Assets/Models/Fox/glTF/Fox.gltf",
+        "name": "Fox",
+        "position": [
+          412.5909423828125,
+          0.0,
+          -63.74103927612305
+        ],
+        "rotation": [
+          -0.0,
+          -69.0594253540039,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "type": "GameObject"
+    },
+    {
+      "id": "sponzaaaa23123",
+      "properties": {
+        "modelPath": "game/assets/models/glTF-Sample-Assets/Models/PotOfCoals/glTF/PotOfCoals.gltf",
+        "name": "Pot",
+        "position": [
+          -98.7421875,
+          44.28411102294922,
+          -192.98446655273438
+        ],
+        "rotation": [
+          -91.42770385742188,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          750.0,
+          750.0,
+          750.0
         ],
         "texturePath": ""
       },
