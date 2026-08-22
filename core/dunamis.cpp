@@ -23,7 +23,7 @@ Result Dunamis::initialize() {
     }
     initializationAttempted = true;
 
-    spdlog::info("Dunamis Engine v0.0.2");
+    spdlog::info("Dunamis Engine v0.0.3");
 
     try {
         Result result = platform.initialize();

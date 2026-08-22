@@ -586,7 +586,7 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
             characterSettings.mShape = cooked.shape;
             characterSettings.mSupportingVolume = JPH::Plane(
                 JPH::Vec3::sAxisY(), -physics::dunamisToMeters(character->capsuleRadius));
-            characterSettings.mEnhancedInternalEdgeRemoval = true;
+            characterSettings.mEnhancedInternalEdgeRemoval = false;
             JPH::Ref<JPH::CharacterVirtual> virtualCharacter =
                 new JPH::CharacterVirtual(&characterSettings,
                                           physics::toJoltPosition(character->position),
@@ -594,6 +594,7 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                                           impl_->physicsSystem.get());
             impl_->runtimeCharacters.push_back(
                 {character, std::move(virtualCharacter)});
+            characterSettings.mBackFaceMode = JPH::EBackFaceMode::IgnoreBackFaces;
         }
         spdlog::info("Runtime physics world created: {} static, {} dynamic, {} characters",
                      staticCount, dynamicCount, characters.size());
