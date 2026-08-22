@@ -2,6 +2,7 @@ add_library(Editor STATIC
         editor_session.cpp
         editor_camera_controller.cpp
         editor_picking.cpp
+        editor_mutation.cpp
 )
 
 target_include_directories(Editor PUBLIC

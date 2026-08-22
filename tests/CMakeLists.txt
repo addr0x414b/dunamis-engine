@@ -115,6 +115,11 @@ target_include_directories(EditorStateTests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(EditorStateTests PRIVATE Editor)
 add_test(NAME editor_state_semantics COMMAND EditorStateTests)
 
+add_executable(EditorMutationTests editor_mutation_tests.cpp)
+target_include_directories(EditorMutationTests PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(EditorMutationTests PRIVATE Editor)
+add_test(NAME editor_mutation_semantics COMMAND EditorMutationTests)
+
 add_executable(ScenePersistenceTests scene_persistence_tests.cpp)
 target_include_directories(ScenePersistenceTests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(ScenePersistenceTests PRIVATE

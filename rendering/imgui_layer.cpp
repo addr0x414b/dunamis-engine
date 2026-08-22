@@ -27,6 +27,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include "editor_picking.h"
+#include "../editor/editor_mutation.h"
 #include "../editor/editor_picking.h"
 #include "../math/transform_math.h"
 #include "../editor/editor_session.h"
@@ -262,55 +263,6 @@ bool isFiniteMatrix(const glm::mat4& matrix) noexcept {
     return true;
 }
 
-bool extractDunamisRotation(const glm::mat4& matrix,
-                            const glm::vec3& authoredScale,
-                            glm::vec3& rotation) noexcept {
-    rotation = {};
-    if (!isFiniteMatrix(matrix) || !isFiniteVector(authoredScale)) {
-        return false;
-    }
-
-    glm::vec3 basis[3];
-    for (int axis = 0; axis < 3; ++axis) {
-        const glm::vec3 column(matrix[axis]);
-        const float lengthSquared = glm::dot(column, column);
-        if (!std::isfinite(lengthSquared) || lengthSquared <= 1.0e-12f) {
-            return false;
-        }
-
-        const float length = std::sqrt(lengthSquared);
-        if (!std::isfinite(length) || length <= 0.0f) {
-            return false;
-        }
-
-        basis[axis] = column / length;
-        if (authoredScale[axis] < 0.0f) {
-            basis[axis] *= -1.0f;
-        }
-        if (!isFiniteVector(basis[axis])) {
-            return false;
-        }
-    }
-
-    // Dunamis composes Rx * Ry * Rz. ImGuizmo's public decomposition uses
-    // the opposite Euler extraction order, so extract Dunamis' angles from
-    // the normalized manipulated basis directly.
-    const float r00 = basis[0].x;
-    const float r01 = basis[1].x;
-    const float r02 = basis[2].x;
-    const float r12 = basis[2].y;
-    const float r22 = basis[2].z;
-    const float yDenominator = std::sqrt(r00 * r00 + r01 * r01);
-    if (!std::isfinite(yDenominator)) {
-        return false;
-    }
-
-    rotation.x = glm::degrees(std::atan2(-r12, r22));
-    rotation.y = glm::degrees(std::atan2(r02, yDenominator));
-    rotation.z = glm::degrees(std::atan2(-r01, r00));
-    return isFiniteVector(rotation);
-}
-
 bool normalizeFinite(const glm::vec3& value, glm::vec3& normalized) noexcept {
     normalized = {};
     if (!isFiniteVector(value)) {
@@ -439,119 +391,6 @@ float viewDepthForWorldPoint(const glm::vec3& worldPoint,
     const float depth = -viewPoint.z;
     return std::isfinite(depth) ? depth
                                 : std::numeric_limits<float>::infinity();
-}
-
-bool applyObjectPosition(GameObject& object,
-                         const glm::vec3& newPosition) noexcept {
-    if (!isFiniteVector(object.position) || !isFiniteVector(newPosition)) {
-        return false;
-    }
-
-    const glm::vec3 delta = newPosition - object.position;
-    if (!isFiniteVector(delta)) {
-        return false;
-    }
-
-    const bool isStandaloneCamera =
-        dynamic_cast<Camera*>(&object) != nullptr;
-    Camera* attachedCamera =
-        isStandaloneCamera ? nullptr : object.attachedCamera();
-    glm::vec3 newCameraPosition;
-    if (attachedCamera != nullptr) {
-        if (!isFiniteVector(attachedCamera->position)) {
-            return false;
-        }
-        newCameraPosition = attachedCamera->position + delta;
-        if (!isFiniteVector(newCameraPosition)) {
-            return false;
-        }
-    }
-
-    object.position = newPosition;
-    if (attachedCamera != nullptr) {
-        attachedCamera->position = newCameraPosition;
-    }
-    return true;
-}
-
-bool applyObjectRotation(GameObject& object,
-                         const glm::vec3& newRotation) noexcept {
-    if (!isFiniteVector(object.rotation) || !isFiniteVector(newRotation)) {
-        return false;
-    }
-
-    const glm::mat4 oldRotation =
-        transform_math::makeRotationMatrix(object.rotation);
-    const glm::mat4 updatedRotation =
-        transform_math::makeRotationMatrix(newRotation);
-    if (!isFiniteMatrix(oldRotation) || !isFiniteMatrix(updatedRotation)) {
-        return false;
-    }
-
-    const glm::mat4 deltaRotation =
-        updatedRotation * glm::inverse(oldRotation);
-    if (!isFiniteMatrix(deltaRotation)) {
-        return false;
-    }
-
-    Camera* standaloneCamera = dynamic_cast<Camera*>(&object);
-    Camera* attachedCamera =
-        standaloneCamera == nullptr ? object.attachedCamera() : nullptr;
-    Camera* orientationCamera = standaloneCamera != nullptr
-                                    ? standaloneCamera
-                                    : attachedCamera;
-    glm::vec3 newCameraPosition;
-    if (orientationCamera != nullptr) {
-        if (!isFiniteVector(orientationCamera->position)) {
-            return false;
-        }
-
-        if (attachedCamera != nullptr) {
-            if (!isFiniteVector(object.position)) {
-                return false;
-            }
-            const glm::vec3 offset =
-                attachedCamera->position - object.position;
-            const glm::vec3 rotatedOffset = glm::vec3(
-                deltaRotation * glm::vec4(offset, 0.0f));
-            if (!isFiniteVector(offset) || !isFiniteVector(rotatedOffset)) {
-                return false;
-            }
-            newCameraPosition = object.position + rotatedOffset;
-            if (!isFiniteVector(newCameraPosition)) {
-                return false;
-            }
-        }
-
-        if (!orientationCamera->applyOrientationDelta(glm::mat3(deltaRotation))) {
-            return false;
-        }
-    }
-
-    object.rotation = newRotation;
-    if (attachedCamera != nullptr) {
-        attachedCamera->position = newCameraPosition;
-    }
-    return true;
-}
-
-bool applyObjectScale(GameObject& object,
-                      const glm::vec3& newScale) noexcept {
-    if (!isFiniteVector(newScale)) {
-        return false;
-    }
-
-    object.scale = newScale;
-    return true;
-}
-
-bool isFiniteNonnegativeVector(const glm::vec3& vector) noexcept {
-    return isFiniteVector(vector) && vector.x >= 0.0f &&
-           vector.y >= 0.0f && vector.z >= 0.0f;
-}
-
-bool isFiniteNonnegative(float value) noexcept {
-    return std::isfinite(value) && value >= 0.0f;
 }
 
 void checkImGuiVulkanResult(VkResult result) noexcept {
@@ -1321,49 +1160,40 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
             const glm::vec3 manipulatedGizmoCenter(gizmoMatrix[3]);
             const glm::vec3 worldDelta =
                 manipulatedGizmoCenter - originalGizmoCenter;
-            if (isFiniteVector(manipulatedGizmoCenter) &&
-                isFiniteVector(worldDelta) &&
-                applyObjectPosition(*selected,
-                                    selected->position + worldDelta)) {
+            const Result result = editor_mutation::applyPosition(
+                *selected, selected->position + worldDelta);
+            if (result) {
                 inspectorError_.clear();
             } else {
-                inspectorError_ = "Transform values must be finite.";
+                inspectorError_ = result.error();
             }
             break;
         }
         case TransformTool::Rotate: {
             glm::vec3 newRotation;
-            if (extractDunamisRotation(gizmoMatrix, selected->scale,
-                                       newRotation) &&
-                applyObjectRotation(*selected, newRotation)) {
+            Result result = editor_mutation::extractDunamisRotation(
+                gizmoMatrix, selected->scale, newRotation);
+            if (result) {
+                result = editor_mutation::applyRotation(*selected, newRotation);
+            }
+            if (result) {
                 inspectorError_.clear();
             } else {
-                inspectorError_ = "Transform values must be finite.";
+                inspectorError_ = result.error();
             }
             break;
         }
         case TransformTool::Scale: {
-            if (!isFiniteMatrix(gizmoMatrix)) {
-                inspectorError_ = "Transform values must be finite.";
-                break;
+            glm::vec3 newScale;
+            Result result = editor_mutation::extractDunamisScale(
+                gizmoMatrix, selected->scale, newScale);
+            if (result) {
+                result = editor_mutation::applyScale(*selected, newScale);
             }
-
-            float translation[3]{};
-            float rotation[3]{};
-            float scale[3]{};
-            ImGuizmo::DecomposeMatrixToComponents(
-                glm::value_ptr(gizmoMatrix), translation, rotation, scale);
-            glm::vec3 newScale(scale[0], scale[1], scale[2]);
-            for (int axis = 0; axis < 3; ++axis) {
-                if (selected->scale[axis] < 0.0f) {
-                    newScale[axis] *= -1.0f;
-                }
-            }
-            if (isFiniteVector(newScale) && applyObjectScale(*selected,
-                                                              newScale)) {
+            if (result) {
                 inspectorError_.clear();
             } else {
-                inspectorError_ = "Transform values must be finite.";
+                inspectorError_ = result.error();
             }
             break;
         }
@@ -2014,28 +1844,34 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
     ImGui::SeparatorText("Transform");
     glm::vec3 position = selectedGameObject->position;
     if (ImGui::DragFloat3("Position", &position.x, 0.1f)) {
-        if (applyObjectPosition(*selectedGameObject, position)) {
+        const Result result =
+            editor_mutation::applyPosition(*selectedGameObject, position);
+        if (result) {
             inspectorError_.clear();
         } else {
-            inspectorError_ = "Transform values must be finite.";
+            inspectorError_ = result.error();
         }
     }
 
     glm::vec3 rotation = selectedGameObject->rotation;
     if (ImGui::DragFloat3("Rotation (degrees)", &rotation.x, 0.5f)) {
-        if (applyObjectRotation(*selectedGameObject, rotation)) {
+        const Result result =
+            editor_mutation::applyRotation(*selectedGameObject, rotation);
+        if (result) {
             inspectorError_.clear();
         } else {
-            inspectorError_ = "Transform values must be finite.";
+            inspectorError_ = result.error();
         }
     }
 
     glm::vec3 scale = selectedGameObject->scale;
     if (ImGui::DragFloat3("Scale", &scale.x, 0.01f)) {
-        if (applyObjectScale(*selectedGameObject, scale)) {
+        const Result result =
+            editor_mutation::applyScale(*selectedGameObject, scale);
+        if (result) {
             inspectorError_.clear();
         } else {
-            inspectorError_ = "Transform values must be finite.";
+            inspectorError_ = result.error();
         }
     }
 
@@ -2119,23 +1955,23 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
         if (ImGui::ColorEdit3("Color", &color.x,
                               ImGuiColorEditFlags_HDR |
                                   ImGuiColorEditFlags_Float)) {
-            if (isFiniteNonnegativeVector(color)) {
-                pointLight->color = color;
+            const Result result =
+                editor_mutation::applyPointLightColor(*pointLight, color);
+            if (result) {
                 inspectorError_.clear();
             } else {
-                inspectorError_ =
-                    "Color components must be finite and nonnegative.";
+                inspectorError_ = result.error();
             }
         }
 
         float intensity = pointLight->intensity;
         if (ImGui::DragFloat("Intensity", &intensity, 0.1f)) {
-            if (isFiniteNonnegative(intensity)) {
-                pointLight->intensity = intensity;
+            const Result result = editor_mutation::applyPointLightIntensity(
+                *pointLight, intensity);
+            if (result) {
                 inspectorError_.clear();
             } else {
-                inspectorError_ =
-                    "Intensity must be finite and nonnegative.";
+                inspectorError_ = result.error();
             }
         }
     }
@@ -2147,23 +1983,24 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
         if (ImGui::ColorEdit3("Color", &color.x,
                               ImGuiColorEditFlags_HDR |
                                   ImGuiColorEditFlags_Float)) {
-            if (isFiniteNonnegativeVector(color)) {
-                directionalLight->color = color;
+            const Result result = editor_mutation::applyDirectionalLightColor(
+                *directionalLight, color);
+            if (result) {
                 inspectorError_.clear();
             } else {
-                inspectorError_ =
-                    "Color components must be finite and nonnegative.";
+                inspectorError_ = result.error();
             }
         }
 
         float intensity = directionalLight->intensity;
         if (ImGui::DragFloat("Intensity", &intensity, 0.1f)) {
-            if (isFiniteNonnegative(intensity)) {
-                directionalLight->intensity = intensity;
+            const Result result =
+                editor_mutation::applyDirectionalLightIntensity(
+                    *directionalLight, intensity);
+            if (result) {
                 inspectorError_.clear();
             } else {
-                inspectorError_ =
-                    "Intensity must be finite and nonnegative.";
+                inspectorError_ = result.error();
             }
         }
 
