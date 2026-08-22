@@ -48,9 +48,6 @@ private:
     std::shared_ptr<InputManager> inputManager;
     bool initializationAttempted = false;
     bool initialized = false;
-    std::filesystem::path pendingLoadPath_;
-    std::filesystem::path pendingSaveAsPath_;
-    bool quitConfirmationPending_ = false;
 };
 
 #endif

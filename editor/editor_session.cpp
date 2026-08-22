@@ -98,18 +98,51 @@ const GameObject* EditorSession::selectedGameObjectForScene(
     return nullptr;
 }
 
-void EditorSession::submitEditorCommand(EditorCommand command) noexcept {
-    pendingEditorCommand_ = command;
+void EditorSession::submitEditorAction(EditorAction action) {
+    pendingEditorAction_ = std::move(action);
 }
 
-EditorCommand EditorSession::pendingEditorCommand() const noexcept {
-    return pendingEditorCommand_;
+const EditorAction& EditorSession::pendingEditorAction() const noexcept {
+    return pendingEditorAction_;
 }
 
-EditorCommand EditorSession::consumeEditorCommand() noexcept {
-    const EditorCommand command = pendingEditorCommand_;
-    pendingEditorCommand_ = EditorCommand::None;
-    return command;
+EditorAction EditorSession::consumeEditorAction() {
+    EditorAction action = std::move(pendingEditorAction_);
+    pendingEditorAction_ = {};
+    return action;
+}
+
+void EditorSession::setPendingLoadPath(std::filesystem::path path) {
+    pendingLoadPath_ = std::move(path);
+}
+
+const std::filesystem::path& EditorSession::pendingLoadPath() const noexcept {
+    return pendingLoadPath_;
+}
+
+void EditorSession::clearPendingLoadPath() noexcept {
+    pendingLoadPath_.clear();
+}
+
+void EditorSession::setPendingSaveAsPath(std::filesystem::path path) {
+    pendingSaveAsPath_ = std::move(path);
+}
+
+const std::filesystem::path&
+EditorSession::pendingSaveAsPath() const noexcept {
+    return pendingSaveAsPath_;
+}
+
+void EditorSession::clearPendingSaveAsPath() noexcept {
+    pendingSaveAsPath_.clear();
+}
+
+bool EditorSession::quitConfirmationPending() const noexcept {
+    return quitConfirmationPending_;
+}
+
+void EditorSession::setQuitConfirmationPending(bool pending) noexcept {
+    quitConfirmationPending_ = pending;
 }
 
 void EditorSession::submitRuntimeTransformEdit(

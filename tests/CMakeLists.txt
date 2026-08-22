@@ -126,9 +126,9 @@ target_include_directories(EditorPickingTests PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_definitions(EditorPickingTests PRIVATE
         DUNAMIS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_link_libraries(EditorPickingTests PRIVATE
+        Editor
         EditorPicking
         GameObject
-        VulkanUtils
         assimp
         glm
         spdlog)

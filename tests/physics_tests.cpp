@@ -780,8 +780,9 @@ void testPhysicsServerEditorRelease() {
     PhysicsServer server;
     expect(static_cast<bool>(server.initialize()), "failed to initialize PhysicsServer");
     expect(static_cast<bool>(server.beginRuntimeSession(scene)), "failed to begin physics session");
-    const RuntimeTransformEdit held{propPointer, {0.0f, 6.0f, 0.0f}, {25.0f, 30.0f, 10.0f}, true};
-    server.applyRuntimeTransformEdit(held);
+    const glm::vec3 heldPosition{0.0f, 6.0f, 0.0f};
+    const glm::vec3 heldRotation{25.0f, 30.0f, 10.0f};
+    server.applyRuntimeTransform(*propPointer, heldPosition, heldRotation, true);
     TimeTestAccess::initialize();
     TimeTestAccess::update();
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -789,9 +790,7 @@ void testPhysicsServerEditorRelease() {
     server.update();
     expect(near(propPointer->position.y, 6.0f, 1.0e-3f),
            "physics overwrote an active editor transform override");
-    RuntimeTransformEdit released = held;
-    released.manipulating = false;
-    server.applyRuntimeTransformEdit(released);
+    server.applyRuntimeTransform(*propPointer, heldPosition, heldRotation, false);
     TimeTestAccess::initialize();
     TimeTestAccess::update();
     std::this_thread::sleep_for(std::chrono::milliseconds(20));

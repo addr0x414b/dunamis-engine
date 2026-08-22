@@ -27,6 +27,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include "editor_picking.h"
+#include "../editor/editor_picking.h"
 #include "../math/transform_math.h"
 #include "../editor/editor_session.h"
 #include "../scene/character.h"
@@ -784,11 +785,11 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
     if (ImGui::BeginMenu("File")) {
         ImGui::BeginDisabled(!editing);
         if (ImGui::MenuItem("Save", "Ctrl+S") &&
-            !editorCommandPending()) {
-            submitEditorCommand(EditorCommand::SaveScene);
+            !editorActionPending()) {
+            submitEditorAction(EditorCommand::SaveScene);
         }
         ImGui::BeginDisabled(nativeFileDialogBusy() ||
-                             editorCommandPending());
+                             editorActionPending());
         if (ImGui::MenuItem("Save As...")) {
             (void)requestNativeFileDialog(true);
         }
@@ -805,8 +806,8 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
     if (editorShortcutAvailable &&
         ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S,
                         ImGuiInputFlags_RouteGlobal) &&
-        !editorCommandPending()) {
-        submitEditorCommand(EditorCommand::SaveScene);
+        !editorActionPending()) {
+        submitEditorAction(EditorCommand::SaveScene);
     }
     const float playButtonWidth =
         ImGui::CalcTextSize("Play").x + 2.0f * style.FramePadding.x;
@@ -823,24 +824,24 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
 
     ImGui::BeginDisabled(!editing);
     if (ImGui::Button("Play", ImVec2(playButtonWidth, 0.0f)) &&
-        !editorCommandPending()) {
-        submitEditorCommand(EditorCommand::Play);
+        !editorActionPending()) {
+        submitEditorAction(EditorCommand::Play);
     }
     ImGui::EndDisabled();
 
     ImGui::SameLine();
     ImGui::BeginDisabled(!editing);
     if (ImGui::Button("Simulate", ImVec2(simulateButtonWidth, 0.0f)) &&
-        !editorCommandPending()) {
-        submitEditorCommand(EditorCommand::Simulate);
+        !editorActionPending()) {
+        submitEditorAction(EditorCommand::Simulate);
     }
     ImGui::EndDisabled();
 
     ImGui::SameLine();
     ImGui::BeginDisabled(!runtimeSceneRunning(runState));
     if (ImGui::Button("Stop", ImVec2(stopButtonWidth, 0.0f)) &&
-        !editorCommandPending()) {
-        submitEditorCommand(EditorCommand::Stop);
+        !editorActionPending()) {
+        submitEditorAction(EditorCommand::Stop);
     }
     ImGui::EndDisabled();
     ImGui::EndMainMenuBar();
@@ -856,14 +857,14 @@ void ImGuiLayer::drawPersistenceDialogs() {
         ImGui::TextUnformatted("File already exists. Overwrite it?");
         ImGui::Text("%s", saveAsOverwritePath_.c_str());
         if (ImGui::Button("Overwrite") &&
-            !editorCommandPending()) {
-            submitEditorCommand(EditorCommand::ConfirmSaveSceneAsOverwrite);
+            !editorActionPending()) {
+            submitEditorAction(EditorCommand::ConfirmSaveSceneAsOverwrite);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button("Cancel") &&
-            !editorCommandPending()) {
-            submitEditorCommand(EditorCommand::CancelSaveSceneAs);
+            !editorActionPending()) {
+            submitEditorAction(EditorCommand::CancelSaveSceneAs);
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -877,17 +878,17 @@ void ImGuiLayer::drawPersistenceDialogs() {
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted("Unsaved changes detected.");
         if (ImGui::Button("Save and Load")) {
-            submitEditorCommand(EditorCommand::SaveAndLoad);
+            submitEditorAction(EditorCommand::SaveAndLoad);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button("Don't Save and Load")) {
-            submitEditorCommand(EditorCommand::DiscardAndLoad);
+            submitEditorAction(EditorCommand::DiscardAndLoad);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button("Cancel")) {
-            submitEditorCommand(EditorCommand::Cancel);
+            submitEditorAction(EditorCommand::Cancel);
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -901,17 +902,17 @@ void ImGuiLayer::drawPersistenceDialogs() {
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted("Unsaved changes detected. Save before quitting?");
         if (ImGui::Button("Save and Quit")) {
-            submitEditorCommand(EditorCommand::SaveAndQuit);
+            submitEditorAction(EditorCommand::SaveAndQuit);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button("Don't Save and Quit")) {
-            submitEditorCommand(EditorCommand::DiscardAndQuit);
+            submitEditorAction(EditorCommand::DiscardAndQuit);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button("Cancel")) {
-            submitEditorCommand(EditorCommand::Cancel);
+            submitEditorAction(EditorCommand::Cancel);
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -1036,11 +1037,13 @@ void ImGuiLayer::consumeNativeFileDialogResult() {
     }
 
     if (result->kind == NativeFileDialogState::Kind::SaveAs) {
-        requestedSaveAsPath_ = std::move(result->path);
-        submitEditorCommand(EditorCommand::SaveSceneAs);
+        submitEditorAction(EditorAction{
+            EditorCommand::SaveSceneAs,
+            std::filesystem::path(std::move(result->path))});
     } else {
-        requestedScenePath_ = std::move(result->path);
-        submitEditorCommand(EditorCommand::LoadScene);
+        submitEditorAction(EditorAction{
+            EditorCommand::LoadScene,
+            std::filesystem::path(std::move(result->path))});
     }
 }
 
@@ -1063,12 +1066,6 @@ void ImGuiLayer::stopNativeFileDialog() noexcept {
     nativeFileDialogState_->pendingResult.reset();
 }
 
-std::string ImGuiLayer::requestedScenePath() const { return requestedScenePath_; }
-
-std::string ImGuiLayer::requestedSaveAsPath() const {
-    return requestedSaveAsPath_;
-}
-
 void ImGuiLayer::requestLoadConfirmation() { openLoadConfirmationPopup_ = true; }
 void ImGuiLayer::requestSaveAsOverwriteConfirmation(const std::string& path) {
     saveAsOverwritePath_ = path;
@@ -1084,14 +1081,18 @@ void ImGuiLayer::setPhysicsDiagnostics(
     physicsDiagnosticsError_ = std::move(error);
 }
 
-bool ImGuiLayer::editorCommandPending() const noexcept {
+bool ImGuiLayer::editorActionPending() const noexcept {
     return editorSession_ != nullptr &&
-           editorSession_->pendingEditorCommand() != EditorCommand::None;
+           editorSession_->pendingEditorAction().command != EditorCommand::None;
 }
 
-void ImGuiLayer::submitEditorCommand(EditorCommand command) noexcept {
+void ImGuiLayer::submitEditorAction(EditorCommand command) {
+    submitEditorAction(EditorAction{command, {}});
+}
+
+void ImGuiLayer::submitEditorAction(EditorAction action) {
     if (editorSession_ != nullptr) {
-        editorSession_->submitEditorCommand(command);
+        editorSession_->submitEditorAction(std::move(action));
     }
 }
 
@@ -1968,47 +1969,7 @@ void ImGuiLayer::processWorldSelection(Scene* scene, const glm::mat4& view,
         return;
     }
     const editor_picking::Ray ray{origin, direction / directionLength};
-
-    GameObject* closestObject = nullptr;
-    float closestDistance = std::numeric_limits<float>::infinity();
-    for (const auto& owner : scene->gameObjects()) {
-        GameObject* object = owner.get();
-        if (object == nullptr) {
-            continue;
-        }
-        const glm::mat4 model = transform_math::makeModelMatrix(
-            object->position, object->rotation, object->scale);
-        std::size_t meshIndex = 0;
-        for (const MeshInstance& instance :
-             object->modelRenderable().meshInstances()) {
-            float distance = 0.0f;
-            editor_picking::MeshPickDiagnostics diagnostics;
-            const bool hit = editor_picking::intersectMeshWorld(
-                ray, instance.mesh, model, distance, &diagnostics);
-#ifndef NDEBUG
-            const Mesh::Bounds& bounds = instance.mesh.bounds;
-            spdlog::debug(
-                "Editor pick object='{}' meshes={} mesh={} vertices={} "
-                "indices={} boundsValid={} boundsMin=({}, {}, {}) "
-                "boundsMax=({}, {}, {}) invertible={} broadPhase={} "
-                "triangles={} hitDistance={}",
-                object->name, object->modelRenderable().meshInstances().size(),
-                meshIndex,
-                instance.mesh.vertices.size(), instance.mesh.indices.size(),
-                bounds.valid, bounds.minimum.x, bounds.minimum.y,
-                bounds.minimum.z, bounds.maximum.x, bounds.maximum.y,
-                bounds.maximum.z, diagnostics.transformInvertible,
-                diagnostics.broadPhasePassed, diagnostics.triangleTestingReached,
-                hit ? distance : -1.0f);
-#endif
-            if (hit &&
-                distance < closestDistance) {
-                closestDistance = distance;
-                closestObject = object;
-            }
-            ++meshIndex;
-        }
-    }
+    GameObject* closestObject = editor_picking::pickClosestObject(*scene, ray);
     selectGameObject(scene, closestObject);
 }
 
@@ -2340,12 +2301,10 @@ void ImGuiLayer::shutdown() noexcept {
     runtimeTransformObject_ = nullptr;
     if (editorSession_ != nullptr) {
         editorSession_->select(nullptr, nullptr);
-        (void)editorSession_->consumeEditorCommand();
+        (void)editorSession_->consumeEditorAction();
         (void)editorSession_->consumeRuntimeTransformEdit();
     }
     inspectorError_.clear();
-    requestedScenePath_.clear();
-    requestedSaveAsPath_.clear();
     saveAsOverwritePath_.clear();
     openSaveAsOverwritePopup_ = false;
     openLoadConfirmationPopup_ = false;
@@ -2394,8 +2353,6 @@ void ImGuiLayer::abandon() noexcept {
     runtimeTransformObject_ = nullptr;
     editorSession_ = nullptr;
     inspectorError_.clear();
-    requestedScenePath_.clear();
-    requestedSaveAsPath_.clear();
     saveAsOverwritePath_.clear();
     openSaveAsOverwritePopup_ = false;
     openLoadConfirmationPopup_ = false;

@@ -1,13 +1,16 @@
+#include "editor/editor_picking.h"
 #include "rendering/editor_picking.h"
 #include "math/transform_math.h"
 #include "scene/camera.h"
 #include "scene/game_object.h"
 #include "scene/model_renderable.h"
+#include "scene/scene.h"
 
 #include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <vector>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -22,6 +25,13 @@ public:
     const Camera* attachedCamera() const noexcept override {
         return &camera;
     }
+};
+
+class TestScene final : public Scene {
+public:
+    void init() override {}
+    void start() override {}
+    void update() override {}
 };
 
 bool expect(bool value, const char* message) {
@@ -280,6 +290,34 @@ bool runClosestObjectAndGizmoTests() {
         avocadoDistance);
     bool passed = expect(sponzaHit && avocadoHit && avocadoDistance < sponzaDistance,
                          "Closest hit across Sponza and Avocado-sized meshes failed");
+
+    TestScene scene;
+    auto farObject = std::make_unique<GameObject>();
+    farObject->position = {0.0f, 0.0f, 8.0f};
+    MeshInstance farInstance{};
+    farInstance.mesh = makeTriangle();
+    passed &= expect(static_cast<bool>(farObject->modelRenderable().addMeshInstance(
+        std::move(farInstance))),
+                     "Could not add far picking mesh");
+    passed &= expect(static_cast<bool>(scene.addGameObject(std::move(farObject))),
+                     "Could not add far picking object");
+
+    auto nearObject = std::make_unique<GameObject>();
+    nearObject->position = {0.0f, 0.0f, 2.0f};
+    MeshInstance nearInstance{};
+    nearInstance.mesh = makeTriangle();
+    passed &= expect(static_cast<bool>(nearObject->modelRenderable().addMeshInstance(
+        std::move(nearInstance))),
+                     "Could not add near picking mesh");
+    GameObject* nearObjectPointer = nearObject.get();
+    passed &= expect(static_cast<bool>(scene.addGameObject(std::move(nearObject))),
+                     "Could not add near picking object");
+    passed &= expect(editor_picking::pickClosestObject(scene, ray) == nearObjectPointer,
+                     "World object picking did not choose the nearest mesh");
+    passed &= expect(editor_picking::pickClosestObject(scene,
+                                                       {{20.0f, 0.0f, -10.0f},
+                                                        {0.0f, 0.0f, 1.0f}}) == nullptr,
+                     "World object picking accepted a ray with no hit");
 
     MeshInstance left{};
     left.mesh = makeTriangleAt(-2.0f);

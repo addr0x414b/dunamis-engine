@@ -28,8 +28,6 @@ public:
     void clearEditorSelection() noexcept;
     [[nodiscard]] bool sceneInteractionAreaHovered() const noexcept;
     void setCurrentScenePath(const std::string& path);
-    [[nodiscard]] std::string requestedScenePath() const;
-    [[nodiscard]] std::string requestedSaveAsPath() const;
     void requestLoadConfirmation();
     void requestSaveAsOverwriteConfirmation(const std::string& path);
     void requestQuitConfirmation();

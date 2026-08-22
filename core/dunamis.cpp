@@ -254,7 +254,11 @@ Result Dunamis::run() {
                 }
                 if (const std::optional<RuntimeTransformEdit> edit =
                         editorSession_.consumeRuntimeTransformEdit()) {
-                    physicsServer_.applyRuntimeTransformEdit(*edit);
+                    if (edit->object != nullptr) {
+                        physicsServer_.applyRuntimeTransform(
+                            *edit->object, edit->position, edit->rotation,
+                            edit->manipulating);
+                    }
                 }
                 runtimeScene->update();
                 physicsServer_.update();
@@ -270,8 +274,8 @@ Result Dunamis::run() {
                 return Result::failure("Rendering failed: " + result.error());
             }
 
-            const EditorCommand command =
-                editorSession_.consumeEditorCommand();
+            const EditorAction action = editorSession_.consumeEditorAction();
+            const EditorCommand command = action.command;
             const auto captureColliderVisibility = [&] {
                 sceneManager_.setEditorRenderColliders(
                     editorSession_.renderColliderIds());
@@ -289,56 +293,52 @@ Result Dunamis::run() {
                 reportPersistenceResult(result, "Scene saved");
                 result = Result::success();
             } else if (command == EditorCommand::SaveSceneAs) {
-                pendingSaveAsPath_ = visualServer.requestedSaveAsPath();
+                editorSession_.clearPendingSaveAsPath();
                 if (editorSession_.runState() != SceneRunState::Editing) {
                     reportPersistenceResult(
                         Result::failure("Scene Save As is available only while Editing"),
                         {});
-                    pendingSaveAsPath_.clear();
-                } else if (pendingSaveAsPath_.empty()) {
+                } else if (action.path.empty()) {
                     reportPersistenceResult(
                         Result::failure("Save As path is empty"), {});
-                    pendingSaveAsPath_.clear();
                 } else {
                     std::error_code pathQueryError;
                     const bool destinationExists = std::filesystem::exists(
-                        pendingSaveAsPath_, pathQueryError);
+                        action.path, pathQueryError);
                     if (pathQueryError) {
                         reportPersistenceResult(
                             Result::failure(
                                 "Failed to query Save As destination '" +
-                                pendingSaveAsPath_.string() + "': " +
+                                action.path.string() + "': " +
                                 pathQueryError.message()),
                             {});
-                        pendingSaveAsPath_.clear();
                     } else if (destinationExists) {
                         const bool destinationIsDirectory =
                             std::filesystem::is_directory(
-                                pendingSaveAsPath_, pathQueryError);
+                                action.path, pathQueryError);
                         if (pathQueryError) {
                             reportPersistenceResult(
                                 Result::failure(
                                     "Failed to query Save As destination '" +
-                                    pendingSaveAsPath_.string() + "': " +
+                                    action.path.string() + "': " +
                                     pathQueryError.message()),
                                 {});
-                            pendingSaveAsPath_.clear();
                         } else if (destinationIsDirectory) {
                             reportPersistenceResult(
                                 Result::failure(
                                     "Save As destination '" +
-                                    pendingSaveAsPath_.string() +
+                                    action.path.string() +
                                     "' is an existing directory"),
                                 {});
-                            pendingSaveAsPath_.clear();
                         } else {
+                            editorSession_.setPendingSaveAsPath(action.path);
                             visualServer.requestSaveAsOverwriteConfirmation(
-                                pendingSaveAsPath_.string());
+                                action.path.string());
                         }
                     } else {
                         captureColliderVisibility();
                         result = sceneManager_.saveEditingSceneAs(
-                            pendingSaveAsPath_,
+                            action.path,
                             editorCameraController.camera());
                         if (result) {
                             visualServer.setCurrentScenePath(
@@ -347,60 +347,65 @@ Result Dunamis::run() {
                         reportPersistenceResult(
                             result,
                             "Scene saved as '" +
-                                pendingSaveAsPath_.string() + "'");
-                        pendingSaveAsPath_.clear();
+                                action.path.string() + "'");
                     }
                 }
                 result = Result::success();
             } else if (command == EditorCommand::ConfirmSaveSceneAsOverwrite) {
+                const std::filesystem::path pendingSaveAsPath =
+                    editorSession_.pendingSaveAsPath();
                 if (editorSession_.runState() != SceneRunState::Editing) {
                     reportPersistenceResult(
                         Result::failure("Scene Save As is available only while Editing"),
                         {});
-                } else if (pendingSaveAsPath_.empty()) {
+                } else if (pendingSaveAsPath.empty()) {
                     reportPersistenceResult(
                         Result::failure("No Save As destination is pending"),
                         {});
                 } else {
                     captureColliderVisibility();
                     result = sceneManager_.saveEditingSceneAs(
-                        pendingSaveAsPath_, editorCameraController.camera());
+                        pendingSaveAsPath, editorCameraController.camera());
                     if (result) {
                         visualServer.setCurrentScenePath(
                             sceneManager_.currentScenePath().string());
                     }
                     reportPersistenceResult(
                         result,
-                        "Scene saved as '" + pendingSaveAsPath_.string() + "'");
-                    pendingSaveAsPath_.clear();
+                        "Scene saved as '" + pendingSaveAsPath.string() + "'");
                 }
+                editorSession_.clearPendingSaveAsPath();
                 result = Result::success();
             } else if (command == EditorCommand::CancelSaveSceneAs) {
-                pendingSaveAsPath_.clear();
+                editorSession_.clearPendingSaveAsPath();
                 result = Result::success();
             } else if (command == EditorCommand::LoadScene) {
-                pendingLoadPath_ = visualServer.requestedScenePath();
                 if (sceneManager_.hasUnsavedChanges()) {
+                    editorSession_.setPendingLoadPath(action.path);
                     visualServer.requestLoadConfirmation();
                     result = Result::success();
                 } else {
-                    result = loadEditingScene(pendingLoadPath_);
+                    editorSession_.clearPendingLoadPath();
+                    result = loadEditingScene(action.path);
                     reportPersistenceResult(result, "Scene loaded");
-                    if (result) pendingLoadPath_.clear();
                     result = Result::success();
                 }
             } else if (command == EditorCommand::SaveAndLoad) {
+                const std::filesystem::path pendingLoadPath =
+                    editorSession_.pendingLoadPath();
                 captureColliderVisibility();
                 result = sceneManager_.saveEditingScene(
                     editorCameraController.camera());
-                if (result) result = loadEditingScene(pendingLoadPath_);
+                if (result) result = loadEditingScene(pendingLoadPath);
                 reportPersistenceResult(result, "Scene saved and loaded");
-                if (result) pendingLoadPath_.clear();
+                if (result) editorSession_.clearPendingLoadPath();
                 result = Result::success();
             } else if (command == EditorCommand::DiscardAndLoad) {
-                result = loadEditingScene(pendingLoadPath_);
+                const std::filesystem::path pendingLoadPath =
+                    editorSession_.pendingLoadPath();
+                result = loadEditingScene(pendingLoadPath);
                 reportPersistenceResult(result, "Scene loaded");
-                if (result) pendingLoadPath_.clear();
+                if (result) editorSession_.clearPendingLoadPath();
                 result = Result::success();
             } else if (command == EditorCommand::SaveAndQuit) {
                 captureColliderVisibility();
@@ -408,7 +413,7 @@ Result Dunamis::run() {
                     editorCameraController.camera());
                 if (result) running = false;
                 else {
-                    quitConfirmationPending_ = false;
+                    editorSession_.setQuitConfirmationPending(false);
                     reportPersistenceResult(result, {});
                 }
                 result = Result::success();
@@ -416,8 +421,8 @@ Result Dunamis::run() {
                 running = false;
                 result = Result::success();
             } else if (command == EditorCommand::Cancel) {
-                pendingLoadPath_.clear();
-                quitConfirmationPending_ = false;
+                editorSession_.clearPendingLoadPath();
+                editorSession_.setQuitConfirmationPending(false);
                 result = Result::success();
             }
             if (!result) {
@@ -491,12 +496,12 @@ Result Dunamis::loadEditingScene(const std::filesystem::path& path) {
 }
 
 void Dunamis::requestQuit(bool& running) {
-    if (quitConfirmationPending_) return;
+    if (editorSession_.quitConfirmationPending()) return;
     if (!sceneManager_.hasUnsavedChanges()) {
         running = false;
         return;
     }
-    quitConfirmationPending_ = true;
+    editorSession_.setQuitConfirmationPending(true);
     if (usesGameplayCamera(editorSession_.runState()) && inputManager &&
         inputManager->inputMode() == InputMode::GameplayCaptured) {
         const Result release = inputManager->toggleGameplayMouseRelease();
@@ -773,10 +778,10 @@ bool Dunamis::shutdown() noexcept {
 
     platform.shutdown();
     editorSession_.setRunState(SceneRunState::Editing);
+    editorSession_.clearPendingLoadPath();
+    editorSession_.clearPendingSaveAsPath();
+    editorSession_.setQuitConfirmationPending(false);
     initialized = false;
-    pendingLoadPath_.clear();
-    pendingSaveAsPath_.clear();
-    quitConfirmationPending_ = false;
     return true;
 }
 

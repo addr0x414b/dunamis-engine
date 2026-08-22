@@ -5,7 +5,7 @@ target_link_libraries(VulkanUtils INTERFACE glm)
 
 add_library(EditorPicking STATIC editor_picking.cpp)
 target_include_directories(EditorPicking PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(EditorPicking PRIVATE VulkanUtils GameObject Camera glm)
+target_link_libraries(EditorPicking PRIVATE GameObject Camera glm)
 
 add_library(DirectionalShadow STATIC directional_shadow.cpp)
 target_include_directories(DirectionalShadow PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

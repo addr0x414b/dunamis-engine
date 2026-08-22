@@ -30,9 +30,19 @@ public:
     [[nodiscard]] const GameObject* selectedGameObjectForScene(
         const Scene* scene) const noexcept;
 
-    void submitEditorCommand(EditorCommand command) noexcept;
-    [[nodiscard]] EditorCommand pendingEditorCommand() const noexcept;
-    [[nodiscard]] EditorCommand consumeEditorCommand() noexcept;
+    void submitEditorAction(EditorAction action);
+    [[nodiscard]] const EditorAction& pendingEditorAction() const noexcept;
+    [[nodiscard]] EditorAction consumeEditorAction();
+
+    void setPendingLoadPath(std::filesystem::path path);
+    [[nodiscard]] const std::filesystem::path& pendingLoadPath() const noexcept;
+    void clearPendingLoadPath() noexcept;
+    void setPendingSaveAsPath(std::filesystem::path path);
+    [[nodiscard]] const std::filesystem::path&
+    pendingSaveAsPath() const noexcept;
+    void clearPendingSaveAsPath() noexcept;
+    [[nodiscard]] bool quitConfirmationPending() const noexcept;
+    void setQuitConfirmationPending(bool pending) noexcept;
 
     void submitRuntimeTransformEdit(
         const RuntimeTransformEdit& edit) noexcept;
@@ -51,7 +61,10 @@ private:
     TransformTool transformTool_ = TransformTool::Translate;
     Scene* selectionScene_ = nullptr;
     GameObject* selectedGameObject_ = nullptr;
-    EditorCommand pendingEditorCommand_ = EditorCommand::None;
+    EditorAction pendingEditorAction_;
+    std::filesystem::path pendingLoadPath_;
+    std::filesystem::path pendingSaveAsPath_;
+    bool quitConfirmationPending_ = false;
     std::optional<RuntimeTransformEdit> pendingRuntimeTransformEdit_;
     std::unordered_set<std::string> renderColliderIds_;
 };

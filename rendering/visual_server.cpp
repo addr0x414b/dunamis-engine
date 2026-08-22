@@ -321,14 +321,6 @@ void VisualServer::setCurrentScenePath(const std::string& path) {
     vulkanContext.setCurrentScenePath(path);
 }
 
-std::string VisualServer::requestedScenePath() const {
-    return vulkanContext.requestedScenePath();
-}
-
-std::string VisualServer::requestedSaveAsPath() const {
-    return vulkanContext.requestedSaveAsPath();
-}
-
 void VisualServer::requestLoadConfirmation() {
     vulkanContext.requestLoadConfirmation();
 }

@@ -1,6 +1,8 @@
 #ifndef EDITOR_STATE_H
 #define EDITOR_STATE_H
 
+#include <filesystem>
+
 enum class SceneRunState {
     Editing,
     Playing,
@@ -28,6 +30,11 @@ enum class EditorCommand {
     SaveAndQuit,
     DiscardAndQuit,
     Cancel,
+};
+
+struct EditorAction {
+    EditorCommand command = EditorCommand::None;
+    std::filesystem::path path;
 };
 
 [[nodiscard]] constexpr bool editorToolsEnabled(

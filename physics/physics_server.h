@@ -4,8 +4,9 @@
 #include <cstddef>
 #include <memory>
 
+#include <glm/vec3.hpp>
+
 #include "../core/result.h"
-#include "../editor/runtime_transform_edit.h"
 
 class Scene;
 class GameObject;
@@ -40,7 +41,8 @@ public:
     [[nodiscard]] Result acquireCollisionShape(const GameObject& object,
                                                physics::CookedShape& output);
     [[nodiscard]] Result beginRuntimeSession(Scene& runtimeScene);
-    void applyRuntimeTransformEdit(const RuntimeTransformEdit& edit);
+    void applyRuntimeTransform(GameObject& object, const glm::vec3& position,
+                               const glm::vec3& rotation, bool manipulating);
     void update();
     void endRuntimeSession() noexcept;
     void shutdown() noexcept;

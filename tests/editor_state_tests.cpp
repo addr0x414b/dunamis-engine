@@ -3,6 +3,7 @@
 #include "scene/scene.h"
 
 #include <iostream>
+#include <filesystem>
 #include <memory>
 #include <vector>
 
@@ -68,13 +69,51 @@ int main() {
     passed &= expect(session.transformTool() == TransformTool::Scale,
                      "Scale transform tool did not round-trip");
 
-    session.submitEditorCommand(EditorCommand::SaveScene);
-    passed &= expect(session.pendingEditorCommand() == EditorCommand::SaveScene,
-                     "Submitted editor command was not pending");
-    passed &= expect(session.consumeEditorCommand() == EditorCommand::SaveScene,
-                     "Editor command consumption returned the wrong command");
-    passed &= expect(session.pendingEditorCommand() == EditorCommand::None,
-                     "Consumed editor command remained pending");
+    const std::filesystem::path loadPath =
+        std::filesystem::path("scenes") / "exact-load.scene.json";
+    session.submitEditorAction({EditorCommand::LoadScene, loadPath});
+    passed &= expect(
+        session.pendingEditorAction().command == EditorCommand::LoadScene,
+        "Submitted load action was not pending");
+    passed &= expect(session.pendingEditorAction().path == loadPath,
+                     "Load action path changed before consumption");
+    const EditorAction consumedLoad = session.consumeEditorAction();
+    passed &= expect(consumedLoad.command == EditorCommand::LoadScene,
+                     "Load action consumption returned the wrong command");
+    passed &= expect(consumedLoad.path == loadPath,
+                     "Load action consumption returned the wrong path");
+    passed &= expect(
+        session.pendingEditorAction().command == EditorCommand::None &&
+            session.pendingEditorAction().path.empty(),
+        "Consumed load action remained pending");
+
+    const std::filesystem::path saveAsPath =
+        std::filesystem::path("scenes") / "exact-save-as.scene.json";
+    session.submitEditorAction({EditorCommand::SaveSceneAs, saveAsPath});
+    const EditorAction consumedSaveAs = session.consumeEditorAction();
+    passed &= expect(consumedSaveAs.command == EditorCommand::SaveSceneAs,
+                     "Save As action consumption returned the wrong command");
+    passed &= expect(consumedSaveAs.path == saveAsPath,
+                     "Save As action path changed during consumption");
+
+    session.setPendingLoadPath(loadPath);
+    passed &= expect(session.pendingLoadPath() == loadPath,
+                     "Pending load workflow path did not round-trip");
+    session.clearPendingLoadPath();
+    passed &= expect(session.pendingLoadPath().empty(),
+                     "Pending load workflow path did not clear");
+    session.setPendingSaveAsPath(saveAsPath);
+    passed &= expect(session.pendingSaveAsPath() == saveAsPath,
+                     "Pending Save As workflow path did not round-trip");
+    session.clearPendingSaveAsPath();
+    passed &= expect(session.pendingSaveAsPath().empty(),
+                     "Pending Save As workflow path did not clear");
+    session.setQuitConfirmationPending(true);
+    passed &= expect(session.quitConfirmationPending(),
+                     "Quit confirmation state did not set");
+    session.setQuitConfirmationPending(false);
+    passed &= expect(!session.quitConfirmationPending(),
+                     "Quit confirmation state did not clear");
 
     TestScene scene;
     auto objectOwner = std::make_unique<GameObject>();

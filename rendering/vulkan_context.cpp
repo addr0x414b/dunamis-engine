@@ -4733,14 +4733,6 @@ void VulkanContext::setCurrentScenePath(const std::string& path) {
     imguiLayer.setCurrentScenePath(path);
 }
 
-std::string VulkanContext::requestedScenePath() const {
-    return imguiLayer.requestedScenePath();
-}
-
-std::string VulkanContext::requestedSaveAsPath() const {
-    return imguiLayer.requestedSaveAsPath();
-}
-
 void VulkanContext::requestLoadConfirmation() {
     imguiLayer.requestLoadConfirmation();
 }

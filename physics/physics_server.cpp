@@ -622,23 +622,26 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
     }
 }
 
-void PhysicsServer::applyRuntimeTransformEdit(const RuntimeTransformEdit& edit) {
-    if (!impl_ || !impl_->physicsSystem || edit.object == nullptr) {
+void PhysicsServer::applyRuntimeTransform(GameObject& object,
+                                          const glm::vec3& position,
+                                          const glm::vec3& rotation,
+                                          bool manipulating) {
+    if (!impl_ || !impl_->physicsSystem) {
         return;
     }
-    if (!std::isfinite(edit.position.x) || !std::isfinite(edit.position.y) ||
-        !std::isfinite(edit.position.z) || !std::isfinite(edit.rotation.x) ||
-        !std::isfinite(edit.rotation.y) || !std::isfinite(edit.rotation.z)) {
+    if (!std::isfinite(position.x) || !std::isfinite(position.y) ||
+        !std::isfinite(position.z) || !std::isfinite(rotation.x) ||
+        !std::isfinite(rotation.y) || !std::isfinite(rotation.z)) {
         return;
     }
     JPH::BodyInterface& bodies = impl_->physicsSystem->GetBodyInterface();
     for (Impl::RuntimeBody& body : impl_->runtimeBodies) {
-        if (body.object != edit.object) {
+        if (body.object != &object) {
             continue;
         }
         bodies.SetPositionAndRotation(body.id,
-                                      physics::toJoltPosition(edit.position),
-                                      physics::toJoltRotation(edit.rotation),
+                                      physics::toJoltPosition(position),
+                                      physics::toJoltRotation(rotation),
                                       body.isDynamic ? JPH::EActivation::Activate
                                                      : JPH::EActivation::DontActivate);
         if (body.isDynamic) {
@@ -657,9 +660,9 @@ void PhysicsServer::applyRuntimeTransformEdit(const RuntimeTransformEdit& edit) 
                                      static_cast<int>(dynamicBodyIds.size()));
             }
         }
-        body.object->position = edit.position;
-        body.object->rotation = edit.rotation;
-        body.editorOverride = body.isDynamic && edit.manipulating;
+        body.object->position = position;
+        body.object->rotation = rotation;
+        body.editorOverride = body.isDynamic && manipulating;
         return;
     }
 }

@@ -57,8 +57,6 @@ public:
     void clearSelection() noexcept;
     [[nodiscard]] bool sceneInteractionAreaHovered() const noexcept;
     void setCurrentScenePath(const std::string& path);
-    [[nodiscard]] std::string requestedScenePath() const;
-    [[nodiscard]] std::string requestedSaveAsPath() const;
     void requestLoadConfirmation();
     void requestSaveAsOverwriteConfirmation(const std::string& path);
     void requestQuitConfirmation();
@@ -78,8 +76,9 @@ public:
 
 private:
     [[nodiscard]] Result initializeVulkanBackend();
-    [[nodiscard]] bool editorCommandPending() const noexcept;
-    void submitEditorCommand(EditorCommand command) noexcept;
+    [[nodiscard]] bool editorActionPending() const noexcept;
+    void submitEditorAction(EditorCommand command);
+    void submitEditorAction(EditorAction action);
     void submitRuntimeTransformEdit(
         const RuntimeTransformEdit& edit) noexcept;
     void finishRuntimeTransformDrag() noexcept;
@@ -180,8 +179,6 @@ private:
     std::string physicsDiagnosticsError_;
     std::vector<EditorHelperGeometry> editorHelperGeometry_;
     std::string currentScenePath_;
-    std::string requestedScenePath_;
-    std::string requestedSaveAsPath_;
     std::string saveAsOverwritePath_;
     bool openSaveAsOverwritePopup_ = false;
     bool openLoadConfirmationPopup_ = false;
