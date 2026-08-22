@@ -1,6 +1,7 @@
 #include "vulkan_context.h"
 
 #include "renderer_configuration.h"
+#include "../editor/editor_session.h"
 #include "../math/transform_math.h"
 #include "../physics/physics_server.h"
 #include "../scene/model_renderable.h"
@@ -620,7 +621,8 @@ Result VulkanContext::validateTextureData(
     return Result::success();
 }
 
-Result VulkanContext::init(SDL_Window* w, Scene* scene) {
+Result VulkanContext::init(SDL_Window* w, Scene* scene,
+                           EditorSession& editorSession) {
     spdlog::info("Initializing Vulkan Context...");
     if (!w) {
         return Result::failure(
@@ -643,6 +645,7 @@ Result VulkanContext::init(SDL_Window* w, Scene* scene) {
     }
     window = w;
     currentScene = scene;
+    editorSession_ = &editorSession;
     // DebugRenderer touches Jolt globals; VisualServer is constructed before
     // PhysicsServer initialization, so create it only once initialization is
     // actively requested after the physics backend is ready.
@@ -4694,12 +4697,16 @@ Result VulkanContext::initializeImGui() {
         return Result::failure(
             "Graphics queue-family index is unavailable for Dear ImGui");
     }
+    if (editorSession_ == nullptr) {
+        return Result::failure(
+            "Editor session is unavailable for Dear ImGui");
+    }
 
     return imguiLayer.initialize(
         window, instance, physicalDevice, device,
         graphicsQueueFamily.value(), graphicsQueue, renderPass, msaaSamples,
         swapchainMinimumImageCount,
-        static_cast<uint32_t>(swapchainImages.size()));
+        static_cast<uint32_t>(swapchainImages.size()), *editorSession_);
 }
 
 void VulkanContext::processEvent(const SDL_Event& event) noexcept {
@@ -4716,15 +4723,6 @@ void VulkanContext::setImGuiInputEnabled(bool enabled) noexcept {
 
 void VulkanContext::clearEditorSelection() noexcept {
     imguiLayer.clearSelection();
-}
-
-EditorCommand VulkanContext::consumeEditorCommand() noexcept {
-    return imguiLayer.consumeEditorCommand();
-}
-
-std::optional<RuntimeTransformEdit>
-VulkanContext::consumeRuntimeTransformEdit() noexcept {
-    return imguiLayer.consumeRuntimeTransformEdit();
 }
 
 bool VulkanContext::sceneInteractionAreaHovered() const noexcept {
@@ -4995,7 +4993,8 @@ void VulkanContext::prepareSelectedPhysicsDiagnostics(Scene* scene,
     imguiLayer.setPhysicsDiagnostics(nullptr, std::nullopt, {});
     if (scene == nullptr || !editorToolsEnabled(runState)) return;
 
-    const GameObject* selected = imguiLayer.selectedGameObjectForScene(scene);
+    const GameObject* selected =
+        editorSession_->selectedGameObjectForScene(scene);
     if (selected == nullptr) return;
     const bool character = dynamic_cast<const Character*>(selected) != nullptr;
     if (!character && !selected->physics.enabled) return;
@@ -5106,7 +5105,8 @@ Result VulkanContext::preparePhysicsDebugDraws(Scene* scene, SceneRunState runSt
         const GameObject& object = *owner;
         const bool character = dynamic_cast<const Character*>(&object) != nullptr;
         if (!character &&
-            (!object.physics.enabled || !imguiLayer.renderColliderEnabled(object))) {
+            (!object.physics.enabled ||
+             !editorSession_->renderColliderEnabled(object))) {
             continue;
         }
         const PhysicsDebugShapeSignature signature =
@@ -5512,7 +5512,7 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
     }
 
     const GameObject* selectedObject =
-        imguiLayer.selectedGameObjectForScene(scene);
+        editorSession_->selectedGameObjectForScene(scene);
     if (editorToolsEnabled(runState) && selectedObject != nullptr &&
         !selectedObject->modelRenderable().meshInstances_.empty() &&
         swapchainExtent.width > 0 && swapchainExtent.height > 0) {
@@ -6240,6 +6240,7 @@ bool VulkanContext::cleanup() noexcept {
     currentScene = nullptr;
     sceneResourceLoadTarget_ = nullptr;
     physicsServer_ = nullptr;
+    editorSession_ = nullptr;
     window = nullptr;
 
     if (hadResources) {

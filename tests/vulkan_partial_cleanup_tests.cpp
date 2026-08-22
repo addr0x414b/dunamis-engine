@@ -1,4 +1,5 @@
 #include "core/platform.h"
+#include "editor/editor_session.h"
 #include "rendering/visual_server.h"
 #include "rendering/vulkan_context.h"
 #include "scene/character.h"
@@ -284,9 +285,10 @@ int main(int argc, char** argv) {
     }
 
     EmptyScene scene;
+    EditorSession editorSession;
     VulkanContext context;
     const Result initializationResult =
-        context.init(platform.window(), &scene);
+        context.init(platform.window(), &scene, editorSession);
 
     // The test's working directory deliberately has no shader files, so a
     // Vulkan-capable machine reaches a deep, deterministic initialization
@@ -340,9 +342,11 @@ int main(int argc, char** argv) {
     }
 
     {
+        EditorSession editorSession;
         VulkanContext initializedContext;
         const Result fullInitializationResult =
-            initializedContext.init(platform.window(), &resourceScene);
+            initializedContext.init(platform.window(), &resourceScene,
+                                    editorSession);
         if (!fullInitializationResult) {
             std::cerr << "Full Vulkan initialization failed after the partial "
                          "path succeeded: "
@@ -419,9 +423,11 @@ int main(int argc, char** argv) {
             return 1;
         }
 
+        EditorSession editorSession;
         VisualServer visualServer;
         const Result visualServerResult =
-            visualServer.initialize(platform.window(), &noLightScene);
+            visualServer.initialize(platform.window(), &noLightScene,
+                                    editorSession);
         if (!visualServerResult) {
             std::cerr << "Failed to initialize no-light frame test: "
                       << visualServerResult.error() << '\n';

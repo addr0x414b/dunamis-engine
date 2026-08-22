@@ -8,7 +8,6 @@
 #include <optional>
 #include <string>
 #include <vector>
-#include <unordered_set>
 
 #include <SDL3/SDL.h>
 #include <glm/vec2.hpp>
@@ -16,9 +15,9 @@
 #include <vulkan/vulkan.h>
 
 #include "../core/result.h"
-#include "../core/editor_state.h"
+#include "../editor/editor_state.h"
+#include "../editor/runtime_transform_edit.h"
 #include "../physics/shape_diagnostics.h"
-#include "../scene/runtime_transform_edit.h"
 
 class Scene;
 class GameObject;
@@ -26,6 +25,7 @@ class Camera;
 class PointLight;
 class DirectionalLight;
 class Character;
+class EditorSession;
 struct NativeFileDialogState;
 
 class ImGuiLayer final {
@@ -41,7 +41,8 @@ public:
         VkPhysicalDevice physicalDevice, VkDevice device,
         std::uint32_t graphicsQueueFamily, VkQueue graphicsQueue,
         VkRenderPass renderPass, VkSampleCountFlagBits msaaSamples,
-        std::uint32_t minimumImageCount, std::uint32_t imageCount);
+        std::uint32_t minimumImageCount, std::uint32_t imageCount,
+        EditorSession& editorSession);
 
     void processEvent(const SDL_Event& event) noexcept;
     void setInputEnabled(bool enabled) noexcept;
@@ -54,9 +55,6 @@ public:
     [[nodiscard]] const GameObject*
     selectedGameObjectForScene(const Scene* scene) const noexcept;
     void clearSelection() noexcept;
-    [[nodiscard]] EditorCommand consumeEditorCommand() noexcept;
-    [[nodiscard]] std::optional<RuntimeTransformEdit>
-    consumeRuntimeTransformEdit() noexcept;
     [[nodiscard]] bool sceneInteractionAreaHovered() const noexcept;
     void setCurrentScenePath(const std::string& path);
     [[nodiscard]] std::string requestedScenePath() const;
@@ -68,9 +66,6 @@ public:
         const GameObject* object,
         std::optional<physics::ShapeDiagnostics> diagnostics,
         std::string error);
-    void setRenderColliderIds(const std::vector<std::string>& ids);
-    [[nodiscard]] std::vector<std::string> renderColliderIds() const;
-    [[nodiscard]] bool renderColliderEnabled(const GameObject& object) const noexcept;
 
     [[nodiscard]] Result onSwapchainRecreated(
         VkRenderPass renderPass, VkSampleCountFlagBits msaaSamples,
@@ -82,13 +77,12 @@ public:
     void abandon() noexcept;
 
 private:
-    enum class GizmoMode {
-        Translate,
-        Scale,
-        Rotate,
-    };
-
     [[nodiscard]] Result initializeVulkanBackend();
+    [[nodiscard]] bool editorCommandPending() const noexcept;
+    void submitEditorCommand(EditorCommand command) noexcept;
+    void submitRuntimeTransformEdit(
+        const RuntimeTransformEdit& edit) noexcept;
+    void finishRuntimeTransformDrag() noexcept;
     void synchronizeSelection(Scene* scene) noexcept;
     void selectGameObject(Scene* scene, GameObject* object) noexcept;
     void drawToolbar(SceneRunState runState);
@@ -176,16 +170,11 @@ private:
     bool gizmoDragActive_ = false;
     bool runtimeTransformDragActive_ = false;
     GameObject* runtimeTransformObject_ = nullptr;
-    std::optional<RuntimeTransformEdit> pendingRuntimeTransformEdit_;
-    GizmoMode gizmoMode_ = GizmoMode::Translate;
-    Scene* selectionScene_ = nullptr;
-    GameObject* selectedGameObject_ = nullptr;
+    EditorSession* editorSession_ = nullptr;
     std::string inspectorError_;
-    EditorCommand pendingEditorCommand_ = EditorCommand::None;
     std::shared_ptr<NativeFileDialogState> nativeFileDialogState_;
     bool sceneInteractionAreaHovered_ = false;
     SceneInteractionRect sceneInteractionRect_;
-    std::unordered_set<std::string> renderColliderIds_;
     const GameObject* physicsDiagnosticsObject_ = nullptr;
     std::optional<physics::ShapeDiagnostics> physicsDiagnostics_;
     std::string physicsDiagnosticsError_;

@@ -2,33 +2,30 @@
 #define VISUAL_SERVER_H
 
 #include <SDL3/SDL.h>
-#include <optional>
 #include <SDL3/SDL_vulkan.h>
 #include "spdlog/spdlog.h"
-#include "../core/editor_state.h"
+#include "../editor/editor_state.h"
 #include "../core/result.h"
 #include "../scene/camera.h"
-#include "../scene/runtime_transform_edit.h"
 #include "../scene/scene.h"
 
 #include "vulkan_context.h"
 
 class PhysicsServer;
+class EditorSession;
 
 class VisualServer {
 public:
     ~VisualServer() noexcept;
 
     [[nodiscard]] Result initialize(SDL_Window* window, Scene* scene,
+                                    EditorSession& editorSession,
                                     PhysicsServer* physicsServer = nullptr);
     [[nodiscard]] Result run(Scene* scene, const Camera& renderCamera,
                              SceneRunState runState);
     void processEvent(const SDL_Event& event) noexcept;
     void setImGuiInputEnabled(bool enabled) noexcept;
     void clearEditorSelection() noexcept;
-    [[nodiscard]] EditorCommand consumeEditorCommand() noexcept;
-    [[nodiscard]] std::optional<RuntimeTransformEdit>
-    consumeRuntimeTransformEdit() noexcept;
     [[nodiscard]] bool sceneInteractionAreaHovered() const noexcept;
     void setCurrentScenePath(const std::string& path);
     [[nodiscard]] std::string requestedScenePath() const;
@@ -36,8 +33,6 @@ public:
     void requestLoadConfirmation();
     void requestSaveAsOverwriteConfirmation(const std::string& path);
     void requestQuitConfirmation();
-    void setRenderColliderIds(const std::vector<std::string>& ids);
-    [[nodiscard]] std::vector<std::string> renderColliderIds() const;
     [[nodiscard]] Result loadSceneResources(Scene* scene);
     [[nodiscard]] Result unloadSceneResources(Scene* scene);
     [[nodiscard]] Result switchScene(Scene* scene);

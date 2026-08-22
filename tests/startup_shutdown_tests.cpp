@@ -1,5 +1,6 @@
 #include "core/platform.h"
 #include "core/result.h"
+#include "editor/editor_session.h"
 #include "rendering/vulkan_context.h"
 
 #include <SDL3/SDL.h>
@@ -32,8 +33,9 @@ int main() {
                      "A failed Result did not preserve its error");
 
     {
+        EditorSession editorSession;
         VulkanContext context;
-        const Result result = context.init(nullptr, nullptr);
+        const Result result = context.init(nullptr, nullptr, editorSession);
         passed &= expect(!static_cast<bool>(result),
                          "VulkanContext accepted a null SDL window");
 

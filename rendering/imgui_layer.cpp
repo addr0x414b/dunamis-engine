@@ -28,6 +28,7 @@
 
 #include "editor_picking.h"
 #include "../math/transform_math.h"
+#include "../editor/editor_session.h"
 #include "../scene/character.h"
 #include "../scene/directional_light.h"
 #include "../scene/game_object.h"
@@ -589,7 +590,8 @@ Result ImGuiLayer::initialize(
     VkPhysicalDevice physicalDevice, VkDevice device,
     std::uint32_t graphicsQueueFamily, VkQueue graphicsQueue,
     VkRenderPass renderPass, VkSampleCountFlagBits msaaSamples,
-    std::uint32_t minimumImageCount, std::uint32_t imageCount) {
+    std::uint32_t minimumImageCount, std::uint32_t imageCount,
+    EditorSession& editorSession) {
     if (initialized() || contextCreated_) {
         return Result::failure("Dear ImGui is already initialized");
     }
@@ -615,6 +617,7 @@ Result ImGuiLayer::initialize(
             "image count no smaller than the minimum");
     }
 
+    editorSession_ = &editorSession;
     nativeFileDialogState_ = std::make_shared<NativeFileDialogState>();
     window_ = window;
     instance_ = instance;
@@ -697,7 +700,9 @@ void ImGuiLayer::setInputEnabled(bool enabled) noexcept {
     gizmoDragActive_ = false;
     runtimeTransformDragActive_ = false;
     runtimeTransformObject_ = nullptr;
-    pendingRuntimeTransformEdit_.reset();
+    if (editorSession_ != nullptr) {
+        (void)editorSession_->consumeRuntimeTransformEdit();
+    }
     if (!contextCreated_) {
         return;
     }
@@ -779,11 +784,11 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
     if (ImGui::BeginMenu("File")) {
         ImGui::BeginDisabled(!editing);
         if (ImGui::MenuItem("Save", "Ctrl+S") &&
-            pendingEditorCommand_ == EditorCommand::None) {
-            pendingEditorCommand_ = EditorCommand::SaveScene;
+            !editorCommandPending()) {
+            submitEditorCommand(EditorCommand::SaveScene);
         }
         ImGui::BeginDisabled(nativeFileDialogBusy() ||
-                             pendingEditorCommand_ != EditorCommand::None);
+                             editorCommandPending());
         if (ImGui::MenuItem("Save As...")) {
             (void)requestNativeFileDialog(true);
         }
@@ -800,8 +805,8 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
     if (editorShortcutAvailable &&
         ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S,
                         ImGuiInputFlags_RouteGlobal) &&
-        pendingEditorCommand_ == EditorCommand::None) {
-        pendingEditorCommand_ = EditorCommand::SaveScene;
+        !editorCommandPending()) {
+        submitEditorCommand(EditorCommand::SaveScene);
     }
     const float playButtonWidth =
         ImGui::CalcTextSize("Play").x + 2.0f * style.FramePadding.x;
@@ -818,24 +823,24 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
 
     ImGui::BeginDisabled(!editing);
     if (ImGui::Button("Play", ImVec2(playButtonWidth, 0.0f)) &&
-        pendingEditorCommand_ == EditorCommand::None) {
-        pendingEditorCommand_ = EditorCommand::Play;
+        !editorCommandPending()) {
+        submitEditorCommand(EditorCommand::Play);
     }
     ImGui::EndDisabled();
 
     ImGui::SameLine();
     ImGui::BeginDisabled(!editing);
     if (ImGui::Button("Simulate", ImVec2(simulateButtonWidth, 0.0f)) &&
-        pendingEditorCommand_ == EditorCommand::None) {
-        pendingEditorCommand_ = EditorCommand::Simulate;
+        !editorCommandPending()) {
+        submitEditorCommand(EditorCommand::Simulate);
     }
     ImGui::EndDisabled();
 
     ImGui::SameLine();
     ImGui::BeginDisabled(!runtimeSceneRunning(runState));
     if (ImGui::Button("Stop", ImVec2(stopButtonWidth, 0.0f)) &&
-        pendingEditorCommand_ == EditorCommand::None) {
-        pendingEditorCommand_ = EditorCommand::Stop;
+        !editorCommandPending()) {
+        submitEditorCommand(EditorCommand::Stop);
     }
     ImGui::EndDisabled();
     ImGui::EndMainMenuBar();
@@ -851,14 +856,14 @@ void ImGuiLayer::drawPersistenceDialogs() {
         ImGui::TextUnformatted("File already exists. Overwrite it?");
         ImGui::Text("%s", saveAsOverwritePath_.c_str());
         if (ImGui::Button("Overwrite") &&
-            pendingEditorCommand_ == EditorCommand::None) {
-            pendingEditorCommand_ = EditorCommand::ConfirmSaveSceneAsOverwrite;
+            !editorCommandPending()) {
+            submitEditorCommand(EditorCommand::ConfirmSaveSceneAsOverwrite);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button("Cancel") &&
-            pendingEditorCommand_ == EditorCommand::None) {
-            pendingEditorCommand_ = EditorCommand::CancelSaveSceneAs;
+            !editorCommandPending()) {
+            submitEditorCommand(EditorCommand::CancelSaveSceneAs);
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -872,17 +877,17 @@ void ImGuiLayer::drawPersistenceDialogs() {
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted("Unsaved changes detected.");
         if (ImGui::Button("Save and Load")) {
-            pendingEditorCommand_ = EditorCommand::SaveAndLoad;
+            submitEditorCommand(EditorCommand::SaveAndLoad);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button("Don't Save and Load")) {
-            pendingEditorCommand_ = EditorCommand::DiscardAndLoad;
+            submitEditorCommand(EditorCommand::DiscardAndLoad);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button("Cancel")) {
-            pendingEditorCommand_ = EditorCommand::Cancel;
+            submitEditorCommand(EditorCommand::Cancel);
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -896,17 +901,17 @@ void ImGuiLayer::drawPersistenceDialogs() {
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted("Unsaved changes detected. Save before quitting?");
         if (ImGui::Button("Save and Quit")) {
-            pendingEditorCommand_ = EditorCommand::SaveAndQuit;
+            submitEditorCommand(EditorCommand::SaveAndQuit);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button("Don't Save and Quit")) {
-            pendingEditorCommand_ = EditorCommand::DiscardAndQuit;
+            submitEditorCommand(EditorCommand::DiscardAndQuit);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button("Cancel")) {
-            pendingEditorCommand_ = EditorCommand::Cancel;
+            submitEditorCommand(EditorCommand::Cancel);
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -1032,10 +1037,10 @@ void ImGuiLayer::consumeNativeFileDialogResult() {
 
     if (result->kind == NativeFileDialogState::Kind::SaveAs) {
         requestedSaveAsPath_ = std::move(result->path);
-        pendingEditorCommand_ = EditorCommand::SaveSceneAs;
+        submitEditorCommand(EditorCommand::SaveSceneAs);
     } else {
         requestedScenePath_ = std::move(result->path);
-        pendingEditorCommand_ = EditorCommand::LoadScene;
+        submitEditorCommand(EditorCommand::LoadScene);
     }
 }
 
@@ -1079,58 +1084,47 @@ void ImGuiLayer::setPhysicsDiagnostics(
     physicsDiagnosticsError_ = std::move(error);
 }
 
-void ImGuiLayer::setRenderColliderIds(const std::vector<std::string>& ids) {
-    renderColliderIds_.clear();
-    for (const std::string& id : ids) if (!id.empty()) renderColliderIds_.insert(id);
+bool ImGuiLayer::editorCommandPending() const noexcept {
+    return editorSession_ != nullptr &&
+           editorSession_->pendingEditorCommand() != EditorCommand::None;
 }
 
-std::vector<std::string> ImGuiLayer::renderColliderIds() const {
-    return {renderColliderIds_.begin(), renderColliderIds_.end()};
+void ImGuiLayer::submitEditorCommand(EditorCommand command) noexcept {
+    if (editorSession_ != nullptr) {
+        editorSession_->submitEditorCommand(command);
+    }
 }
 
-bool ImGuiLayer::renderColliderEnabled(const GameObject& object) const noexcept {
-    return renderColliderIds_.count(object.persistentId) != 0;
+void ImGuiLayer::submitRuntimeTransformEdit(
+    const RuntimeTransformEdit& edit) noexcept {
+    if (editorSession_ != nullptr) {
+        editorSession_->submitRuntimeTransformEdit(edit);
+    }
 }
 
 const GameObject* ImGuiLayer::selectedGameObjectForScene(
     const Scene* scene) const noexcept {
-    if (scene == nullptr || scene != selectionScene_ ||
-        selectedGameObject_ == nullptr) {
-        return nullptr;
-    }
-
-    for (const auto& object : scene->gameObjects()) {
-        if (object.get() == selectedGameObject_) {
-            return selectedGameObject_;
-        }
-    }
-    return nullptr;
+    return editorSession_ == nullptr
+               ? nullptr
+               : editorSession_->selectedGameObjectForScene(scene);
 }
 
-void ImGuiLayer::clearSelection() noexcept {
+void ImGuiLayer::finishRuntimeTransformDrag() noexcept {
     if (runtimeTransformDragActive_ && runtimeTransformObject_ != nullptr) {
-        pendingRuntimeTransformEdit_ = RuntimeTransformEdit{
+        submitRuntimeTransformEdit(RuntimeTransformEdit{
             runtimeTransformObject_, runtimeTransformObject_->position,
-            runtimeTransformObject_->rotation, false};
+            runtimeTransformObject_->rotation, false});
     }
     runtimeTransformDragActive_ = false;
     runtimeTransformObject_ = nullptr;
-    selectedGameObject_ = nullptr;
-    gizmoMode_ = GizmoMode::Translate;
+}
+
+void ImGuiLayer::clearSelection() noexcept {
+    finishRuntimeTransformDrag();
+    if (editorSession_ != nullptr) {
+        editorSession_->clearSelection();
+    }
     inspectorError_.clear();
-}
-
-EditorCommand ImGuiLayer::consumeEditorCommand() noexcept {
-    const EditorCommand command = pendingEditorCommand_;
-    pendingEditorCommand_ = EditorCommand::None;
-    return command;
-}
-
-std::optional<RuntimeTransformEdit>
-ImGuiLayer::consumeRuntimeTransformEdit() noexcept {
-    std::optional<RuntimeTransformEdit> edit = pendingRuntimeTransformEdit_;
-    pendingRuntimeTransformEdit_.reset();
-    return edit;
 }
 
 bool ImGuiLayer::sceneInteractionAreaHovered() const noexcept {
@@ -1138,61 +1132,51 @@ bool ImGuiLayer::sceneInteractionAreaHovered() const noexcept {
 }
 
 void ImGuiLayer::synchronizeSelection(Scene* scene) noexcept {
-    if (scene != selectionScene_) {
-        selectionScene_ = scene;
-        clearSelection();
-    }
-
-    if (scene == nullptr) {
-        selectionScene_ = nullptr;
-        clearSelection();
+    if (editorSession_ == nullptr) {
         return;
     }
 
-    if (selectedGameObject_ == nullptr) {
-        return;
-    }
-
-    bool selectedObjectIsPresent = false;
-    for (const auto& object : scene->gameObjects()) {
-        if (object.get() == selectedGameObject_) {
-            selectedObjectIsPresent = true;
-            break;
+    if (scene != editorSession_->selectionScene()) {
+        clearSelection();
+    } else if (scene == nullptr) {
+        clearSelection();
+    } else if (editorSession_->selectedGameObject() != nullptr) {
+        bool selectedObjectIsPresent = false;
+        for (const auto& object : scene->gameObjects()) {
+            if (object.get() == editorSession_->selectedGameObject()) {
+                selectedObjectIsPresent = true;
+                break;
+            }
+        }
+        if (!selectedObjectIsPresent) {
+            clearSelection();
         }
     }
-
-    if (!selectedObjectIsPresent) {
-        clearSelection();
-    }
+    editorSession_->synchronizeSelection(scene);
 }
 
 void ImGuiLayer::selectGameObject(Scene* scene, GameObject* object) noexcept {
+    if (editorSession_ == nullptr) {
+        return;
+    }
     if (scene == nullptr) {
-        selectionScene_ = nullptr;
         clearSelection();
+        editorSession_->select(nullptr, nullptr);
         return;
     }
 
-    selectionScene_ = scene;
     if (object == nullptr) {
         clearSelection();
+        editorSession_->select(scene, nullptr);
         return;
     }
 
     for (const auto& owner : scene->gameObjects()) {
         if (owner.get() == object) {
-            if (selectedGameObject_ != object) {
-                if (runtimeTransformDragActive_ &&
-                    runtimeTransformObject_ != nullptr) {
-                    pendingRuntimeTransformEdit_ = RuntimeTransformEdit{
-                        runtimeTransformObject_, runtimeTransformObject_->position,
-                        runtimeTransformObject_->rotation, false};
-                    runtimeTransformDragActive_ = false;
-                    runtimeTransformObject_ = nullptr;
-                }
-                gizmoMode_ = GizmoMode::Translate;
+            if (editorSession_->selectedGameObject() != object) {
+                finishRuntimeTransformDrag();
             }
-            selectedGameObject_ = object;
+            editorSession_->select(scene, object);
             inspectorError_.clear();
             return;
         }
@@ -1222,7 +1206,8 @@ void ImGuiLayer::drawSceneHierarchy(Scene* scene, bool disabled) {
         const char* label = object->name.empty()
                                 ? "<Unnamed GameObject>"
                                 : object->name.c_str();
-        const bool selected = selectedGameObject_ == object;
+        const bool selected =
+            selectedGameObjectForScene(scene) == object;
         if (ImGui::Selectable(label, selected)) {
             selectGameObject(scene, object);
         }
@@ -1253,11 +1238,11 @@ void ImGuiLayer::processGizmoShortcuts(Scene* scene,
     }
 
     if (ImGui::IsKeyPressed(ImGuiKey_W, false)) {
-        gizmoMode_ = GizmoMode::Translate;
+        editorSession_->setTransformTool(TransformTool::Translate);
     } else if (ImGui::IsKeyPressed(ImGuiKey_E, false)) {
-        gizmoMode_ = GizmoMode::Scale;
+        editorSession_->setTransformTool(TransformTool::Scale);
     } else if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
-        gizmoMode_ = GizmoMode::Rotate;
+        editorSession_->setTransformTool(TransformTool::Rotate);
     }
 }
 
@@ -1295,10 +1280,11 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
         selected->position, selected->rotation, selected->scale);
     glm::mat4 gizmoMatrix = model;
     glm::vec3 originalGizmoCenter;
+    const TransformTool transformTool = editorSession_->transformTool();
     ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE;
     ImGuizmo::MODE mode = ImGuizmo::WORLD;
-    switch (gizmoMode_) {
-    case GizmoMode::Translate: {
+    switch (transformTool) {
+    case TransformTool::Translate: {
         gizmoMatrix =
             transform_math::makeTranslationMatrix(selected->position);
         originalGizmoCenter = glm::vec3(gizmoMatrix[3]);
@@ -1306,7 +1292,7 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
         mode = ImGuizmo::WORLD;
         break;
     }
-    case GizmoMode::Scale:
+    case TransformTool::Scale:
         if (runState == SceneRunState::Simulating && selected->physics.enabled) {
             gizmoDragActive_ = false;
             inspectorError_ = "Runtime Scale is unavailable for physics bodies.";
@@ -1316,7 +1302,7 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
         operation = ImGuizmo::SCALE;
         mode = ImGuizmo::LOCAL;
         break;
-    case GizmoMode::Rotate:
+    case TransformTool::Rotate:
         operation = ImGuizmo::ROTATE;
         mode = ImGuizmo::LOCAL;
         break;
@@ -1329,8 +1315,8 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
     drawList->PopClipRect();
 
     if (manipulated) {
-        switch (gizmoMode_) {
-        case GizmoMode::Translate: {
+        switch (transformTool) {
+        case TransformTool::Translate: {
             const glm::vec3 manipulatedGizmoCenter(gizmoMatrix[3]);
             const glm::vec3 worldDelta =
                 manipulatedGizmoCenter - originalGizmoCenter;
@@ -1344,7 +1330,7 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
             }
             break;
         }
-        case GizmoMode::Rotate: {
+        case TransformTool::Rotate: {
             glm::vec3 newRotation;
             if (extractDunamisRotation(gizmoMatrix, selected->scale,
                                        newRotation) &&
@@ -1355,7 +1341,7 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
             }
             break;
         }
-        case GizmoMode::Scale: {
+        case TransformTool::Scale: {
             if (!isFiniteMatrix(gizmoMatrix)) {
                 inspectorError_ = "Transform values must be finite.";
                 break;
@@ -1386,17 +1372,18 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
                        ImGui::IsMouseDown(ImGuiMouseButton_Left);
     const bool runtimePhysicsBacked =
         runState == SceneRunState::Simulating && selected->physics.enabled;
-    const bool runtimeTransformMode = gizmoMode_ == GizmoMode::Translate ||
-                                      gizmoMode_ == GizmoMode::Rotate;
+    const bool runtimeTransformMode =
+        transformTool == TransformTool::Translate ||
+        transformTool == TransformTool::Rotate;
     const bool activeNow = runtimePhysicsBacked && runtimeTransformMode && gizmoDragActive_;
     if (activeNow) {
         runtimeTransformDragActive_ = true;
         runtimeTransformObject_ = selected;
     }
     if (runtimeTransformDragActive_ && runtimeTransformObject_ != nullptr) {
-        pendingRuntimeTransformEdit_ = RuntimeTransformEdit{
+        submitRuntimeTransformEdit(RuntimeTransformEdit{
             runtimeTransformObject_, runtimeTransformObject_->position,
-            runtimeTransformObject_->rotation, activeNow};
+            runtimeTransformObject_->rotation, activeNow});
         if (!activeNow) {
             runtimeTransformDragActive_ = false;
             runtimeTransformObject_ = nullptr;
@@ -1622,7 +1609,7 @@ void ImGuiLayer::drawPointLightVisualization(
     const ImVec2 clipMax(
         sceneInteractionRect_.x + sceneInteractionRect_.width,
         sceneInteractionRect_.y + sceneInteractionRect_.height);
-    const bool selected = selectedGameObject_ == selectionTarget;
+    const bool selected = editorSession_->selectedGameObject() == selectionTarget;
     const ImGuiCol accent = selected ? ImGuiCol_ButtonActive
                                      : ImGuiCol_ButtonHovered;
     const ImU32 color = ImGui::ColorConvertFloat4ToU32(
@@ -1731,7 +1718,7 @@ void ImGuiLayer::drawDirectionalLightVisualization(
     const ImVec2 clipMax(
         sceneInteractionRect_.x + sceneInteractionRect_.width,
         sceneInteractionRect_.y + sceneInteractionRect_.height);
-    const bool selected = selectedGameObject_ == selectionTarget;
+    const bool selected = editorSession_->selectedGameObject() == selectionTarget;
     const ImGuiCol accent = selected ? ImGuiCol_ButtonActive
                                      : ImGuiCol_ButtonHovered;
     const ImU32 color = ImGui::ColorConvertFloat4ToU32(
@@ -2035,7 +2022,9 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
 
     ImGui::BeginDisabled(disabled);
 
-    if (scene == nullptr || selectedGameObject_ == nullptr) {
+    GameObject* selectedGameObject = const_cast<GameObject*>(
+        selectedGameObjectForScene(scene));
+    if (selectedGameObject == nullptr) {
         ImGui::TextUnformatted(
             "Select a GameObject from the Scene Hierarchy.");
         ImGui::EndDisabled();
@@ -2043,14 +2032,14 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
         return;
     }
 
-    const char* objectName = selectedGameObject_->name.empty()
+    const char* objectName = selectedGameObject->name.empty()
                                  ? "<Unnamed GameObject>"
-                                 : selectedGameObject_->name.c_str();
-    PointLight* pointLight = dynamic_cast<PointLight*>(selectedGameObject_);
+                                 : selectedGameObject->name.c_str();
+    PointLight* pointLight = dynamic_cast<PointLight*>(selectedGameObject);
     DirectionalLight* directionalLight =
-        dynamic_cast<DirectionalLight*>(selectedGameObject_);
-    Camera* camera = dynamic_cast<Camera*>(selectedGameObject_);
-    const Character* character = dynamic_cast<const Character*>(selectedGameObject_);
+        dynamic_cast<DirectionalLight*>(selectedGameObject);
+    Camera* camera = dynamic_cast<Camera*>(selectedGameObject);
+    const Character* character = dynamic_cast<const Character*>(selectedGameObject);
     const char* objectType = pointLight != nullptr
                                  ? "Point Light"
                                  : directionalLight != nullptr
@@ -2062,37 +2051,37 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
     ImGui::Text("Type: %s", objectType);
 
     ImGui::SeparatorText("Transform");
-    glm::vec3 position = selectedGameObject_->position;
+    glm::vec3 position = selectedGameObject->position;
     if (ImGui::DragFloat3("Position", &position.x, 0.1f)) {
-        if (applyObjectPosition(*selectedGameObject_, position)) {
+        if (applyObjectPosition(*selectedGameObject, position)) {
             inspectorError_.clear();
         } else {
             inspectorError_ = "Transform values must be finite.";
         }
     }
 
-    glm::vec3 rotation = selectedGameObject_->rotation;
+    glm::vec3 rotation = selectedGameObject->rotation;
     if (ImGui::DragFloat3("Rotation (degrees)", &rotation.x, 0.5f)) {
-        if (applyObjectRotation(*selectedGameObject_, rotation)) {
+        if (applyObjectRotation(*selectedGameObject, rotation)) {
             inspectorError_.clear();
         } else {
             inspectorError_ = "Transform values must be finite.";
         }
     }
 
-    glm::vec3 scale = selectedGameObject_->scale;
+    glm::vec3 scale = selectedGameObject->scale;
     if (ImGui::DragFloat3("Scale", &scale.x, 0.01f)) {
-        if (applyObjectScale(*selectedGameObject_, scale)) {
+        if (applyObjectScale(*selectedGameObject, scale)) {
             inspectorError_.clear();
         } else {
             inspectorError_ = "Transform values must be finite.";
         }
     }
 
-    if (character != nullptr || selectedGameObject_->physics.enabled) {
+    if (character != nullptr || selectedGameObject->physics.enabled) {
         ImGui::SeparatorText("Physics");
         const bool diagnosticsMatch =
-            physicsDiagnosticsObject_ == selectedGameObject_ &&
+            physicsDiagnosticsObject_ == selectedGameObject &&
             physicsDiagnostics_.has_value();
         if (character != nullptr) {
             ImGui::TextUnformatted("Collider Type: Capsule");
@@ -2104,11 +2093,11 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
                             formatMemoryBytes(physicsDiagnostics_->joltBytes).c_str());
             }
         } else {
-            const char* motion = selectedGameObject_->physics.motionType ==
+            const char* motion = selectedGameObject->physics.motionType ==
                                          GameObject::PhysicsMotionType::Static
                                      ? "Static"
                                      : "Dynamic";
-            const auto collider = selectedGameObject_->physics.colliderType;
+            const auto collider = selectedGameObject->physics.colliderType;
             const char* type = collider == GameObject::PhysicsColliderType::Mesh
                                    ? "Mesh"
                                    : collider == GameObject::PhysicsColliderType::Sphere
@@ -2137,7 +2126,7 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
                 case GameObject::PhysicsColliderType::Sphere:
                     ImGui::TextUnformatted("Collision Representation: Analytic");
                     ImGui::Text("Radius: %.3f",
-                                selectedGameObject_->physics.sphereRadius);
+                                selectedGameObject->physics.sphereRadius);
                     break;
                 }
                 ImGui::Text("Jolt Shape Memory: %s",
@@ -2145,16 +2134,17 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
             } else if (collider == GameObject::PhysicsColliderType::Sphere) {
                 ImGui::TextUnformatted("Collision Representation: Analytic");
                 ImGui::Text("Radius: %.3f",
-                            selectedGameObject_->physics.sphereRadius);
+                            selectedGameObject->physics.sphereRadius);
             }
 
-            bool enabled = renderColliderEnabled(*selectedGameObject_);
+            bool enabled = editorSession_->renderColliderEnabled(
+                *selectedGameObject);
             if (ImGui::Checkbox("Render Collider", &enabled)) {
-                if (enabled) renderColliderIds_.insert(selectedGameObject_->persistentId);
-                else renderColliderIds_.erase(selectedGameObject_->persistentId);
+                editorSession_->setRenderColliderEnabled(*selectedGameObject,
+                                                         enabled);
             }
         }
-        if (physicsDiagnosticsObject_ == selectedGameObject_ &&
+        if (physicsDiagnosticsObject_ == selectedGameObject &&
             !physicsDiagnosticsError_.empty()) {
             ImGui::TextWrapped("Collision diagnostics unavailable: %s",
                                physicsDiagnosticsError_.c_str());
@@ -2339,20 +2329,20 @@ void ImGuiLayer::shutdown() noexcept {
     stopNativeFileDialog();
     frameStarted_ = false;
     drawDataReady_ = false;
-    selectionScene_ = nullptr;
-    selectedGameObject_ = nullptr;
     physicsDiagnosticsObject_ = nullptr;
     physicsDiagnostics_.reset();
     physicsDiagnosticsError_.clear();
-    pendingEditorCommand_ = EditorCommand::None;
     sceneInteractionAreaHovered_ = false;
     sceneInteractionRect_ = {};
     inputEnabled_ = true;
     gizmoDragActive_ = false;
     runtimeTransformDragActive_ = false;
     runtimeTransformObject_ = nullptr;
-    pendingRuntimeTransformEdit_.reset();
-    gizmoMode_ = GizmoMode::Translate;
+    if (editorSession_ != nullptr) {
+        editorSession_->select(nullptr, nullptr);
+        (void)editorSession_->consumeEditorCommand();
+        (void)editorSession_->consumeRuntimeTransformEdit();
+    }
     inspectorError_.clear();
     requestedScenePath_.clear();
     requestedSaveAsPath_.clear();
@@ -2393,17 +2383,16 @@ void ImGuiLayer::abandon() noexcept {
     msaaSamples_ = VK_SAMPLE_COUNT_1_BIT;
     minimumImageCount_ = 0;
     imageCount_ = 0;
-    selectionScene_ = nullptr;
-    selectedGameObject_ = nullptr;
     physicsDiagnosticsObject_ = nullptr;
     physicsDiagnostics_.reset();
     physicsDiagnosticsError_.clear();
-    pendingEditorCommand_ = EditorCommand::None;
     sceneInteractionAreaHovered_ = false;
     sceneInteractionRect_ = {};
     inputEnabled_ = true;
     gizmoDragActive_ = false;
-    gizmoMode_ = GizmoMode::Translate;
+    runtimeTransformDragActive_ = false;
+    runtimeTransformObject_ = nullptr;
+    editorSession_ = nullptr;
     inspectorError_.clear();
     requestedScenePath_.clear();
     requestedSaveAsPath_.clear();

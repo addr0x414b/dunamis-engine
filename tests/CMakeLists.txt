@@ -6,6 +6,7 @@ target_include_directories(StartupShutdownTests PRIVATE
 
 target_link_libraries(StartupShutdownTests PRIVATE
         Dunamis
+        Editor
         VulkanContext
         SDL3::SDL3
         Vulkan::Vulkan
@@ -61,6 +62,7 @@ target_include_directories(VulkanPartialCleanupTests PRIVATE
 
 target_link_libraries(VulkanPartialCleanupTests PRIVATE
         Dunamis
+        Editor
         VulkanContext
         SDL3::SDL3
         Vulkan::Vulkan
@@ -110,6 +112,7 @@ add_test(NAME scene_invariants
 
 add_executable(EditorStateTests editor_state_tests.cpp)
 target_include_directories(EditorStateTests PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(EditorStateTests PRIVATE Editor)
 add_test(NAME editor_state_semantics COMMAND EditorStateTests)
 
 add_executable(ScenePersistenceTests scene_persistence_tests.cpp)

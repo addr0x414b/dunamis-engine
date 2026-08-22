@@ -3,8 +3,9 @@
 
 #include "platform.h"
 #include "result.h"
-#include "editor_camera_controller.h"
-#include "editor_state.h"
+#include "../editor/editor_camera_controller.h"
+#include "../editor/editor_session.h"
+#include "../editor/editor_state.h"
 #include "../physics/physics_server.h"
 
 #include <filesystem>
@@ -38,6 +39,7 @@ private:
     void reportPersistenceResult(const Result& result,
                                  const std::string& successMessage);
 
+    EditorSession editorSession_;
     EditorCameraController editorCameraController;
     Platform platform;
     SceneManager sceneManager_;
@@ -46,7 +48,6 @@ private:
     std::shared_ptr<InputManager> inputManager;
     bool initializationAttempted = false;
     bool initialized = false;
-    SceneRunState runState = SceneRunState::Editing;
     std::filesystem::path pendingLoadPath_;
     std::filesystem::path pendingSaveAsPath_;
     bool quitConfirmationPending_ = false;

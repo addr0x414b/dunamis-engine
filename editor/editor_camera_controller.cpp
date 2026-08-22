@@ -6,7 +6,7 @@
 #include <glm/glm.hpp>
 
 #include "../input/input_manager.h"
-#include "time.h"
+#include "../core/time.h"
 
 EditorCameraController::EditorCameraController() {
     camera_.position = glm::vec3(0.0f, 0.0f, 300.0f);

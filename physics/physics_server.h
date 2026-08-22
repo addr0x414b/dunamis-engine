@@ -5,7 +5,7 @@
 #include <memory>
 
 #include "../core/result.h"
-#include "../scene/runtime_transform_edit.h"
+#include "../editor/runtime_transform_edit.h"
 
 class Scene;
 class GameObject;

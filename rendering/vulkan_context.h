@@ -21,6 +21,7 @@
 #include <vulkan/vulkan.h>
 
 #include "../core/result.h"
+#include "../editor/editor_state.h"
 #include "../scene/game_object.h"
 #include "../scene/loading_cache_key.h"
 #include "../scene/scene.h"
@@ -57,6 +58,7 @@ const int MAX_FRAMES_IN_FLIGHT = 2;
 class VisualServer;
 class PhysicsServer;
 class Character;
+class EditorSession;
 class VulkanContextTestAccess;
 
 class VulkanContext {
@@ -67,7 +69,8 @@ public:
     VulkanContext(const VulkanContext&) = delete;
     VulkanContext& operator=(const VulkanContext&) = delete;
 
-    [[nodiscard]] Result init(SDL_Window* window, Scene* scene);
+    [[nodiscard]] Result init(SDL_Window* window, Scene* scene,
+                              EditorSession& editorSession);
     bool cleanup() noexcept;
 
 private:
@@ -107,9 +110,6 @@ private:
     void processEvent(const SDL_Event& event) noexcept;
     void setImGuiInputEnabled(bool enabled) noexcept;
     void clearEditorSelection() noexcept;
-    [[nodiscard]] EditorCommand consumeEditorCommand() noexcept;
-    [[nodiscard]] std::optional<RuntimeTransformEdit>
-    consumeRuntimeTransformEdit() noexcept;
     [[nodiscard]] bool sceneInteractionAreaHovered() const noexcept;
     void setCurrentScenePath(const std::string& path);
     [[nodiscard]] std::string requestedScenePath() const;
@@ -421,6 +421,7 @@ private:
 
     SDL_Window* window = nullptr;
     Scene* currentScene = nullptr;
+    EditorSession* editorSession_ = nullptr;
     // Non-owning. Dunamis owns PhysicsServer and shuts down VisualServer
     // before PhysicsServer; cleanup resets this pointer before returning.
     PhysicsServer* physicsServer_ = nullptr;

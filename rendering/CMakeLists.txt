@@ -37,7 +37,7 @@ target_include_directories(VulkanContext SYSTEM PRIVATE
         ${IMGUI_DIR}
         ${IMGUI_DIR}/backends
         ${PROJECT_SOURCE_DIR}/third_party/imguizmo)
-target_link_libraries(VulkanContext PUBLIC Physics Jolt PRIVATE SDL3::SDL3 Vulkan::Vulkan spdlog VulkanUtils EditorPicking DirectionalShadow AmbientOcclusion GameObject Scene glm)
+target_link_libraries(VulkanContext PUBLIC Physics Jolt Editor PRIVATE SDL3::SDL3 Vulkan::Vulkan spdlog VulkanUtils EditorPicking DirectionalShadow AmbientOcclusion GameObject Scene glm)
 
 add_library(VisualServer STATIC visual_server.cpp)
 target_include_directories(VisualServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

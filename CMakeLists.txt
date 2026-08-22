@@ -21,6 +21,7 @@ add_subdirectory(rendering)
 add_subdirectory(game)
 add_subdirectory(third_party)
 add_subdirectory(input)
+add_subdirectory(editor)
 
 add_executable(DunamisEngine main.cpp)
 

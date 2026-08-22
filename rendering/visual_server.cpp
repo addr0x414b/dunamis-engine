@@ -5,6 +5,7 @@
 #include <chrono>
 
 Result VisualServer::initialize(SDL_Window* window, Scene* scene,
+                                EditorSession& editorSession,
                                 PhysicsServer* physicsServer) {
     spdlog::info("Initializing Visual Server...");
 
@@ -35,7 +36,7 @@ Result VisualServer::initialize(SDL_Window* window, Scene* scene,
     initialized = false;
     currentScene = scene;
 
-    result = vulkanContext.init(window, currentScene);
+    result = vulkanContext.init(window, currentScene, editorSession);
     if (!result) {
         if (vulkanContext.cleanup()) {
             currentScene->deactivate();
@@ -312,15 +313,6 @@ void VisualServer::clearEditorSelection() noexcept {
     vulkanContext.clearEditorSelection();
 }
 
-EditorCommand VisualServer::consumeEditorCommand() noexcept {
-    return vulkanContext.consumeEditorCommand();
-}
-
-std::optional<RuntimeTransformEdit>
-VisualServer::consumeRuntimeTransformEdit() noexcept {
-    return vulkanContext.consumeRuntimeTransformEdit();
-}
-
 bool VisualServer::sceneInteractionAreaHovered() const noexcept {
     return vulkanContext.sceneInteractionAreaHovered();
 }
@@ -347,14 +339,6 @@ void VisualServer::requestSaveAsOverwriteConfirmation(const std::string& path) {
 
 void VisualServer::requestQuitConfirmation() {
     vulkanContext.requestQuitConfirmation();
-}
-
-void VisualServer::setRenderColliderIds(const std::vector<std::string>& ids) {
-    vulkanContext.imguiLayer.setRenderColliderIds(ids);
-}
-
-std::vector<std::string> VisualServer::renderColliderIds() const {
-    return vulkanContext.imguiLayer.renderColliderIds();
 }
 
 bool VisualServer::shutdown() noexcept {

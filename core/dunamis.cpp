@@ -108,14 +108,15 @@ Result Dunamis::initialize() {
 
         result = visualServer.initialize(platform.window(),
                                          sceneManager_.editingScene(),
+                                         editorSession_,
                                          &physicsServer_);
         if (!result) {
             (void)shutdown();
             return Result::failure("Visual Server initialization failed: " +
                                    result.error());
         }
-        visualServer.setRenderColliderIds(restoredColliderIds);
-        runState = SceneRunState::Editing;
+        editorSession_.setRenderColliderIds(restoredColliderIds);
+        editorSession_.setRunState(SceneRunState::Editing);
         visualServer.setCurrentScenePath(
             sceneManager_.currentScenePath().string());
         synchronizeImGuiInput();
@@ -191,7 +192,8 @@ Result Dunamis::run() {
                 const bool togglesGameplayMouse =
                     e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat &&
                     (e.key.key == SDLK_LALT || e.key.key == SDLK_RALT);
-                if (togglesGameplayMouse && usesGameplayCamera(runState)) {
+                if (togglesGameplayMouse &&
+                    usesGameplayCamera(editorSession_.runState())) {
                     Result toggleResult =
                         inputManager->toggleGameplayMouseRelease();
                     if (!toggleResult) {
@@ -203,7 +205,7 @@ Result Dunamis::run() {
                     continue;
                 }
 
-                if (editorToolsEnabled(runState) &&
+                if (editorToolsEnabled(editorSession_.runState()) &&
                     e.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
                     e.button.button == SDL_BUTTON_RIGHT &&
                     inputManager->inputMode() ==
@@ -220,7 +222,7 @@ Result Dunamis::run() {
                     continue;
                 }
 
-                if (editorToolsEnabled(runState) &&
+                if (editorToolsEnabled(editorSession_.runState()) &&
                     e.type == SDL_EVENT_MOUSE_BUTTON_UP &&
                     e.button.button == SDL_BUTTON_RIGHT &&
                     inputManager->inputMode() ==
@@ -240,10 +242,10 @@ Result Dunamis::run() {
                 break;
             }
 
-            if (editorToolsEnabled(runState)) {
+            if (editorToolsEnabled(editorSession_.runState())) {
                 editorCameraController.update(*inputManager);
             }
-            if (runtimeSceneRunning(runState)) {
+            if (runtimeSceneRunning(editorSession_.runState())) {
                 Scene* runtimeScene = sceneManager_.runtimeScene();
                 if (!runtimeScene ||
                     sceneManager_.activeScene() != runtimeScene) {
@@ -251,7 +253,7 @@ Result Dunamis::run() {
                         "Runtime execution requires an active runtime scene");
                 }
                 if (const std::optional<RuntimeTransformEdit> edit =
-                        visualServer.consumeRuntimeTransformEdit()) {
+                        editorSession_.consumeRuntimeTransformEdit()) {
                     physicsServer_.applyRuntimeTransformEdit(*edit);
                 }
                 runtimeScene->update();
@@ -263,16 +265,16 @@ Result Dunamis::run() {
                 return Result::failure("No active scene is available");
             }
             Result result = visualServer.run(
-                activeScene, renderCamera(), runState);
+                activeScene, renderCamera(), editorSession_.runState());
             if (!result) {
                 return Result::failure("Rendering failed: " + result.error());
             }
 
             const EditorCommand command =
-                visualServer.consumeEditorCommand();
+                editorSession_.consumeEditorCommand();
             const auto captureColliderVisibility = [&] {
                 sceneManager_.setEditorRenderColliders(
-                    visualServer.renderColliderIds());
+                    editorSession_.renderColliderIds());
             };
             if (command == EditorCommand::Play) {
                 result = beginRuntimeSession(SceneRunState::Playing);
@@ -288,7 +290,7 @@ Result Dunamis::run() {
                 result = Result::success();
             } else if (command == EditorCommand::SaveSceneAs) {
                 pendingSaveAsPath_ = visualServer.requestedSaveAsPath();
-                if (runState != SceneRunState::Editing) {
+                if (editorSession_.runState() != SceneRunState::Editing) {
                     reportPersistenceResult(
                         Result::failure("Scene Save As is available only while Editing"),
                         {});
@@ -351,7 +353,7 @@ Result Dunamis::run() {
                 }
                 result = Result::success();
             } else if (command == EditorCommand::ConfirmSaveSceneAsOverwrite) {
-                if (runState != SceneRunState::Editing) {
+                if (editorSession_.runState() != SceneRunState::Editing) {
                     reportPersistenceResult(
                         Result::failure("Scene Save As is available only while Editing"),
                         {});
@@ -437,7 +439,7 @@ Result Dunamis::run() {
 }
 
 Result Dunamis::loadEditingScene(const std::filesystem::path& path) {
-    if (runState != SceneRunState::Editing) {
+    if (editorSession_.runState() != SceneRunState::Editing) {
         return Result::failure("Scene loading is available only while Editing");
     }
     Result result = sceneManager_.prepareEditingSceneLoad(path);
@@ -480,7 +482,7 @@ Result Dunamis::loadEditingScene(const std::filesystem::path& path) {
         if (!result) return Result::failure("Loaded scene committed but editor camera restore failed: " + result.error());
     }
     sceneManager_.finishEditingSceneLoad();
-    visualServer.setRenderColliderIds(restoredColliderIds);
+    editorSession_.setRenderColliderIds(restoredColliderIds);
     visualServer.setCurrentScenePath(sceneManager_.currentScenePath().string());
     for (const std::string& warning : sceneManager_.persistenceWarnings()) {
         spdlog::warn("{}", warning);
@@ -495,7 +497,7 @@ void Dunamis::requestQuit(bool& running) {
         return;
     }
     quitConfirmationPending_ = true;
-    if (usesGameplayCamera(runState) && inputManager &&
+    if (usesGameplayCamera(editorSession_.runState()) && inputManager &&
         inputManager->inputMode() == InputMode::GameplayCaptured) {
         const Result release = inputManager->toggleGameplayMouseRelease();
         if (!release) {
@@ -517,7 +519,7 @@ void Dunamis::reportPersistenceResult(const Result& result,
 }
 
 Result Dunamis::beginRuntimeSession(SceneRunState targetState) {
-    if (runState != SceneRunState::Editing) {
+    if (editorSession_.runState() != SceneRunState::Editing) {
         return Result::failure(
             "A runtime session can begin only while editing");
     }
@@ -536,7 +538,7 @@ Result Dunamis::beginRuntimeSession(SceneRunState targetState) {
     Clock::duration runtimeStart{};
     visualServer.clearEditorSelection();
     const auto rollbackRuntimeSession = [this](const std::string& error) {
-        runState = SceneRunState::Editing;
+        editorSession_.setRunState(SceneRunState::Editing);
         Scene* runtimeScene = sceneManager_.runtimeScene();
         // Runtime bodies retain GameObject pointers; clear them before this
         // transactional path can release the disposable runtime Scene.
@@ -651,7 +653,7 @@ Result Dunamis::beginRuntimeSession(SceneRunState targetState) {
     }
     runtimeStart = Clock::now() - stageStart;
 
-    runState = targetState;
+    editorSession_.setRunState(targetState);
     synchronizeImGuiInput();
     const auto asMilliseconds = [](Clock::duration duration) {
         return std::chrono::duration<double, std::milli>(duration).count();
@@ -666,7 +668,7 @@ Result Dunamis::beginRuntimeSession(SceneRunState targetState) {
 }
 
 Result Dunamis::stopRuntimeSession() {
-    if (!runtimeSceneRunning(runState)) {
+    if (!runtimeSceneRunning(editorSession_.runState())) {
         return Result::failure("A runtime session can stop only while running");
     }
 
@@ -701,7 +703,7 @@ Result Dunamis::stopRuntimeSession() {
                                result.error());
     }
 
-    runState = SceneRunState::Editing;
+    editorSession_.setRunState(SceneRunState::Editing);
     // The runtime scene remains alive until after renderer resources unload.
     // Release its Jolt body-to-GameObject mappings first.
     physicsServer_.endRuntimeSession();
@@ -724,7 +726,7 @@ Result Dunamis::stopRuntimeSession() {
 }
 
 const Camera& Dunamis::renderCamera() const noexcept {
-    if (usesGameplayCamera(runState)) {
+    if (usesGameplayCamera(editorSession_.runState())) {
         if (const Scene* runtimeScene = sceneManager_.runtimeScene()) {
             if (const Camera* camera = runtimeScene->activeCamera()) {
                 return *camera;
@@ -770,7 +772,7 @@ bool Dunamis::shutdown() noexcept {
     inputManager.reset();
 
     platform.shutdown();
-    runState = SceneRunState::Editing;
+    editorSession_.setRunState(SceneRunState::Editing);
     initialized = false;
     pendingLoadPath_.clear();
     pendingSaveAsPath_.clear();

@@ -7,6 +7,12 @@ enum class SceneRunState {
     Simulating,
 };
 
+enum class TransformTool {
+    Translate,
+    Rotate,
+    Scale,
+};
+
 enum class EditorCommand {
     None,
     Play,
