@@ -189,12 +189,13 @@ std::filesystem::path createParallelDecodeModel() {
         model << "{\"source\":" << index << '}';
     }
     model << "],\n\"materials\":[";
-    for (int index = 0; index < 8; ++index) {
+    for (int index = 0; index < 9; ++index) {
         if (index != 0) {
             model << ',';
         }
+        const int texture = index == 8 ? 0 : index;
         model << "{\"pbrMetallicRoughness\":{\"baseColorTexture\":{\"index\":"
-              << index << "}";
+              << texture << "}";
         if (index == 1) {
             model << ",\"metallicRoughnessTexture\":{\"index\":0}";
         }
@@ -209,9 +210,8 @@ std::filesystem::path createParallelDecodeModel() {
         if (index != 0) {
             model << ',';
         }
-        const int material = index == 8 ? 0 : index;
         model << "{\"attributes\":{\"POSITION\":0,\"TEXCOORD_0\":1},\"indices\":2,\"material\":"
-              << material << '}';
+              << index << '}';
     }
     model << R"json(]}],"nodes":[{"mesh":0}],"scenes":[{"nodes":[0]}],"scene":0
 })json";
