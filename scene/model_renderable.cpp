@@ -696,8 +696,16 @@ Result discoverImportedMaterial(
     };
 
     aiString textureReference;
+
     if (importedMaterial->GetTexture(aiTextureType_BASE_COLOR, 0,
                                      &textureReference) == AI_SUCCESS) {
+        // Preferred PBR/glTF base-color texture.
+        setBaseSource(resolveTextureSource(
+                          scene, modelPath, textureReference.C_Str()),
+                      true, false);
+    } else if (importedMaterial->GetTexture(aiTextureType_DIFFUSE, 0,
+                                            &textureReference) == AI_SUCCESS) {
+        // Legacy/FBX diffuse texture fallback.
         setBaseSource(resolveTextureSource(
                           scene, modelPath, textureReference.C_Str()),
                       true, false);
@@ -707,6 +715,9 @@ Result discoverImportedMaterial(
     } else {
         setBaseSource(fallbackSource, false, true);
     }
+
+
+
 
     aiString normalMapReference;
     if (importedMaterial->GetTexture(aiTextureType_NORMALS, 0,
@@ -1235,7 +1246,7 @@ Result ModelRenderable::loadModel() {
         scene = importer.ReadFile(modelPath, aiProcess_Triangulate |
                                                  aiProcess_FlipUVs |
                                                  aiProcess_GenSmoothNormals |
-                                                 aiProcess_CalcTangentSpace);
+                                                 aiProcess_CalcTangentSpace | aiProcess_PreTransformVertices | aiProcess_FindInvalidData);
         profile.assimpReadTime =
             LoadModelProfile::Clock::now() - assimpReadStart;
     } catch (const std::exception& exception) {
