@@ -3,6 +3,7 @@
 #include "../scene/model_renderable.h"
 
 #include <chrono>
+#include <utility>
 
 Result VisualServer::initialize(SDL_Window* window, Scene* scene,
                                 EditorSession& editorSession,
@@ -320,6 +321,10 @@ void VisualServer::setCurrentScenePath(const std::string& path) {
     vulkanContext.setCurrentScenePath(path);
 }
 
+void VisualServer::setEditorError(std::string error) {
+    vulkanContext.setEditorError(std::move(error));
+}
+
 void VisualServer::requestLoadConfirmation() {
     vulkanContext.requestLoadConfirmation();
 }
@@ -330,6 +335,17 @@ void VisualServer::requestSaveAsOverwriteConfirmation(const std::string& path) {
 
 void VisualServer::requestQuitConfirmation() {
     vulkanContext.requestQuitConfirmation();
+}
+
+Result VisualServer::attachGameObject(Scene* scene, GameObject* gameObject) {
+    if (!initialized) {
+        return Result::failure("Visual Server is not initialized");
+    }
+    if (!scene || scene != currentScene) {
+        return Result::failure(
+            "Cannot attach an object to a scene that is not being rendered");
+    }
+    return vulkanContext.attachGameObjectResources(scene, gameObject);
 }
 
 bool VisualServer::shutdown() noexcept {

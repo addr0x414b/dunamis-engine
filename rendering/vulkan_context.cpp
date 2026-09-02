@@ -12,6 +12,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <exception>
+#include <iterator>
 #include <limits>
 #include <utility>
 #include "../third_party/stb/stb_image.h"
@@ -193,7 +194,7 @@ Result VulkanContext::prepareSceneResourceTracking(const Scene* scene) {
     if (!ownedTemporaryBuffers.empty() || !ownedSceneBuffers.empty() ||
         !ownedSceneImages.empty() || !ownedSceneImageViews.empty() ||
         !ownedSceneSamplers.empty() || !ownedSceneDescriptorSets.empty() ||
-        !ownedRenderData.empty()) {
+        !ownedDescriptorPools.empty() || !ownedRenderData.empty()) {
         return Result::failure(
             "Another scene resource load is already in progress");
     }
@@ -212,6 +213,7 @@ Result VulkanContext::prepareSceneResourceTracking(const Scene* scene) {
         ownedSceneImageViews.reserve(meshInstanceCount * 3);
         ownedSceneSamplers.reserve(meshInstanceCount * 3);
         ownedSceneDescriptorSets.reserve(meshInstanceCount);
+        ownedDescriptorPools.reserve(meshInstanceCount);
         ownedRenderData.reserve(meshInstanceCount);
         ownedTemporaryBuffers.reserve(meshInstanceCount * 5);
     } catch (const std::exception& exception) {
@@ -239,6 +241,7 @@ Result VulkanContext::beginSceneResourceLoad(Scene* scene) {
     }
 
     resourceLoadStats_ = {};
+    incrementalDescriptorPool_ = VK_NULL_HANDLE;
     pendingGpuModelKeys_.clear();
     pendingUncachedGpuModels_.clear();
     for (const auto& object : scene->gameObjects()) {
@@ -285,6 +288,337 @@ Result VulkanContext::beginSceneResourceLoad(Scene* scene) {
         sceneResourceLoadTarget_ = nullptr;
     }
     return result;
+}
+
+Result VulkanContext::createSupplementalDescriptorPool(
+    uint32_t numOfObjects) {
+    if (!initialized) {
+        return Result::failure("Vulkan Context is not initialized");
+    }
+    if (numOfObjects == 0) {
+        return Result::failure(
+            "Supplemental descriptor pools require at least one mesh instance");
+    }
+
+    const std::uint64_t descriptorSets =
+        static_cast<std::uint64_t>(numOfObjects) * MAX_FRAMES_IN_FLIGHT;
+    const std::uint64_t samplerDescriptors = descriptorSets * 3;
+    if (descriptorSets > std::numeric_limits<std::uint32_t>::max() ||
+        samplerDescriptors > std::numeric_limits<std::uint32_t>::max()) {
+        return Result::failure(
+            "Supplemental descriptor-pool capacity is too large");
+    }
+
+    std::array<VkDescriptorPoolSize, 2> poolSizes{};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[0].descriptorCount = static_cast<std::uint32_t>(descriptorSets);
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[1].descriptorCount =
+        static_cast<std::uint32_t>(samplerDescriptors);
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    poolInfo.poolSizeCount = static_cast<std::uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
+    poolInfo.maxSets = static_cast<std::uint32_t>(descriptorSets);
+
+    VkDescriptorPool pool = VK_NULL_HANDLE;
+    const VkResult result = vkCreateDescriptorPool(
+        device, &poolInfo, nullptr, &pool);
+    if (result != VK_SUCCESS) {
+        return vkFailure("vkCreateDescriptorPool(supplemental)", result);
+    }
+    try {
+        ownedDescriptorPools.push_back(pool);
+    } catch (const std::exception& exception) {
+        vkDestroyDescriptorPool(device, pool, nullptr);
+        return Result::failure(
+            "Failed to track supplemental descriptor pool: " +
+            std::string(exception.what()));
+    } catch (...) {
+        vkDestroyDescriptorPool(device, pool, nullptr);
+        return Result::failure(
+            "Failed to track supplemental descriptor pool with an unknown "
+            "exception");
+    }
+    return Result::success();
+}
+
+Result VulkanContext::attachGameObjectResources(Scene* scene,
+                                                 GameObject* gameObject) {
+    if (!initialized) {
+        return Result::failure("Vulkan Context is not initialized");
+    }
+    if (!scene || scene != currentScene) {
+        return Result::failure(
+            "Incremental attachment requires the current render scene");
+    }
+    if (!gameObject) {
+        return Result::failure(
+            "Cannot attach resources for a null game object");
+    }
+    if (!scene->isActive()) {
+        return Result::failure(
+            "Incremental attachment requires an active scene");
+    }
+    if (sceneResourceLoadTarget_ || sceneUploadBatchActive_ ||
+        !ownedTemporaryBuffers.empty() || !ownedSceneBuffers.empty() ||
+        !ownedSceneImages.empty() || !ownedSceneImageViews.empty() ||
+        !ownedSceneSamplers.empty() || !ownedSceneDescriptorSets.empty() ||
+        !ownedDescriptorPools.empty() || !ownedRenderData.empty()) {
+        return Result::failure(
+            "Another Vulkan resource transaction is already in progress");
+    }
+
+    const auto ownershipIt = sceneResourceOwnership_.find(scene);
+    if (ownershipIt == sceneResourceOwnership_.end()) {
+        return Result::failure(
+            "Current scene rendering ownership is unavailable");
+    }
+
+    const std::unique_ptr<GameObject>* owner = nullptr;
+    for (const auto& candidate : scene->gameObjects()) {
+        if (candidate.get() == gameObject) {
+            owner = &candidate;
+            break;
+        }
+    }
+    if (!owner) {
+        return Result::failure(
+            "Cannot attach resources for an object outside the Scene");
+    }
+    if (!gameObject->modelRenderable().renderTopologyMutable()) {
+        return Result::failure(
+            "GameObject render resources are already attached");
+    }
+    if (ownershipIt->second.meshRenderStates.count(gameObject) != 0) {
+        return Result::failure(
+            "GameObject renderer state is already registered");
+    }
+
+    const VkResult idleResult = vkDeviceWaitIdle(device);
+    if (!waitEstablishedCompletion(idleResult)) {
+        return vkFailure(
+            "vkDeviceWaitIdle(incremental resource attachment)", idleResult);
+    }
+    hasSubmittedWork = false;
+    singleTimeSubmissionMayBePending = false;
+
+    SceneResourceOwnership& resources = ownershipIt->second;
+    const std::size_t meshCount =
+        gameObject->modelRenderable().meshInstances_.size();
+    try {
+        ownedTemporaryBuffers.reserve(ownedTemporaryBuffers.size() +
+                                      meshCount * 5);
+        ownedSceneBuffers.reserve(
+            ownedSceneBuffers.size() +
+            meshCount * (MAX_FRAMES_IN_FLIGHT + 2));
+        ownedSceneImages.reserve(ownedSceneImages.size() + meshCount * 3);
+        ownedSceneImageViews.reserve(ownedSceneImageViews.size() +
+                                     meshCount * 3);
+        ownedSceneSamplers.reserve(ownedSceneSamplers.size() + meshCount * 3);
+        ownedSceneDescriptorSets.reserve(ownedSceneDescriptorSets.size() +
+                                        meshCount);
+        ownedDescriptorPools.reserve(ownedDescriptorPools.size() +
+                                     (meshCount == 0 ? 0 : 1));
+        ownedRenderData.reserve(ownedRenderData.size() + meshCount);
+
+        resources.meshRenderStates.reserve(
+            resources.meshRenderStates.size() + 1);
+        resources.attachedGameObjects.reserve(
+            resources.attachedGameObjects.size() + 1);
+        resources.buffers.reserve(resources.buffers.size() +
+                                  meshCount * (MAX_FRAMES_IN_FLIGHT + 2));
+        resources.descriptorSets.reserve(resources.descriptorSets.size() +
+                                         meshCount);
+        resources.descriptorPools.reserve(resources.descriptorPools.size() +
+                                          (meshCount == 0 ? 0 : 1));
+        resources.renderData.reserve(resources.renderData.size() + meshCount);
+        resources.temporaryBuffers.reserve(
+            resources.temporaryBuffers.size() + meshCount * 5);
+
+        auto [states, inserted] = resources.meshRenderStates.try_emplace(
+            gameObject);
+        if (!inserted) {
+            return Result::failure(
+                "GameObject renderer state is already registered");
+        }
+        states->second.resize(meshCount);
+    } catch (const std::exception& exception) {
+        resources.meshRenderStates.erase(gameObject);
+        return Result::failure(
+            "Failed to prepare incremental renderer ownership: " +
+            std::string(exception.what()));
+    } catch (...) {
+        resources.meshRenderStates.erase(gameObject);
+        return Result::failure(
+            "Failed to prepare incremental renderer ownership with an "
+            "unknown exception");
+    }
+
+    sceneResourceLoadTarget_ = scene;
+    incrementalDescriptorPool_ = VK_NULL_HANDLE;
+    pendingGpuModelKeys_.clear();
+    pendingUncachedGpuModels_.clear();
+    resourceLoadStats_ = {};
+    resourceLoadStats_.meshInstances = meshCount;
+
+    auto failAndRollback = [this, scene, gameObject](const Result& failure) {
+        const Result cleanup = cancelIncrementalGameObjectResourceAttach(
+            scene, gameObject);
+        if (!cleanup) {
+            return Result::failure(failure.error() +
+                                   "; incremental renderer cleanup failed: " +
+                                   cleanup.error());
+        }
+        return failure;
+    };
+
+    try {
+        if (meshCount > 0) {
+            if (meshCount > std::numeric_limits<std::uint32_t>::max()) {
+                return failAndRollback(Result::failure(
+                    "GameObject has too many mesh instances for descriptor allocation"));
+            }
+            Result result = createSupplementalDescriptorPool(
+                static_cast<std::uint32_t>(meshCount));
+            if (!result) return failAndRollback(result);
+            incrementalDescriptorPool_ = ownedDescriptorPools.back();
+        }
+
+        Result result = beginSceneUploadBatch();
+        if (!result) return failAndRollback(result);
+        result = createTextureImages(*owner);
+        if (result) result = createTextureImageViews(*owner);
+        if (result) result = createTextureSamplers(*owner);
+        if (result) result = createVertexBuffers(*owner);
+        if (result) result = createIndexBuffers(*owner);
+        if (result) result = createUniformBuffers(*owner);
+        if (result) result = createDescriptorSets(*owner);
+        if (!result) return failAndRollback(result);
+
+        result = finishSceneUploadBatch();
+        if (!result) return failAndRollback(result);
+
+        // Reserve the exact tails before committing ownership. Every moved
+        // ownership record is noexcept, so the following inserts cannot leave
+        // a partially transferred resource set after a successful reserve.
+        resources.temporaryBuffers.reserve(
+            resources.temporaryBuffers.size() + ownedTemporaryBuffers.size());
+        resources.buffers.reserve(resources.buffers.size() +
+                                  ownedSceneBuffers.size());
+        resources.images.reserve(resources.images.size() +
+                                 ownedSceneImages.size());
+        resources.imageViews.reserve(resources.imageViews.size() +
+                                     ownedSceneImageViews.size());
+        resources.samplers.reserve(resources.samplers.size() +
+                                   ownedSceneSamplers.size());
+        resources.descriptorSets.reserve(resources.descriptorSets.size() +
+                                         ownedSceneDescriptorSets.size());
+        resources.descriptorPools.reserve(resources.descriptorPools.size() +
+                                          ownedDescriptorPools.size());
+        resources.renderData.reserve(resources.renderData.size() +
+                                     ownedRenderData.size());
+        resources.uncachedGpuModels.reserve(
+            resources.uncachedGpuModels.size() +
+            pendingUncachedGpuModels_.size());
+
+        result = gameObject->modelRenderable().markRenderResourcesAttached();
+        if (!result) return failAndRollback(result);
+        resources.attachedGameObjects.push_back(gameObject);
+        resources.temporaryBuffers.insert(
+            resources.temporaryBuffers.end(),
+            std::make_move_iterator(ownedTemporaryBuffers.begin()),
+            std::make_move_iterator(ownedTemporaryBuffers.end()));
+        resources.buffers.insert(
+            resources.buffers.end(),
+            std::make_move_iterator(ownedSceneBuffers.begin()),
+            std::make_move_iterator(ownedSceneBuffers.end()));
+        resources.images.insert(
+            resources.images.end(),
+            std::make_move_iterator(ownedSceneImages.begin()),
+            std::make_move_iterator(ownedSceneImages.end()));
+        resources.imageViews.insert(
+            resources.imageViews.end(),
+            std::make_move_iterator(ownedSceneImageViews.begin()),
+            std::make_move_iterator(ownedSceneImageViews.end()));
+        resources.samplers.insert(
+            resources.samplers.end(),
+            std::make_move_iterator(ownedSceneSamplers.begin()),
+            std::make_move_iterator(ownedSceneSamplers.end()));
+        resources.descriptorSets.insert(
+            resources.descriptorSets.end(),
+            std::make_move_iterator(ownedSceneDescriptorSets.begin()),
+            std::make_move_iterator(ownedSceneDescriptorSets.end()));
+        resources.descriptorPools.insert(
+            resources.descriptorPools.end(),
+            std::make_move_iterator(ownedDescriptorPools.begin()),
+            std::make_move_iterator(ownedDescriptorPools.end()));
+        resources.renderData.insert(
+            resources.renderData.end(),
+            std::make_move_iterator(ownedRenderData.begin()),
+            std::make_move_iterator(ownedRenderData.end()));
+        resources.uncachedGpuModels.insert(
+            resources.uncachedGpuModels.end(),
+            std::make_move_iterator(pendingUncachedGpuModels_.begin()),
+            std::make_move_iterator(pendingUncachedGpuModels_.end()));
+
+        ownedTemporaryBuffers.clear();
+        ownedSceneBuffers.clear();
+        ownedSceneImages.clear();
+        ownedSceneImageViews.clear();
+        ownedSceneSamplers.clear();
+        ownedSceneDescriptorSets.clear();
+        ownedDescriptorPools.clear();
+        ownedRenderData.clear();
+        pendingUncachedGpuModels_.clear();
+        pendingGpuModelKeys_.clear();
+        incrementalDescriptorPool_ = VK_NULL_HANDLE;
+        sceneResourceLoadTarget_ = nullptr;
+        return Result::success();
+    } catch (const std::exception& exception) {
+        return failAndRollback(Result::failure(
+            "Incremental renderer attachment threw: " +
+            std::string(exception.what())));
+    } catch (...) {
+        return failAndRollback(Result::failure(
+            "Incremental renderer attachment threw an unknown exception"));
+    }
+}
+
+Result VulkanContext::cancelIncrementalGameObjectResourceAttach(
+    Scene* scene, GameObject* gameObject) {
+    if (device != VK_NULL_HANDLE) {
+        const VkResult result = vkDeviceWaitIdle(device);
+        if (!waitEstablishedCompletion(result)) {
+            return vkFailure(
+                "vkDeviceWaitIdle(cancel incremental resource attachment)",
+                result);
+        }
+        hasSubmittedWork = false;
+        singleTimeSubmissionMayBePending = false;
+    }
+    cancelSceneUploadBatch();
+    cleanupTrackedSceneResources();
+    cleanupPendingGpuModelAssets();
+    if (scene) {
+        const auto ownership = sceneResourceOwnership_.find(scene);
+        if (ownership != sceneResourceOwnership_.end() && gameObject) {
+            ownership->second.meshRenderStates.erase(gameObject);
+        }
+    }
+    if (gameObject) {
+        gameObject->modelRenderable().markRenderResourcesDetached();
+    }
+    pendingGpuModelKeys_.clear();
+    pendingUncachedGpuModels_.clear();
+    ownedDescriptorPools.clear();
+    incrementalDescriptorPool_ = VK_NULL_HANDLE;
+    if (sceneResourceLoadTarget_ == scene) {
+        sceneResourceLoadTarget_ = nullptr;
+    }
+    return Result::success();
 }
 
 std::vector<VulkanContext::MeshRenderState>*
@@ -409,6 +743,7 @@ Result VulkanContext::commitSceneResourceLoad(Scene* scene) {
     resources.imageViews = std::move(ownedSceneImageViews);
     resources.samplers = std::move(ownedSceneSamplers);
     resources.descriptorSets = std::move(ownedSceneDescriptorSets);
+    resources.descriptorPools = std::move(ownedDescriptorPools);
     resources.renderData = std::move(ownedRenderData);
     resources.uncachedGpuModels = std::move(pendingUncachedGpuModels_);
     pendingGpuModelKeys_.clear();
@@ -443,22 +778,13 @@ Result VulkanContext::cancelSceneResourceLoad() {
     }
     cancelSceneUploadBatch();
     cleanupTrackedSceneResources();
-    for (const auto& key : pendingGpuModelKeys_) {
-        const auto found = gpuModelAssetCache_.find(key);
-        if (found != gpuModelAssetCache_.end() && !found->second->complete) {
-            destroyGpuModelAsset(*found->second);
-            gpuModelAssetCache_.erase(found);
-        }
-    }
-    pendingGpuModelKeys_.clear();
-    for (auto& asset : pendingUncachedGpuModels_) {
-        if (asset) destroyGpuModelAsset(*asset);
-    }
+    cleanupPendingGpuModelAssets();
     pendingUncachedGpuModels_.clear();
     if (sceneResourceLoadTarget_) {
         sceneResourceOwnership_.erase(sceneResourceLoadTarget_);
         sceneResourceLoadTarget_ = nullptr;
     }
+    incrementalDescriptorPool_ = VK_NULL_HANDLE;
     return Result::success();
 }
 
@@ -485,26 +811,7 @@ Result VulkanContext::unloadSceneResources(Scene* scene) {
     hasSubmittedWork = false;
     singleTimeSubmissionMayBePending = false;
 
-    for (const auto& descriptorOwnership :
-         ownership->second.descriptorSets) {
-        if (!descriptorOwnership.slots) {
-            continue;
-        }
-        const size_t count = std::min(
-            descriptorOwnership.slots->size(),
-            descriptorOwnership.sets.size());
-        if (count == 0) {
-            continue;
-        }
-        const VkResult freeResult = vkFreeDescriptorSets(
-            device, descriptorPool, static_cast<uint32_t>(count),
-            descriptorOwnership.sets.data());
-        if (freeResult != VK_SUCCESS) {
-            return vkFailure("vkFreeDescriptorSets(unload scene)",
-                             freeResult);
-        }
-    }
-    cleanupSceneResources(ownership->second, false);
+    cleanupSceneResources(ownership->second, true);
     sceneResourceOwnership_.erase(ownership);
     return Result::success();
 }
@@ -4148,10 +4455,9 @@ Result VulkanContext::createDescriptorSets(
         const GpuMeshAsset& gpuAsset = *renderState.gpuAsset;
 
         std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT,
-                                                descriptorSetLayout);
+                                                   descriptorSetLayout);
         VkDescriptorSetAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        allocInfo.descriptorPool = descriptorPool;
         allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
         allocInfo.pSetLayouts = layouts.data();
 
@@ -4159,24 +4465,59 @@ Result VulkanContext::createDescriptorSets(
             return Result::failure(
                 "Descriptor-set render data is already initialized");
         }
-        if (std::find(ownedRenderData.begin(), ownedRenderData.end(),
-                      &renderData) == ownedRenderData.end()) {
-            ownedRenderData.push_back(&renderData);
+        VkDescriptorPool allocationPool = incrementalDescriptorPool_;
+        if (allocationPool == VK_NULL_HANDLE) {
+            allocationPool = descriptorPool;
         }
-        const size_t ownershipIndex = ownedSceneDescriptorSets.size();
-        ownedSceneDescriptorSets.push_back(
-            {&renderData.descriptorSets});
-        renderData.descriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
-        const VkResult result = vkAllocateDescriptorSets(
-            device, &allocInfo,
-            renderData.descriptorSets.data());
-        if (result != VK_SUCCESS) {
+        if (allocationPool == VK_NULL_HANDLE) {
+            return Result::failure(
+                "No descriptor pool is available for object rendering");
+        }
+
+        std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> allocatedSets{};
+        allocInfo.descriptorPool = allocationPool;
+        VkResult allocationResult = vkAllocateDescriptorSets(
+            device, &allocInfo, allocatedSets.data());
+        if (allocationResult == VK_ERROR_OUT_OF_POOL_MEMORY ||
+            allocationResult == VK_ERROR_FRAGMENTED_POOL) {
+            // A full scene load can outgrow its initial estimate. Keep all
+            // existing sets intact and allocate this mesh from an additive
+            // pool sized exactly for one mesh instance.
+            const Result poolResult = createSupplementalDescriptorPool(1);
+            if (!poolResult) return poolResult;
+            allocationPool = ownedDescriptorPools.back();
+            allocInfo.descriptorPool = allocationPool;
+            allocatedSets.fill(VK_NULL_HANDLE);
+            allocationResult = vkAllocateDescriptorSets(
+                device, &allocInfo, allocatedSets.data());
+        }
+        if (allocationResult != VK_SUCCESS) {
+            return vkFailure("vkAllocateDescriptorSets", allocationResult);
+        }
+
+        try {
+            renderData.descriptorSets.assign(
+                allocatedSets.begin(), allocatedSets.end());
+            ownedSceneDescriptorSets.push_back(
+                {&renderData.descriptorSets, allocationPool, allocatedSets});
+        } catch (const std::exception& exception) {
             renderData.descriptorSets.clear();
-            return vkFailure("vkAllocateDescriptorSets", result);
-        }
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
-            ownedSceneDescriptorSets[ownershipIndex].sets[i] =
-                renderData.descriptorSets[i];
+            (void)vkFreeDescriptorSets(
+                device, allocationPool,
+                static_cast<uint32_t>(allocatedSets.size()),
+                allocatedSets.data());
+            return Result::failure(
+                "Failed to track object descriptor sets: " +
+                std::string(exception.what()));
+        } catch (...) {
+            renderData.descriptorSets.clear();
+            (void)vkFreeDescriptorSets(
+                device, allocationPool,
+                static_cast<uint32_t>(allocatedSets.size()),
+                allocatedSets.data());
+            return Result::failure(
+                "Failed to track object descriptor sets with an unknown "
+                "exception");
         }
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -4731,6 +5072,10 @@ bool VulkanContext::sceneInteractionAreaHovered() const noexcept {
 
 void VulkanContext::setCurrentScenePath(const std::string& path) {
     imguiLayer.setCurrentScenePath(path);
+}
+
+void VulkanContext::setEditorError(std::string error) {
+    imguiLayer.setEditorError(std::move(error));
 }
 
 void VulkanContext::requestLoadConfirmation() {
@@ -5697,9 +6042,21 @@ void VulkanContext::cleanupTrackedSceneResources() noexcept {
     resources.imageViews = std::move(ownedSceneImageViews);
     resources.samplers = std::move(ownedSceneSamplers);
     resources.descriptorSets = std::move(ownedSceneDescriptorSets);
+    resources.descriptorPools = std::move(ownedDescriptorPools);
     resources.renderData = std::move(ownedRenderData);
     resources.uncachedGpuModels = std::move(pendingUncachedGpuModels_);
     cleanupSceneResources(resources, false);
+}
+
+void VulkanContext::cleanupPendingGpuModelAssets() noexcept {
+    for (const auto& key : pendingGpuModelKeys_) {
+        const auto found = gpuModelAssetCache_.find(key);
+        if (found != gpuModelAssetCache_.end()) {
+            destroyGpuModelAsset(*found->second);
+            gpuModelAssetCache_.erase(found);
+        }
+    }
+    pendingGpuModelKeys_.clear();
 }
 
 void VulkanContext::cleanupCompletedUploadStaging() noexcept {
@@ -5779,6 +6136,7 @@ void VulkanContext::cleanupSceneResources(
         resources.imageViews.clear();
         resources.samplers.clear();
         resources.descriptorSets.clear();
+        resources.descriptorPools.clear();
         resources.renderData.clear();
         resources.uncachedGpuModels.clear();
         resources.meshRenderStates.clear();
@@ -5797,10 +6155,12 @@ void VulkanContext::cleanupSceneResources(
         }
         const size_t count =
             std::min(ownership.slots->size(), ownership.sets.size());
-        if (freeDescriptorSets && descriptorPool != VK_NULL_HANDLE &&
-            count > 0) {
+        const VkDescriptorPool pool = ownership.pool != VK_NULL_HANDLE
+                                          ? ownership.pool
+                                          : descriptorPool;
+        if (freeDescriptorSets && pool != VK_NULL_HANDLE && count > 0) {
             const VkResult result = vkFreeDescriptorSets(
-                device, descriptorPool, static_cast<uint32_t>(count),
+                device, pool, static_cast<uint32_t>(count),
                 ownership.sets.data());
             if (result != VK_SUCCESS) {
                 spdlog::error(
@@ -5924,6 +6284,12 @@ void VulkanContext::cleanupSceneResources(
     resources.imageViews.clear();
     resources.samplers.clear();
     resources.descriptorSets.clear();
+    for (VkDescriptorPool pool : resources.descriptorPools) {
+        if (pool != VK_NULL_HANDLE) {
+            vkDestroyDescriptorPool(device, pool, nullptr);
+        }
+    }
+    resources.descriptorPools.clear();
     resources.renderData.clear();
     for (auto& asset : resources.uncachedGpuModels) {
         if (asset) destroyGpuModelAsset(*asset);
@@ -5946,6 +6312,7 @@ bool VulkanContext::cleanup() noexcept {
         !ownedSceneImages.empty() || !ownedSceneImageViews.empty() ||
         !ownedSceneSamplers.empty() ||
         !ownedSceneDescriptorSets.empty() ||
+        !ownedDescriptorPools.empty() ||
         !sceneResourceOwnership_.empty();
     if (hadResources) {
         spdlog::info("Cleaning up Vulkan Context...");
@@ -6235,6 +6602,7 @@ bool VulkanContext::cleanup() noexcept {
     initialized = false;
     currentScene = nullptr;
     sceneResourceLoadTarget_ = nullptr;
+    incrementalDescriptorPool_ = VK_NULL_HANDLE;
     physicsServer_ = nullptr;
     editorSession_ = nullptr;
     window = nullptr;

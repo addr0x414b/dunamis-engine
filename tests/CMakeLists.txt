@@ -120,6 +120,13 @@ target_include_directories(EditorMutationTests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(EditorMutationTests PRIVATE Editor)
 add_test(NAME editor_mutation_semantics COMMAND EditorMutationTests)
 
+add_executable(EditorDuplicationTests editor_duplication_tests.cpp)
+target_include_directories(EditorDuplicationTests PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(EditorDuplicationTests PRIVATE
+        Editor Scene GameObject Camera PointLight InputManager glm spdlog
+        nlohmann_json::nlohmann_json)
+add_test(NAME editor_duplication_semantics COMMAND EditorDuplicationTests)
+
 add_executable(ScenePersistenceTests scene_persistence_tests.cpp)
 target_include_directories(ScenePersistenceTests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(ScenePersistenceTests PRIVATE

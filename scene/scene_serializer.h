@@ -45,6 +45,9 @@ public:
     [[nodiscard]] static Result copyAuthoredState(
         const Scene& source, Scene& destination,
         const TypeRegistry& registry);
+    [[nodiscard]] static Result copyAuthoredAttachedCameraState(
+        const Camera& source, Camera& destination,
+        const TypeRegistry& registry);
 
 private:
     [[nodiscard]] static Result serializeObject(

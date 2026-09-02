@@ -62,35 +62,49 @@ Result validateDirectionalLightState(const DirectionalLight& light) {
 }  // namespace
 
 Result Scene::addGameObject(std::unique_ptr<GameObject> gameObject) {
+    GameObject* ignored = nullptr;
+    return addGameObjectInternal(std::move(gameObject), false, ignored);
+}
+
+Result Scene::validateEditorGameObjectInsertion(
+    const GameObject& gameObject) const {
+    if (!active_) {
+        return Result::failure(
+            "Controlled editor insertion requires an active scene");
+    }
+    return validateGameObjectInsertion(gameObject);
+}
+
+Result Scene::addGameObjectForEditor(
+    std::unique_ptr<GameObject> gameObject, GameObject*& inserted) {
+    inserted = nullptr;
+    return addGameObjectInternal(std::move(gameObject), true, inserted);
+}
+
+Result Scene::addGameObjectInternal(
+    std::unique_ptr<GameObject> gameObject, bool allowActive,
+    GameObject*& inserted) {
+    inserted = nullptr;
     if (!gameObject) {
         return Result::failure("Cannot add a null game object to a scene");
     }
-    if (active_) {
+    if (active_ && !allowActive) {
         return Result::failure(
             "Cannot add game objects while the scene is active");
     }
+
+    if (allowActive && !active_) {
+        return Result::failure(
+            "Controlled editor insertion requires an active scene");
+    }
+
+    Result validation = validateGameObjectInsertion(*gameObject);
+    if (!validation) return validation;
 
     const bool isPointLight =
         dynamic_cast<PointLight*>(gameObject.get()) != nullptr;
     const bool isDirectionalLight =
         dynamic_cast<DirectionalLight*>(gameObject.get()) != nullptr;
-    if (isDirectionalLight && directionalLightIndex_.has_value()) {
-        return Result::failure(
-            "A scene can contain only one directional light");
-    }
-    if (isPointLight &&
-        pointLightCount_ >= scene_limits::maxPointLights) {
-        return Result::failure(
-            "Cannot add more than " +
-            std::to_string(scene_limits::maxPointLights) +
-            " point lights to a scene");
-    }
-
-    if (!gameObject->persistentId.empty() &&
-        findGameObject(gameObject->persistentId) != nullptr) {
-        return Result::failure("Scene contains duplicate persistent ID '" +
-                               gameObject->persistentId + "'");
-    }
 
     if (gameObject->persistentId.empty()) {
         constexpr std::size_t maxGenerationAttempts = 64;
@@ -123,6 +137,7 @@ Result Scene::addGameObject(std::unique_ptr<GameObject> gameObject) {
     }
 
     const std::size_t objectIndex = gameObjects_.size();
+    GameObject* insertedObject = gameObject.get();
     try {
         gameObjects_.push_back(std::move(gameObject));
     } catch (const std::exception& exception) {
@@ -140,7 +155,67 @@ Result Scene::addGameObject(std::unique_ptr<GameObject> gameObject) {
     if (isDirectionalLight) {
         directionalLightIndex_ = objectIndex;
     }
+    inserted = insertedObject;
+    return Result::success();
+}
 
+Result Scene::validateGameObjectInsertion(
+    const GameObject& gameObject) const {
+
+    const bool isPointLight =
+        dynamic_cast<const PointLight*>(&gameObject) != nullptr;
+    const bool isDirectionalLight =
+        dynamic_cast<const DirectionalLight*>(&gameObject) != nullptr;
+    if (isDirectionalLight && directionalLightIndex_.has_value()) {
+        return Result::failure(
+            "A scene can contain only one directional light");
+    }
+    if (isPointLight &&
+        pointLightCount_ >= scene_limits::maxPointLights) {
+        return Result::failure(
+            "Cannot add more than " +
+            std::to_string(scene_limits::maxPointLights) +
+            " point lights to a scene");
+    }
+
+    if (!gameObject.persistentId.empty() &&
+        findGameObject(gameObject.persistentId) != nullptr) {
+        return Result::failure("Scene contains duplicate persistent ID '" +
+                               gameObject.persistentId + "'");
+    }
+
+    return Result::success();
+}
+
+Result Scene::removeGameObjectForEditor(
+    GameObject* gameObject, std::unique_ptr<GameObject>& removed) noexcept {
+    removed.reset();
+    if (!active_) {
+        return Result::failure(
+            "Controlled editor rollback requires an active scene");
+    }
+    if (gameObjects_.empty() || gameObjects_.back().get() != gameObject) {
+        return Result::failure(
+            "Controlled editor rollback can remove only the last inserted object");
+    }
+
+    const std::size_t objectIndex = gameObjects_.size() - 1;
+    const bool isPointLight =
+        dynamic_cast<PointLight*>(gameObject) != nullptr;
+    const bool isDirectionalLight =
+        dynamic_cast<DirectionalLight*>(gameObject) != nullptr;
+    removed = std::move(gameObjects_.back());
+    gameObjects_.pop_back();
+    if (isPointLight) {
+        if (pointLightCount_ > 0 &&
+            pointLightIndices_[pointLightCount_ - 1] == objectIndex) {
+            --pointLightCount_;
+            pointLightIndices_[pointLightCount_] = 0;
+        }
+    }
+    if (isDirectionalLight && directionalLightIndex_ == objectIndex) {
+        directionalLightIndex_.reset();
+    }
     return Result::success();
 }
 

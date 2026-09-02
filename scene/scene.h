@@ -19,6 +19,10 @@
 
 class InputManager;
 class VisualServer;
+class SceneTestAccess;
+namespace editor {
+class EditorObjectCoordinator;
+}
 
 class Scene {
 public:
@@ -57,6 +61,20 @@ public:
 
 private:
     friend class VisualServer;
+    friend class SceneTestAccess;
+    friend class editor::EditorObjectCoordinator;
+
+    [[nodiscard]] Result validateEditorGameObjectInsertion(
+        const GameObject& gameObject) const;
+    [[nodiscard]] Result addGameObjectForEditor(
+        std::unique_ptr<GameObject> gameObject, GameObject*& inserted);
+    [[nodiscard]] Result removeGameObjectForEditor(
+        GameObject* gameObject, std::unique_ptr<GameObject>& removed) noexcept;
+    [[nodiscard]] Result validateGameObjectInsertion(
+        const GameObject& gameObject) const;
+    [[nodiscard]] Result addGameObjectInternal(
+        std::unique_ptr<GameObject> gameObject, bool allowActive,
+        GameObject*& inserted);
 
     [[nodiscard]] Result activate();
     void deactivate() noexcept;

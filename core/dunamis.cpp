@@ -1,6 +1,7 @@
 #include "dunamis.h"
 
 #include "../game/level_1.h"
+#include "../editor/editor_duplication.h"
 
 #include "time.h"
 
@@ -253,6 +254,16 @@ Result Dunamis::run() {
                 result = beginRuntimeSession(SceneRunState::Simulating);
             } else if (command == EditorCommand::Stop) {
                 result = stopRuntimeSession();
+            } else if (command == EditorCommand::DuplicateGameObject) {
+                result = duplicateSelectedGameObject();
+                if (result) {
+                    visualServer.setEditorError({});
+                } else {
+                    spdlog::error("GameObject duplication failed: {}",
+                                  result.error());
+                    visualServer.setEditorError(result.error());
+                    result = Result::success();
+                }
             } else if (command == EditorCommand::SaveScene) {
                 captureColliderVisibility();
                 result = sceneManager_.saveEditingScene(
@@ -488,6 +499,46 @@ void Dunamis::reportPersistenceResult(const Result& result,
     } else if (!successMessage.empty()) {
         spdlog::info("{}", successMessage);
     }
+}
+
+Result Dunamis::duplicateSelectedGameObject() {
+    if (editorSession_.runState() != SceneRunState::Editing) {
+        return Result::failure(
+            "GameObject duplication is available only while Editing");
+    }
+
+    Scene* editingScene = sceneManager_.editingScene();
+    if (!editingScene || sceneManager_.activeScene() != editingScene ||
+        visualServer.renderScene() != editingScene ||
+        !editingScene->isActive()) {
+        return Result::failure(
+            "The editing Scene is not the active rendered Scene");
+    }
+
+    const GameObject* source =
+        editorSession_.selectedGameObjectForScene(editingScene);
+    if (!source) {
+        return Result::failure(
+            "Select a GameObject before using Duplicate");
+    }
+
+    GameObject* duplicate = nullptr;
+    const Result result = editor::EditorObjectCoordinator::duplicateIntoScene(
+        *editingScene, *source, sceneManager_.typeRegistry(),
+        [this](Scene& scene, GameObject& gameObject) {
+            return visualServer.attachGameObject(&scene, &gameObject);
+        },
+        duplicate);
+    if (!result) {
+        return result;
+    }
+    if (!duplicate) {
+        return Result::failure(
+            "GameObject duplication succeeded without returning an object");
+    }
+
+    editorSession_.select(editingScene, duplicate);
+    return Result::success();
 }
 
 Result Dunamis::beginRuntimeSession(SceneRunState targetState) {

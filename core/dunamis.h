@@ -31,6 +31,7 @@ public:
 private:
     [[nodiscard]] Result beginRuntimeSession(SceneRunState targetState);
     [[nodiscard]] Result stopRuntimeSession();
+    [[nodiscard]] Result duplicateSelectedGameObject();
     [[nodiscard]] const Camera& renderCamera() const noexcept;
     void synchronizeImGuiInput() noexcept;
     [[nodiscard]] Result loadEditingScene(

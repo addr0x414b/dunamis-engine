@@ -314,6 +314,8 @@ public:
         const TypeDescriptor& type) const;
     [[nodiscard]] std::vector<const PropertyDescriptor*> runtimeTransferProperties(
         const TypeDescriptor& type) const;
+    [[nodiscard]] Result copyAuthoredProperties(
+        const GameObject& source, GameObject& destination) const;
     [[nodiscard]] bool isA(const TypeDescriptor& type,
                            const std::string& baseName) const;
 

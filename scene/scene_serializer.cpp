@@ -498,3 +498,54 @@ Result SceneSerializer::copyAuthoredState(const Scene& source,
 
     return Result::success();
 }
+
+Result SceneSerializer::copyAuthoredAttachedCameraState(
+    const Camera& source, Camera& destination, const TypeRegistry& registry) {
+    const TypeDescriptor* sourceType = registry.find(source);
+    if (!sourceType || !registry.isA(*sourceType, "Camera")) {
+        return Result::failure(
+            "Attached source camera has no registered Camera type");
+    }
+    const TypeDescriptor* destinationType = registry.find(destination);
+    if (!destinationType || !registry.isA(*destinationType, "Camera")) {
+        return Result::failure(
+            "Attached destination camera has no registered Camera type");
+    }
+    if (sourceType->name != destinationType->name ||
+        sourceType->type != destinationType->type) {
+        return Result::failure(
+            "Attached-camera registered concrete types do not match");
+    }
+
+    // Attached cameras are authored topology owned by their GameObject, so
+    // only the camera fields represented by the attached-camera JSON record
+    // are copied here. Runtime camera state remains untouched.
+    for (const char* propertyName : {"position", "front", "up", "fov"}) {
+        const PropertyDescriptor* property =
+            registry.findProperty(*sourceType, propertyName);
+        if (!property || property->lifecycle != PropertyLifecycle::Persisted ||
+            !property->copy) {
+            return Result::failure(
+                "Attached Camera persisted property '" +
+                std::string(propertyName) + "' has no copy callback");
+        }
+        try {
+            const Result result = property->copy(source, destination);
+            if (!result) {
+                return Result::failure(
+                    "Failed to copy attached Camera property '" +
+                    std::string(propertyName) + "': " + result.error());
+            }
+        } catch (const std::exception& exception) {
+            return Result::failure(
+                "Failed to copy attached Camera property '" +
+                std::string(propertyName) + "': " + exception.what());
+        } catch (...) {
+            return Result::failure(
+                "Failed to copy attached Camera property '" +
+                std::string(propertyName) +
+                "': copy callback threw an unknown exception");
+        }
+    }
+    return Result::success();
+}

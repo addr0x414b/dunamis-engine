@@ -641,13 +641,20 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
         ImGui::EndMenu();
     }
     const bool editorShortcutAvailable =
-        editing && !ImGui::GetIO().WantTextInput &&
+        editing && inputEnabled_ && !ImGui::GetIO().WantTextInput &&
+        !ImGui::IsAnyItemActive() && !nativeFileDialogBusy() &&
         !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
     if (editorShortcutAvailable &&
         ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S,
                         ImGuiInputFlags_RouteGlobal) &&
         !editorActionPending()) {
         submitEditorAction(EditorCommand::SaveScene);
+    }
+    if (editorShortcutAvailable &&
+        ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_D,
+                        ImGuiInputFlags_RouteGlobal) &&
+        !editorActionPending()) {
+        submitEditorAction(EditorCommand::DuplicateGameObject);
     }
     const float playButtonWidth =
         ImGui::CalcTextSize("Play").x + 2.0f * style.FramePadding.x;
@@ -762,6 +769,10 @@ void ImGuiLayer::drawPersistenceDialogs() {
 
 void ImGuiLayer::setCurrentScenePath(const std::string& path) {
     currentScenePath_ = path;
+}
+
+void ImGuiLayer::setEditorError(std::string error) {
+    inspectorError_ = std::move(error);
 }
 
 bool ImGuiLayer::requestNativeFileDialog(bool saveAs) {
@@ -1819,6 +1830,10 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
     if (selectedGameObject == nullptr) {
         ImGui::TextUnformatted(
             "Select a GameObject from the Scene Hierarchy.");
+        if (!inspectorError_.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "%s",
+                               inspectorError_.c_str());
+        }
         ImGui::EndDisabled();
         ImGui::End();
         return;

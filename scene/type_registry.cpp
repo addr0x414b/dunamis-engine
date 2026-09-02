@@ -5,6 +5,8 @@
 #include "directional_light.h"
 #include "point_light.h"
 
+#include <exception>
+
 const TypeDescriptor* TypeRegistry::find(const std::string& name) const {
     const auto found = byName_.find(name);
     return found == byName_.end() ? nullptr : &found->second;
@@ -72,6 +74,52 @@ std::vector<const PropertyDescriptor*> TypeRegistry::runtimeTransferProperties(
     std::vector<const PropertyDescriptor*> properties;
     appendProperties(type, properties, true);
     return properties;
+}
+
+Result TypeRegistry::copyAuthoredProperties(const GameObject& source,
+                                            GameObject& destination) const {
+    const TypeDescriptor* sourceType = find(source);
+    if (!sourceType) {
+        return Result::failure(
+            "Source object has an unregistered C++ type");
+    }
+    const TypeDescriptor* destinationType = find(destination);
+    if (!destinationType) {
+        return Result::failure(
+            "Destination object has an unregistered C++ type");
+    }
+    if (sourceType->name != destinationType->name ||
+        sourceType->type != destinationType->type) {
+        return Result::failure(
+            "Authored-property copy requires matching registered concrete types");
+    }
+
+    for (const PropertyDescriptor* property : persistedProperties(*sourceType)) {
+        if (!property || !property->copy) {
+            return Result::failure(
+                "Persisted property '" +
+                (property ? property->name : std::string{"<null>"}) +
+                "' has no copy callback");
+        }
+        try {
+            const Result result = property->copy(source, destination);
+            if (!result) {
+                return Result::failure(
+                    "Failed to copy authored property '" + property->name +
+                    "': " + result.error());
+            }
+        } catch (const std::exception& exception) {
+            return Result::failure(
+                "Failed to copy authored property '" + property->name +
+                "': " + exception.what());
+        } catch (...) {
+            return Result::failure(
+                "Failed to copy authored property '" + property->name +
+                "': copy callback threw an unknown exception");
+        }
+    }
+
+    return Result::success();
 }
 
 bool TypeRegistry::isA(const TypeDescriptor& type,

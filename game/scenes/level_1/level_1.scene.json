@@ -6,14 +6,14 @@
   "editor": {
     "camera": {
       "front": [
-        0.8362024426460266,
-        -0.5475633144378662,
-        0.0306621715426445
+        -0.9049986004829407,
+        -0.3923371434211731,
+        -0.16446618735790253
       ],
       "position": [
-        -474.7330017089844,
-        381.556884765625,
-        34.6076774597168
+        559.3823852539063,
+        254.33921813964844,
+        16.80836296081543
       ],
       "up": [
         0.0,
@@ -97,9 +97,9 @@
           "sphereRadius": 0.5
         },
         "position": [
-          -205.18191528320313,
+          -187.61781311035156,
           0.0,
-          -63.77246856689453
+          -131.68093872070313
         ],
         "rotation": [
           -90.12805938720703,
@@ -198,9 +198,9 @@
           100.0
         ],
         "rotation": [
-          0.0,
-          0.0,
-          0.0
+          20.96757698059082,
+          3.0309336185455322,
+          -28.060211181640625
         ],
         "scale": [
           200.0,
@@ -228,7 +228,7 @@
           1.0,
           1.0
         ],
-        "intensity": 100.0,
+        "intensity": 500.0,
         "modelPath": "",
         "name": "Point Light",
         "physics": {
@@ -238,9 +238,9 @@
           "sphereRadius": 0.5
         },
         "position": [
-          250.0,
-          20.0,
-          100.0
+          227.5432586669922,
+          157.78231811523438,
+          -28.006195068359375
         ],
         "rotation": [
           0.0,
@@ -305,6 +305,96 @@
         "texturePath": ""
       },
       "type": "Player"
+    },
+    {
+      "id": "7b84e278-6889-4b86-962e-1eb43b9fcc4d",
+      "properties": {
+        "modelPath": "game/assets/models/glTF-Sample-Assets/Models/PotOfCoals/glTF/PotOfCoals.gltf",
+        "name": "Pot (1)",
+        "physics": {
+          "colliderType": "convexHull",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -210.02151489257813,
+          0.0,
+          -46.99745178222656
+        ],
+        "rotation": [
+          -90.12805938720703,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          750.0,
+          750.0,
+          750.0
+        ],
+        "texturePath": ""
+      },
+      "type": "GameObject"
+    },
+    {
+      "id": "c1eaf963-77e2-40e9-8395-cce106ec853e",
+      "properties": {
+        "modelPath": "game/assets/models/glTF-Sample-Assets/Models/PotOfCoals/glTF/PotOfCoals.gltf",
+        "name": "Pot (2)",
+        "physics": {
+          "colliderType": "convexHull",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -293.205322265625,
+          0.0,
+          -132.1886749267578
+        ],
+        "rotation": [
+          -90.12805938720703,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          750.0,
+          750.0,
+          750.0
+        ],
+        "texturePath": ""
+      },
+      "type": "GameObject"
+    },
+    {
+      "id": "0e6b37c0-202d-46c5-a324-0e0f9ed942de",
+      "properties": {
+        "modelPath": "game/assets/models/glTF-Sample-Assets/Models/PotOfCoals/glTF/PotOfCoals.gltf",
+        "name": "Pot (3)",
+        "physics": {
+          "colliderType": "convexHull",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -228.37979125976563,
+          74.41293334960938,
+          -60.79682540893555
+        ],
+        "rotation": [
+          -90.12805938720703,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          750.0,
+          750.0,
+          750.0
+        ],
+        "texturePath": ""
+      },
+      "type": "GameObject"
     }
   ],
   "scene": {

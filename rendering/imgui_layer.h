@@ -57,6 +57,7 @@ public:
     void clearSelection() noexcept;
     [[nodiscard]] bool sceneInteractionAreaHovered() const noexcept;
     void setCurrentScenePath(const std::string& path);
+    void setEditorError(std::string error);
     void requestLoadConfirmation();
     void requestSaveAsOverwriteConfirmation(const std::string& path);
     void requestQuitConfirmation();

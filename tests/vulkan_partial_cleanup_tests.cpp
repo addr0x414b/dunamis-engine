@@ -197,6 +197,21 @@ public:
     }
 };
 
+class SceneTestAccess {
+public:
+    [[nodiscard]] static Result add(
+        Scene& scene, std::unique_ptr<GameObject> object,
+        GameObject*& inserted) {
+        return scene.addGameObjectForEditor(std::move(object), inserted);
+    }
+
+    [[nodiscard]] static Result remove(
+        Scene& scene, GameObject* object,
+        std::unique_ptr<GameObject>& removed) noexcept {
+        return scene.removeGameObjectForEditor(object, removed);
+    }
+};
+
 class GameObjectTestAccess {
 public:
     [[nodiscard]] static bool mutableTopology(const GameObject& object) {
@@ -215,7 +230,7 @@ public:
     void update() override {}
 };
 
-Result addNoLightTriangle(Scene& scene) {
+std::unique_ptr<GameObject> makeNoLightTriangle() {
     auto object = std::make_unique<GameObject>();
     MeshInstance instance{};
     instance.mesh.vertices = {
@@ -230,7 +245,7 @@ Result addNoLightTriangle(Scene& scene) {
     calculateMeshBounds(instance.mesh);
     instance.material.pixels = static_cast<stbi_uc*>(std::malloc(4));
     if (!instance.material.pixels) {
-        return Result::failure("Failed to allocate test texture pixels");
+        return nullptr;
     }
     instance.material.pixels[0] = 255;
     instance.material.pixels[1] = 255;
@@ -247,7 +262,15 @@ Result addNoLightTriangle(Scene& scene) {
     Result result = object->modelRenderable().addMeshInstance(
         std::move(instance));
     if (!result) {
-        return result;
+        return nullptr;
+    }
+    return object;
+}
+
+Result addNoLightTriangle(Scene& scene) {
+    std::unique_ptr<GameObject> object = makeNoLightTriangle();
+    if (!object) {
+        return Result::failure("Failed to build a no-light triangle object");
     }
     return scene.addGameObject(std::move(object));
 }
@@ -442,6 +465,37 @@ int main(int argc, char** argv) {
             if (!frameResult) {
                 std::cerr << "No-light frame failed: " << frameResult.error()
                           << '\n';
+                return 1;
+            }
+        }
+
+        for (int duplicateIndex = 0; duplicateIndex < 3; ++duplicateIndex) {
+            std::unique_ptr<GameObject> object = makeNoLightTriangle();
+            GameObject* inserted = nullptr;
+            const Result addResult = SceneTestAccess::add(
+                noLightScene, std::move(object), inserted);
+            if (!addResult || inserted == nullptr) {
+                std::cerr << "Failed to insert incremental render object: "
+                          << addResult.error() << '\n';
+                return 1;
+            }
+            const Result attachResult =
+                visualServer.attachGameObject(&noLightScene, inserted);
+            if (!attachResult) {
+                std::unique_ptr<GameObject> removed;
+                (void)SceneTestAccess::remove(noLightScene, inserted, removed);
+                std::cerr << "Failed to attach incremental render object: "
+                          << attachResult.error() << '\n';
+                return 1;
+            }
+        }
+
+        for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame) {
+            const Result frameResult = visualServer.run(
+                &noLightScene, camera, SceneRunState::Editing);
+            if (!frameResult) {
+                std::cerr << "No-light frame after incremental insertion failed: "
+                          << frameResult.error() << '\n';
                 return 1;
             }
         }

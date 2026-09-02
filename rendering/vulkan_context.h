@@ -102,6 +102,8 @@ private:
     [[nodiscard]] Result finishSceneUploadBatch();
     [[nodiscard]] Result commitSceneResourceLoad(Scene* scene);
     [[nodiscard]] Result cancelSceneResourceLoad();
+    [[nodiscard]] Result attachGameObjectResources(
+        Scene* scene, GameObject* gameObject);
     [[nodiscard]] Result unloadSceneResources(Scene* scene);
     [[nodiscard]] Result switchScene(Scene* scene);
     [[nodiscard]] bool hasSceneResources(const Scene* scene) const noexcept;
@@ -113,6 +115,7 @@ private:
     void clearEditorSelection() noexcept;
     [[nodiscard]] bool sceneInteractionAreaHovered() const noexcept;
     void setCurrentScenePath(const std::string& path);
+    void setEditorError(std::string error);
     void requestLoadConfirmation();
     void requestSaveAsOverwriteConfirmation(const std::string& path);
     void requestQuitConfirmation();
@@ -145,6 +148,7 @@ private:
 
     struct OwnedDescriptorSets {
         std::vector<VkDescriptorSet>* slots = nullptr;
+        VkDescriptorPool pool = VK_NULL_HANDLE;
         std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> sets{};
     };
 
@@ -165,6 +169,7 @@ private:
         std::vector<OwnedImageView> imageViews;
         std::vector<OwnedSampler> samplers;
         std::vector<OwnedDescriptorSets> descriptorSets;
+        std::vector<VkDescriptorPool> descriptorPools;
         std::vector<RenderData*> renderData;
         std::unordered_map<GameObject*, std::vector<MeshRenderState>>
             meshRenderStates;
@@ -189,9 +194,14 @@ private:
     [[nodiscard]] Result validateTextureData(
         const std::unique_ptr<GameObject>& gameObject) const;
     [[nodiscard]] Result prepareSceneResourceTracking(const Scene* scene);
+    [[nodiscard]] Result createSupplementalDescriptorPool(
+        uint32_t numOfObjects);
+    [[nodiscard]] Result cancelIncrementalGameObjectResourceAttach(
+        Scene* scene, GameObject* gameObject);
     void cleanupTrackedSceneResources() noexcept;
     void cleanupSceneResources(SceneResourceOwnership& resources,
                                bool freeDescriptorSets) noexcept;
+    void cleanupPendingGpuModelAssets() noexcept;
     void cancelSceneUploadBatch() noexcept;
     void cleanupCompletedUploadStaging() noexcept;
     void destroyGpuModelAsset(GpuModelAsset& asset) noexcept;
@@ -565,6 +575,7 @@ private:
     std::vector<OwnedImageView> ownedSceneImageViews;
     std::vector<OwnedSampler> ownedSceneSamplers;
     std::vector<OwnedDescriptorSets> ownedSceneDescriptorSets;
+    std::vector<VkDescriptorPool> ownedDescriptorPools;
     std::vector<RenderData*> ownedRenderData;
     std::unordered_map<const PhysicsDebugRenderer::BatchData*, PhysicsDebugGpuBatch> physicsDebugGpuBatches_;
     std::array<std::vector<PhysicsDebugGpuBatch>, MAX_FRAMES_IN_FLIGHT>
@@ -583,6 +594,7 @@ private:
     std::vector<std::shared_ptr<GpuModelAsset>> pendingUncachedGpuModels_;
     ResourceLoadStats resourceLoadStats_{};
     const Scene* sceneResourceLoadTarget_ = nullptr;
+    VkDescriptorPool incrementalDescriptorPool_ = VK_NULL_HANDLE;
 
     ImGuiLayer imguiLayer;
 

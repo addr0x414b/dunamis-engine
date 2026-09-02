@@ -17,6 +17,7 @@ enum class TransformTool {
 
 enum class EditorCommand {
     None,
+    DuplicateGameObject,
     Play,
     Simulate,
     Stop,

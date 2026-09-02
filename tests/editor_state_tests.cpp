@@ -69,6 +69,12 @@ int main() {
     passed &= expect(session.transformTool() == TransformTool::Scale,
                      "Scale transform tool did not round-trip");
 
+    session.submitEditorAction({EditorCommand::DuplicateGameObject, {}});
+    const EditorAction consumedDuplicate = session.consumeEditorAction();
+    passed &= expect(
+        consumedDuplicate.command == EditorCommand::DuplicateGameObject,
+        "Duplicate action was not preserved by the editor command session");
+
     const std::filesystem::path loadPath =
         std::filesystem::path("scenes") / "exact-load.scene.json";
     session.submitEditorAction({EditorCommand::LoadScene, loadPath});
