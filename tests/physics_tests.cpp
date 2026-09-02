@@ -732,7 +732,7 @@ MeshInstance characterFloorInstance() {
         {{1000.0f, 0.0f, -1000.0f}, {}, {}, {}, {}},
         {{1000.0f, 0.0f, 1000.0f}, {}, {}, {}, {}},
         {{-1000.0f, 0.0f, 1000.0f}, {}, {}, {}, {}}};
-    instance.mesh.indices = {0, 1, 2, 0, 2, 3};
+    instance.mesh.indices = {0, 2, 1, 0, 3, 2};
     return instance;
 }
 
