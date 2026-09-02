@@ -33,6 +33,26 @@ bool sameVector(const glm::vec3& first, const glm::vec3& second,
     return glm::length(first - second) <= tolerance;
 }
 
+bool runNameTests() {
+    GameObject object;
+    object.name = "Pot";
+    object.persistentId = "authored-id";
+
+    bool passed = expect(static_cast<bool>(editor_mutation::applyName(
+                             object, "Flower Pot")),
+                         "Valid name mutation failed");
+    passed &= expect(object.name == "Flower Pot",
+                     "Valid name mutation did not update the object");
+    passed &= expect(object.persistentId == "authored-id",
+                     "Name mutation changed persistent identity");
+
+    passed &= expect(static_cast<bool>(editor_mutation::applyName(object, "")) &&
+                         object.name.empty() &&
+                         object.persistentId == "authored-id",
+                     "Name mutation did not preserve empty-name semantics");
+    return passed;
+}
+
 bool runPositionTests() {
     GameObject object;
     object.position = {1.0f, 2.0f, 3.0f};
@@ -319,6 +339,7 @@ bool runLightTests() {
 
 int main() {
     bool passed = true;
+    passed &= runNameTests();
     passed &= runPositionTests();
     passed &= runRotationTests();
     passed &= runScaleTests();

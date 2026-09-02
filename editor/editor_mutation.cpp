@@ -71,6 +71,11 @@ bool isFiniteNonnegative(float value) noexcept {
 
 namespace editor_mutation {
 
+Result applyName(GameObject& object, const std::string& newName) {
+    object.name = newName;
+    return Result::success();
+}
+
 Result applyPosition(GameObject& object,
                      const glm::vec3& newPosition) {
     if (!isFiniteVector(object.position) || !isFiniteVector(newPosition)) {

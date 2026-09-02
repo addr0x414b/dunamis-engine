@@ -87,6 +87,16 @@ void Level1::init() {
     requireSuccess(test9->loadModel(), "Failed to load Sponza");
     requireSuccess(addGameObject(std::move(test9)), "Failed to add Sponza");
 
+    auto test10 = std::make_unique<GameObject>();
+    test10->name = "Brah";
+    test10->persistentId = "90du-918dey798qwdgd";
+    test10->scale = glm::vec3(100.0f, 100.0f, 100.0f);
+    test10->rotation = glm::vec3(-90.0f, 0.0f, 0.0f);
+    test10->position = glm::vec3(322.0f, 0.0f, -122.0f);
+    test10->modelPath = "game/assets/models/glTF-Sample-Assets/Models/BrainStem/glTF/BrainStem.gltf";
+    requireSuccess(test10->loadModel(), "Failed to load Sponza");
+    requireSuccess(addGameObject(std::move(test10)), "Failed to add Sponza");
+
     // The loaded CPU Sponza mesh has a horizontal surface at (x=0, z=0,
     // y≈-2.5). At 100 Dunamis units per meter, this gives the test body a
     // visible three-meter drop before it reaches the floor.

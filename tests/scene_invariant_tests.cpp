@@ -102,6 +102,84 @@ bool hasDirectionalLightError(const Result& result) {
     return result.error().find("Directional light") != std::string::npos;
 }
 
+bool isUuidStyle(const std::string& value) {
+    if (value.size() != 36 || value[8] != '-' || value[13] != '-' ||
+        value[18] != '-' || value[23] != '-') {
+        return false;
+    }
+
+    const auto isHex = [](char character) {
+        return (character >= '0' && character <= '9') ||
+               (character >= 'a' && character <= 'f');
+    };
+    for (std::size_t index = 0; index < value.size(); ++index) {
+        if (index == 8 || index == 13 || index == 18 || index == 23) {
+            continue;
+        }
+        if (!isHex(value[index])) return false;
+    }
+    return value[14] == '4' &&
+           (value[19] == '8' || value[19] == '9' || value[19] == 'a' ||
+            value[19] == 'b');
+}
+
+bool runPersistentIdentityTests() {
+    bool passed = true;
+    TestScene scene;
+
+    auto first = std::make_unique<GameObject>();
+    first->name = "Pot";
+    GameObject* firstPointer = first.get();
+    const Result firstResult = scene.addGameObject(std::move(first));
+    const std::string firstId = firstResult ? firstPointer->persistentId : "";
+
+    auto second = std::make_unique<GameObject>();
+    second->name = "Pot";
+    GameObject* secondPointer = second.get();
+    const Result secondResult = scene.addGameObject(std::move(second));
+    const std::string secondId =
+        secondResult ? secondPointer->persistentId : "";
+
+    passed &= expect(firstResult && secondResult && !firstId.empty() &&
+                         !secondId.empty() && firstId != secondId &&
+                         isUuidStyle(firstId) && isUuidStyle(secondId),
+                     "Empty persistent IDs were not generated as distinct UUID-style IDs");
+    if (!firstResult || !secondResult) return false;
+    passed &= expect(firstPointer->name == secondPointer->name,
+                     "Duplicate display names were not allowed");
+    passed &= expect(static_cast<bool>(scene.validateAuthoredState()),
+                     "Distinct persistent IDs with duplicate names failed validation");
+
+    auto authored = std::make_unique<GameObject>();
+    authored->persistentId = "existing-authored-id";
+    authored->name = "Authored";
+    GameObject* authoredPointer = authored.get();
+    const Result authoredResult = scene.addGameObject(std::move(authored));
+    passed &= expect(authoredResult &&
+                         authoredPointer->persistentId ==
+                             "existing-authored-id",
+                     "Explicit persistent ID was not preserved exactly");
+    if (!authoredResult) return false;
+
+    const std::size_t objectCountBeforeDuplicate = scene.gameObjects().size();
+    auto duplicate = std::make_unique<GameObject>();
+    duplicate->persistentId = "existing-authored-id";
+    const Result duplicateResult = scene.addGameObject(std::move(duplicate));
+    passed &= expect(!duplicateResult &&
+                         scene.gameObjects().size() == objectCountBeforeDuplicate &&
+                         scene.findGameObject("existing-authored-id") ==
+                             authoredPointer,
+                     "Duplicate persistent ID insertion changed scene state");
+
+    secondPointer->persistentId = firstId;
+    const Result invalidStateResult = scene.validateAuthoredState();
+    passed &= expect(!invalidStateResult &&
+                         invalidStateResult.error().find(
+                             "duplicate persistent ID") != std::string::npos,
+                     "Scene validation no longer detects duplicate identity");
+    return passed;
+}
+
 bool runTypeRegistryHierarchyTests() {
     bool passed = true;
     TypeRegistry registry;
@@ -786,6 +864,7 @@ static_assert(alignof(MaterialPushConstants) % 4 == 0);
 int main() {
     bool passed = true;
     passed &= runLevel1FailurePropagationTest();
+    passed &= runPersistentIdentityTests();
     passed &= runTypeRegistryHierarchyTests();
     passed &= runAuthoringTransferTests();
     passed &= runSceneManagerTests();

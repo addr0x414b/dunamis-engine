@@ -123,7 +123,8 @@ add_test(NAME editor_mutation_semantics COMMAND EditorMutationTests)
 add_executable(ScenePersistenceTests scene_persistence_tests.cpp)
 target_include_directories(ScenePersistenceTests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(ScenePersistenceTests PRIVATE
-        Scene GameObject Camera InputManager glm spdlog nlohmann_json::nlohmann_json)
+        Scene GameObject Camera InputManager Editor glm spdlog
+        nlohmann_json::nlohmann_json)
 add_test(NAME scene_persistence COMMAND ScenePersistenceTests)
 
 add_executable(EditorPickingTests editor_picking_tests.cpp)

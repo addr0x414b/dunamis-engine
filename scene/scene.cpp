@@ -1,5 +1,7 @@
 #include "scene.h"
 
+#include "persistent_id.h"
+
 #include <cmath>
 #include <exception>
 #include <stdexcept>
@@ -82,6 +84,42 @@ Result Scene::addGameObject(std::unique_ptr<GameObject> gameObject) {
             "Cannot add more than " +
             std::to_string(scene_limits::maxPointLights) +
             " point lights to a scene");
+    }
+
+    if (!gameObject->persistentId.empty() &&
+        findGameObject(gameObject->persistentId) != nullptr) {
+        return Result::failure("Scene contains duplicate persistent ID '" +
+                               gameObject->persistentId + "'");
+    }
+
+    if (gameObject->persistentId.empty()) {
+        constexpr std::size_t maxGenerationAttempts = 64;
+        std::string generatedId;
+        bool foundUniqueId = false;
+        try {
+            for (std::size_t attempt = 0; attempt < maxGenerationAttempts;
+                 ++attempt) {
+                generatedId = persistent_id::generate();
+                if (!generatedId.empty() &&
+                    findGameObject(generatedId) == nullptr) {
+                    foundUniqueId = true;
+                    break;
+                }
+            }
+        } catch (const std::exception& exception) {
+            return Result::failure(
+                "Failed to generate a persistent ID: " +
+                std::string(exception.what()));
+        } catch (...) {
+            return Result::failure(
+                "Failed to generate a persistent ID with an unknown error");
+        }
+
+        if (!foundUniqueId) {
+            return Result::failure(
+                "Failed to generate a unique persistent ID for the game object");
+        }
+        gameObject->persistentId = std::move(generatedId);
     }
 
     const std::size_t objectIndex = gameObjects_.size();

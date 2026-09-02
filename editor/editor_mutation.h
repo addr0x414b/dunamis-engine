@@ -5,6 +5,7 @@
 
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
+#include <string>
 
 class DirectionalLight;
 class GameObject;
@@ -12,6 +13,8 @@ class PointLight;
 
 namespace editor_mutation {
 
+[[nodiscard]] Result applyName(GameObject& object,
+                               const std::string& newName);
 [[nodiscard]] Result applyPosition(GameObject& object,
                                     const glm::vec3& newPosition);
 [[nodiscard]] Result applyRotation(GameObject& object,

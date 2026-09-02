@@ -2,6 +2,7 @@
 
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <misc/cpp/imgui_stdlib.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
 #include <ImGuizmo.h>
@@ -1823,9 +1824,6 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
         return;
     }
 
-    const char* objectName = selectedGameObject->name.empty()
-                                 ? "<Unnamed GameObject>"
-                                 : selectedGameObject->name.c_str();
     PointLight* pointLight = dynamic_cast<PointLight*>(selectedGameObject);
     DirectionalLight* directionalLight =
         dynamic_cast<DirectionalLight*>(selectedGameObject);
@@ -1838,7 +1836,16 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
                                        : camera != nullptr ? "Camera"
                                                            : "GameObject";
 
-    ImGui::Text("Name: %s", objectName);
+    std::string name = selectedGameObject->name;
+    if (ImGui::InputText("Name", &name)) {
+        const Result result = editor_mutation::applyName(*selectedGameObject,
+                                                         name);
+        if (result) {
+            inspectorError_.clear();
+        } else {
+            inspectorError_ = result.error();
+        }
+    }
     ImGui::Text("Type: %s", objectType);
 
     ImGui::SeparatorText("Transform");

@@ -6,14 +6,14 @@
   "editor": {
     "camera": {
       "front": [
-        0.7687321305274963,
-        -0.2923717200756073,
-        -0.5688318610191345
+        0.9267095923423767,
+        -0.3288666903972626,
+        -0.18181318044662476
       ],
       "position": [
-        -220.951904296875,
-        145.4671630859375,
-        84.64405059814453
+        -333.3299255371094,
+        345.4691162109375,
+        120.50764465332031
       ],
       "up": [
         0.0,
@@ -21,9 +21,7 @@
         0.0
       ]
     },
-    "renderColliders": [
-      "sponzaaaa23123"
-    ]
+    "renderColliders": []
   },
   "formatVersion": 1,
   "objects": [
@@ -57,14 +55,14 @@
         "modelPath": "game/assets/models/glTF-Sample-Assets/Models/Fox/glTF/Fox.gltf",
         "name": "Fox",
         "position": [
-          412.5909423828125,
+          229.33766174316406,
           0.0,
-          -63.74103927612305
+          0.0
         ],
         "rotation": [
-          -0.0,
-          -69.0594253540039,
-          -0.0
+          -180.0,
+          -68.70635223388672,
+          -180.0
         ],
         "scale": [
           1.0,
@@ -81,12 +79,12 @@
         "modelPath": "game/assets/models/glTF-Sample-Assets/Models/PotOfCoals/glTF/PotOfCoals.gltf",
         "name": "Pot",
         "position": [
-          -98.7421875,
-          44.28411102294922,
-          -192.98446655273438
+          96.95498657226563,
+          0.0,
+          -155.74563598632813
         ],
         "rotation": [
-          -91.42770385742188,
+          -90.59700012207031,
           0.0,
           -0.0
         ],
@@ -94,6 +92,30 @@
           750.0,
           750.0,
           750.0
+        ],
+        "texturePath": ""
+      },
+      "type": "GameObject"
+    },
+    {
+      "id": "90du-918dey798qwdgd",
+      "properties": {
+        "modelPath": "game/assets/models/glTF-Sample-Assets/Models/BrainStem/glTF/BrainStem.gltf",
+        "name": "Brahawdawdawd",
+        "position": [
+          322.0,
+          0.0,
+          -122.0
+        ],
+        "rotation": [
+          -90.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          100.0,
+          100.0,
+          100.0
         ],
         "texturePath": ""
       },
@@ -200,7 +222,7 @@
           -1.0
         ],
         "position": [
-          0.0,
+          -84.76264190673828,
           150.0,
           0.0
         ],
@@ -215,7 +237,7 @@
         "modelPath": "",
         "name": "Player",
         "position": [
-          0.0,
+          -84.76264190673828,
           0.0,
           0.0
         ],

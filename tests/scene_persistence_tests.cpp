@@ -1,3 +1,4 @@
+#include "editor/editor_mutation.h"
 #include "scene/scene_manager.h"
 #include "scene/scene_serializer.h"
 #include "scene/type_registry.h"
@@ -423,13 +424,48 @@ bool serializerTests() {
     result = SceneSerializer::applyDocument(duplicate, duplicateCandidate, registry, ignored);
     passed &= expect(!result, "duplicate persistent ID was accepted");
 
-    EmptyScene missingIdScene;
-    auto missingId = std::make_unique<GameObject>();
-    (void)missingIdScene.addGameObject(std::move(missingId));
-    nlohmann::json object;
-    result = SceneSerializer::serializeFull(
-        missingIdScene, registry, editor, object);
-    passed &= expect(!result, "missing required persistent ID was accepted");
+    EmptyScene generatedIdScene;
+    auto generatedObject = std::make_unique<GameObject>();
+    generatedObject->name = "Pot";
+    GameObject* generatedObjectPointer = generatedObject.get();
+    const Result generatedAddResult =
+        generatedIdScene.addGameObject(std::move(generatedObject));
+    const std::string generatedId = generatedAddResult
+                                        ? generatedObjectPointer->persistentId
+                                        : std::string{};
+    const Result generatedRenameResult = generatedAddResult
+        ? editor_mutation::applyName(*generatedObjectPointer, "Flower Pot")
+        : Result::failure("generated-ID object could not be added");
+    nlohmann::json generatedDocument;
+    result = generatedRenameResult
+        ? SceneSerializer::serializeFull(
+              generatedIdScene, registry, editor, generatedDocument)
+        : Result::failure("generated-ID object could not be renamed");
+    const nlohmann::json* generatedRecord = result
+        ? findObjectRecord(generatedDocument, generatedId)
+        : nullptr;
+    passed &= expect(generatedAddResult && generatedRenameResult &&
+                         !generatedId.empty() &&
+                         generatedObjectPointer->persistentId == generatedId &&
+                         result &&
+                         generatedRecord && generatedRecord->at("id") == generatedId &&
+                         generatedRecord->at("properties").at("name") ==
+                             "Flower Pot",
+                     "Generated persistent ID or authored name was not serialized");
+
+    EmptyScene generatedCandidate;
+    SceneLoadData generatedLoad;
+    result = result
+        ? SceneSerializer::applyDocument(
+              generatedDocument, generatedCandidate, registry, generatedLoad)
+        : Result::failure("generated-ID object could not be serialized");
+    const GameObject* restoredGenerated = result
+        ? generatedCandidate.findGameObject(generatedId)
+        : nullptr;
+    passed &= expect(result && restoredGenerated &&
+                         restoredGenerated->persistentId == generatedId &&
+                         restoredGenerated->name == "Flower Pot",
+                     "Generated identity or renamed name did not survive load");
     return passed;
 }
 
