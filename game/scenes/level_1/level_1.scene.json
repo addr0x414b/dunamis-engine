@@ -1,19 +1,19 @@
 {
   "activeCamera": {
     "kind": "attached",
-    "ownerId": "5d4eb6ff-54ad-4d02-8bbd-57efe711a50d"
+    "ownerId": "1ce6aa20-216e-47e7-899d-b0e8cd239e57"
   },
   "editor": {
     "camera": {
       "front": [
-        0.10897979885339737,
-        -0.27060043811798096,
-        -0.9565034508705139
+        0.001509892288595438,
+        -0.501510739326477,
+        -0.8651500940322876
       ],
       "position": [
-        138.9735565185547,
-        285.56512451171875,
-        1048.858154296875
+        233.1830596923828,
+        505.8085021972656,
+        456.7598876953125
       ],
       "up": [
         0.0,
@@ -26,20 +26,20 @@
   "formatVersion": 1,
   "objects": [
     {
-      "id": "1b1536a6-055f-477d-9191-3faf3ccd22d8",
+      "id": "4929b4c4-0a9a-4981-b0fb-a48e04e96d3e",
       "properties": {
         "modelPath": "game/assets/city-scene/source/city.fbx",
         "name": "City",
         "physics": {
           "colliderType": "mesh",
-          "enabled": false,
+          "enabled": true,
           "motionType": "static",
           "sphereRadius": 0.5
         },
         "position": [
-          742.1962890625,
-          -23.227203369140625,
-          -25.47918701171875
+          712.3553466796875,
+          -42.51869201660156,
+          -148.54710388183594
         ],
         "rotation": [
           0.0,
@@ -47,16 +47,16 @@
           0.0
         ],
         "scale": [
-          3.0,
-          3.0,
-          3.0
+          3.5,
+          3.5,
+          3.5
         ],
         "texturePath": ""
       },
       "type": "GameObject"
     },
     {
-      "id": "7df42afd-bba6-4109-8c6f-a2c6ac1369cf",
+      "id": "2a1c2d19-10c4-46b0-8302-7bc1c72bdb82",
       "properties": {
         "modelPath": "game/assets/models/glTF-Sample-Assets/Models/Fox/glTF/Fox.gltf",
         "name": "Fox",
@@ -86,7 +86,7 @@
       "type": "GameObject"
     },
     {
-      "id": "2f262412-b736-4295-8c87-4f6f2478d3d9",
+      "id": "c2907c4e-916b-44a7-86be-583cace98409",
       "properties": {
         "modelPath": "game/assets/models/glTF-Sample-Assets/Models/PotOfCoals/glTF/PotOfCoals.gltf",
         "name": "Pot",
@@ -116,7 +116,7 @@
       "type": "GameObject"
     },
     {
-      "id": "caf3d268-00eb-4403-84c9-9524216119c6",
+      "id": "69228e13-472d-46a0-8a44-c67f944b6332",
       "properties": {
         "modelPath": "game/assets/models/glTF-Sample-Assets/Models/BrainStem/glTF/BrainStem.gltf",
         "name": "Brah",
@@ -146,7 +146,7 @@
       "type": "GameObject"
     },
     {
-      "id": "88a9eacf-cdc4-43f1-9ddf-ae23aedfb05b",
+      "id": "9810e3f2-2557-4d24-a6b4-38a4dc42432a",
       "properties": {
         "modelPath": "game/assets/models/Avocado.glb",
         "name": "Physics Test Avocado",
@@ -176,7 +176,7 @@
       "type": "GameObject"
     },
     {
-      "id": "7d7d0530-634b-446d-b3dd-11e65407349d",
+      "id": "013c715c-0d8d-483f-afe9-d471969b0625",
       "properties": {
         "color": [
           1.0,
@@ -221,14 +221,14 @@
       "type": "DirectionalLight"
     },
     {
-      "id": "6f673159-139d-43f1-b01c-16689c292ab2",
+      "id": "efaddc20-3398-4164-afb3-2077ee5591c4",
       "properties": {
         "color": [
-          1.0,
-          1.0,
-          1.0
+          0.663672924041748,
+          0.6911764740943909,
+          0.22361592948436737
         ],
-        "intensity": 100.0,
+        "intensity": 5000.0,
         "modelPath": "",
         "name": "Point Light",
         "physics": {
@@ -238,9 +238,9 @@
           "sphereRadius": 0.5
         },
         "position": [
-          250.0,
-          20.0,
-          100.0
+          306.5044860839844,
+          315.4610290527344,
+          -147.75454711914063
         ],
         "rotation": [
           0.0,
@@ -275,7 +275,7 @@
           0.0
         ]
       },
-      "id": "5d4eb6ff-54ad-4d02-8bbd-57efe711a50d",
+      "id": "1ce6aa20-216e-47e7-899d-b0e8cd239e57",
       "properties": {
         "capsuleHeight": 180.0,
         "capsuleRadius": 35.0,

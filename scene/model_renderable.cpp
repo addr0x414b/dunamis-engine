@@ -244,6 +244,14 @@ std::string normalizedTextureSourceKey(const std::filesystem::path& source) {
     return source.lexically_normal().generic_string();
 }
 
+std::filesystem::path normalizedTextureReferencePath(
+    std::string_view textureReference) {
+    std::string normalizedReference(textureReference);
+    std::replace(normalizedReference.begin(), normalizedReference.end(), '\\',
+                 '/');
+    return std::filesystem::path(normalizedReference);
+}
+
 std::optional<std::size_t> parseEmbeddedTextureIndex(
     std::string_view textureReference) {
     if (textureReference.size() < 2 || textureReference.front() != '*') {
@@ -302,10 +310,36 @@ TextureSource makeExternalTextureSource(std::filesystem::path path,
 TextureSource resolveTextureSource(const aiScene* scene, const char* modelPath,
                                    std::string_view textureReference) {
     if (textureReference.empty() || textureReference.front() != '*') {
-        const std::filesystem::path path =
-            std::filesystem::path(modelPath).parent_path() /
-            std::filesystem::path(textureReference);
-        return makeExternalTextureSource(path, path.string());
+        const std::filesystem::path modelDirectory =
+            std::filesystem::path(modelPath).parent_path();
+        const std::filesystem::path normalizedReference =
+            normalizedTextureReferencePath(textureReference);
+        const std::filesystem::path originalPath =
+            modelDirectory / normalizedReference;
+        std::error_code existsError;
+        if (std::filesystem::exists(originalPath, existsError)) {
+            return makeExternalTextureSource(originalPath, originalPath.string());
+        }
+
+        const std::filesystem::path fallbackPath =
+            modelDirectory / "textures" / normalizedReference.filename();
+        spdlog::warn("Texture reference not found at {}; trying {}",
+                     originalPath.string(), fallbackPath.string());
+        existsError.clear();
+        if (std::filesystem::exists(fallbackPath, existsError)) {
+            spdlog::info("Resolved texture from fallback directory: {}",
+                         fallbackPath.string());
+            return makeExternalTextureSource(fallbackPath, fallbackPath.string());
+        }
+
+        TextureSource source =
+            makeExternalTextureSource(originalPath, originalPath.string());
+        source.valid = false;
+        source.invalidReason =
+            "texture was not found at original reference " +
+            originalPath.string() + " or textures fallback " +
+            fallbackPath.string();
+        return source;
     }
 
     TextureSource source;

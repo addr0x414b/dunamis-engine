@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -35,10 +36,31 @@ private:
     std::filesystem::path original_;
 };
 
+std::string jsonEscape(std::string_view value) {
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (const char character : value) {
+        if (character == '\\' || character == '"') {
+            escaped.push_back('\\');
+        }
+        escaped.push_back(character);
+    }
+    return escaped;
+}
+
+void writePpm(const std::filesystem::path& path, unsigned char red,
+              unsigned char green, unsigned char blue) {
+    std::ofstream image(path, std::ios::binary);
+    image << "P6\n1 1\n255\n";
+    const unsigned char pixel[] = {red, green, blue};
+    image.write(reinterpret_cast<const char*>(pixel), sizeof(pixel));
+}
+
 std::filesystem::path createMissingTextureModel(
     const char* baseColorFactor = "0.8,0.7,0.6,0.5",
     const char* metallicFactor = "0.35",
-    const char* roughnessFactor = "0.65") {
+    const char* roughnessFactor = "0.65",
+    std::string_view baseColorReference = "missing.png") {
     const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto directory =
         std::filesystem::temp_directory_path() /
@@ -66,7 +88,9 @@ std::filesystem::path createMissingTextureModel(
 "buffers":[{"uri":"mesh.bin","byteLength":42}],
 "bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":6}],
 "accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]},{"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}],
-"images":[{"uri":"missing.png"},{"uri":"missing-normal.png"},{"uri":"metallic-roughness.ppm"}],"textures":[{"source":0},{"source":1},{"source":2}],
+"images":[{"uri":")json"
+           << jsonEscape(baseColorReference)
+           << R"json("},{"uri":"missing-normal.png"},{"uri":"metallic-roughness.ppm"}],"textures":[{"source":0},{"source":1},{"source":2}],
 "materials":[{"pbrMetallicRoughness":{"baseColorFactor":[)json"
            << baseColorFactor
            << R"json(],"metallicFactor":)json"
@@ -244,6 +268,133 @@ bool testFallbackSuccess(const std::filesystem::path& buildDirectory) {
                     instance.material.metallicRoughnessMapPixels[1] == 255 &&
                     instance.material.metallicRoughnessMapPixels[2] == 128,
                 "Combined metallic-roughness texture was not resolved");
+        }
+    }
+    std::filesystem::remove_all(modelPath.parent_path());
+    return passed;
+}
+
+bool testExactReferencedPathSuccess(
+    const std::filesystem::path& buildDirectory) {
+    const auto modelPath = createMissingTextureModel(
+        "0.8,0.7,0.6,0.5", "0.35", "0.65", "direct.ppm");
+    const auto directPath = modelPath.parent_path() / "direct.ppm";
+    writePpm(directPath, 11, 22, 33);
+    bool passed = true;
+    {
+        CurrentPathGuard guard(buildDirectory);
+        GameObject object;
+        object.modelPath = modelPath.c_str();
+        const Result result = object.loadModel();
+        passed &= expect(static_cast<bool>(result),
+                         "Existing referenced texture did not load");
+        if (result && object.modelRenderable().meshInstances().size() == 1) {
+            const Material& material =
+                object.modelRenderable().meshInstances().front().material;
+            passed &= expect(
+                material.texturePath &&
+                    std::string(material.texturePath) == directPath.string() &&
+                    material.pixels != nullptr && material.pixels[0] == 11 &&
+                    material.pixels[1] == 22 && material.pixels[2] == 33,
+                "Existing referenced texture was not used directly");
+        }
+    }
+    std::filesystem::remove_all(modelPath.parent_path());
+    return passed;
+}
+
+bool testTexturesDirectoryFallback(const std::filesystem::path& buildDirectory) {
+    const auto modelPath = createMissingTextureModel(
+        "0.8,0.7,0.6,0.5", "0.35", "0.65", "missing/source.ppm");
+    const auto fallbackDirectory = modelPath.parent_path() / "textures";
+    const auto fallbackPath = fallbackDirectory / "source.ppm";
+    std::filesystem::create_directories(fallbackDirectory);
+    writePpm(fallbackPath, 44, 55, 66);
+    bool passed = true;
+    {
+        CurrentPathGuard guard(buildDirectory);
+        GameObject object;
+        object.modelPath = modelPath.c_str();
+        const Result result = object.loadModel();
+        passed &= expect(static_cast<bool>(result),
+                         "Textures-directory fallback did not load");
+        if (result && object.modelRenderable().meshInstances().size() == 1) {
+            const Material& material =
+                object.modelRenderable().meshInstances().front().material;
+            passed &= expect(
+                material.texturePath &&
+                    std::string(material.texturePath) == fallbackPath.string() &&
+                    material.pixels != nullptr && material.pixels[0] == 44 &&
+                    material.pixels[1] == 55 && material.pixels[2] == 66,
+                "Textures-directory fallback did not use the exact filename");
+        }
+    }
+    std::filesystem::remove_all(modelPath.parent_path());
+    return passed;
+}
+
+bool testWindowsStyleTextureReference(
+    const std::filesystem::path& buildDirectory) {
+    const auto modelPath = createMissingTextureModel(
+        "0.8,0.7,0.6,0.5", "0.35", "0.65", "nested\\windows.ppm");
+    const auto referencedPath = modelPath.parent_path() / "nested" /
+                                "windows.ppm";
+    std::filesystem::create_directories(referencedPath.parent_path());
+    writePpm(referencedPath, 77, 88, 99);
+    bool passed = true;
+    {
+        CurrentPathGuard guard(buildDirectory);
+        GameObject object;
+        object.modelPath = modelPath.c_str();
+        const Result result = object.loadModel();
+        passed &= expect(static_cast<bool>(result),
+                         "Windows-style texture reference did not load");
+        if (result && object.modelRenderable().meshInstances().size() == 1) {
+            const Material& material =
+                object.modelRenderable().meshInstances().front().material;
+            passed &= expect(
+                material.texturePath &&
+                    std::string(material.texturePath) == referencedPath.string() &&
+                    material.pixels != nullptr && material.pixels[0] == 77 &&
+                    material.pixels[1] == 88 && material.pixels[2] == 99,
+                "Windows-style separators were not normalized");
+        }
+    }
+    std::filesystem::remove_all(modelPath.parent_path());
+    return passed;
+}
+
+bool testDecodeFailureDoesNotUseTexturesFallback(
+    const std::filesystem::path& buildDirectory) {
+    const auto modelPath = createMissingTextureModel(
+        "0.8,0.7,0.6,0.5", "0.35", "0.65", "corrupt.ppm");
+    const auto corruptPath = modelPath.parent_path() / "corrupt.ppm";
+    {
+        std::ofstream corrupt(corruptPath, std::ios::binary);
+        corrupt << "not an image";
+    }
+    const auto fallbackDirectory = modelPath.parent_path() / "textures";
+    const auto fallbackPath = fallbackDirectory / "corrupt.ppm";
+    std::filesystem::create_directories(fallbackDirectory);
+    writePpm(fallbackPath, 123, 134, 145);
+    bool passed = true;
+    {
+        CurrentPathGuard guard(buildDirectory);
+        GameObject object;
+        object.modelPath = modelPath.c_str();
+        const Result result = object.loadModel();
+        passed &= expect(static_cast<bool>(result),
+                         "Decode failure did not use the error texture");
+        if (result && object.modelRenderable().meshInstances().size() == 1) {
+            const Material& material =
+                object.modelRenderable().meshInstances().front().material;
+            passed &= expect(
+                material.texturePath &&
+                    std::string(material.texturePath).find(
+                        "rendering/default_textures/error.jpg") !=
+                        std::string::npos &&
+                    std::string(material.texturePath) != fallbackPath.string(),
+                "Decode failure incorrectly used the textures fallback");
         }
     }
     std::filesystem::remove_all(modelPath.parent_path());
@@ -439,6 +590,10 @@ int main(int argc, char** argv) {
     const auto noFallbackDirectory = modelPath.parent_path() / "no-fallback";
     std::filesystem::create_directories(noFallbackDirectory);
     bool passed = testFallbackSuccess(argv[1]);
+    passed &= testExactReferencedPathSuccess(argv[1]);
+    passed &= testTexturesDirectoryFallback(argv[1]);
+    passed &= testWindowsStyleTextureReference(argv[1]);
+    passed &= testDecodeFailureDoesNotUseTexturesFallback(argv[1]);
     passed &= testFallbackFailure(modelPath, noFallbackDirectory);
     passed &= testFactorValidation(argv[1]);
     passed &= testOptionalMetallicRoughnessFailure(argv[1]);

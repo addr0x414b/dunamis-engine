@@ -69,9 +69,9 @@ void Level1::buildDefaults() {
     //test3->persistentId = "sponza";
     test3->name = "City";
     test3->scale = glm::vec3(1.0f, 1.0f, 1.0f);
-    //test3->physics.enabled = true;
-    //test3->physics.motionType = GameObject::PhysicsMotionType::Static;
-    //test3->physics.colliderType = GameObject::PhysicsColliderType::Mesh;
+    test3->physics.enabled = true;
+    test3->physics.motionType = GameObject::PhysicsMotionType::Static;
+    test3->physics.colliderType = GameObject::PhysicsColliderType::Mesh;
     test3->modelPath = "game/assets/city-scene/source/city.fbx";
     //test3->modelPath = "game/assets/test/source/Mobile Ready City Road.fbx";
     requireSuccess(test3->loadModel(), "Failed to load Sponza");
