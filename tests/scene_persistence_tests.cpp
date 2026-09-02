@@ -72,7 +72,7 @@ public:
         return registerCustom(registry);
     }
 
-    void init() override {
+    void buildDefaults() override {
         auto base = std::make_unique<GameObject>();
         base->persistentId = "base";
         base->name = "Base";
@@ -126,7 +126,7 @@ private:
 
 class EmptyScene final : public Scene {
 public:
-    void init() override {}
+    void buildDefaults() override {}
     void start() override {}
     void update() override {}
 };
@@ -217,15 +217,15 @@ bool registryTests() {
         : nullptr;
     passed &= expect(cameraType && contains(cameraPersisted, "position") &&
                          contains(cameraPersisted, "front") &&
-                         !contains(cameraPersisted, "physics") &&
-                         !contains(cameraPersisted, "fov") &&
+                         contains(cameraPersisted, "physics") &&
+                         contains(cameraPersisted, "fov") &&
                          contains(cameraRuntimeTransfer, "position") &&
                          contains(cameraRuntimeTransfer, "physics") &&
                          contains(cameraRuntimeTransfer, "fov") && fov &&
-                         fov->lifecycle == PropertyLifecycle::RuntimeTransferOnly &&
-                         !fov->read && !fov->write && fov->copy && physics &&
-                         physics->lifecycle == PropertyLifecycle::RuntimeTransferOnly &&
-                         !physics->read && !physics->write && physics->copy,
+                         fov->lifecycle == PropertyLifecycle::Persisted &&
+                         fov->read && fov->write && fov->copy && physics &&
+                         physics->lifecycle == PropertyLifecycle::Persisted &&
+                         physics->read && physics->write && physics->copy,
                      "camera lifecycle registration or inherited transfer metadata failed");
 
     Camera sourceCamera;
@@ -281,8 +281,14 @@ bool serializerTests() {
     TypeRegistry registry = makeRegistry(passed);
     PersistenceScene source;
     source.name = "Persistence Test";
-    source.init();
+    source.buildDefaults();
     auto* sourceCamera = static_cast<Camera*>(source.findGameObject("camera"));
+    auto* sourceCustom = static_cast<CustomObject*>(
+        source.findGameObject("custom"));
+    sourceCustom->physics.enabled = true;
+    sourceCustom->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
+    sourceCustom->physics.colliderType = GameObject::PhysicsColliderType::Sphere;
+    sourceCustom->physics.sphereRadius = 4.25f;
     const bool configuredSourceFov = sourceCamera->setFov(90.0f);
     Camera editor;
     editor.position = {11.0f, 12.0f, 13.0f};
@@ -304,21 +310,15 @@ bool serializerTests() {
                          customRecord["properties"].contains("spinSpeed") &&
                          !customRecord["properties"].contains("runtimeOnly") &&
                          !customRecord["properties"].contains("transferOnlyValue") &&
-                         !customRecord["properties"].contains("physics") &&
-                         !cameraRecord["properties"].contains("fov") &&
-                         !cameraRecord["properties"].contains("physics"),
+                         customRecord["properties"].contains("physics") &&
+                         cameraRecord["properties"].contains("fov") &&
+                         cameraRecord["properties"].contains("physics"),
                      "generic custom/inherited property serialization failed");
     passed &= expect(document["activeCamera"]["ownerId"] == "camera" &&
                          document["activeCamera"]["kind"] == "object",
                      "active camera logical reference was not serialized");
 
-    PersistenceScene candidate;
-    candidate.name = "Defaults";
-    candidate.init();
-    auto* candidateCustom =
-        static_cast<CustomObject*>(candidate.findGameObject("custom"));
-    candidateCustom->spinSpeed = 1.0f;
-    candidateCustom->transferOnlyValue = 1.0f;
+    EmptyScene candidate;
     SceneLoadData load;
     result = SceneSerializer::applyDocument(document, candidate, registry, load);
     passed &= expect(static_cast<bool>(result), "scene round trip failed: " + result.error());
@@ -328,19 +328,32 @@ bool serializerTests() {
                          restored->enabled && restored->precision == 0.125 &&
                          restored->range.y == 8.0f && restored->tint.w == 0.4f &&
                          restored->tag == "metadata-only" &&
-                         restored->runtimeOnly == 99.0f &&
+                         restored->runtimeOnly == 0.0f &&
                          restored->transferOnlyValue == 1.0f &&
                          restored->position.x == 1.0f,
                      "custom object did not round trip through metadata");
     const auto* point = dynamic_cast<const PointLight*>(candidate.findGameObject("point"));
     const auto* sun = dynamic_cast<const DirectionalLight*>(candidate.findGameObject("sun"));
     const auto* camera = dynamic_cast<const Camera*>(candidate.findGameObject("camera"));
+    std::size_t directionalLightCount = 0;
+    for (const auto& object : candidate.gameObjects()) {
+        if (dynamic_cast<const DirectionalLight*>(object.get()) != nullptr) {
+            ++directionalLightCount;
+        }
+    }
     passed &= expect(point && point->intensity == 7.0f &&
-                         sun && sun->shadow.halfExtent == 321.0f &&
+                         sun && directionalLightCount == 1 &&
+                         sun->shadow.halfExtent == 321.0f &&
                          camera && candidate.activeCamera() == camera &&
-                         configuredSourceFov && camera->fov() == 60.0f &&
+                         configuredSourceFov && camera->fov() == 90.0f &&
                          candidate.ambientIntensity() == 0.7f,
                      "built-in object/camera/scene state did not round trip");
+    passed &= expect(
+        restored && restored->physics.enabled &&
+            restored->physics.motionType == GameObject::PhysicsMotionType::Dynamic &&
+            restored->physics.colliderType == GameObject::PhysicsColliderType::Sphere &&
+            restored->physics.sphereRadius == 4.25f,
+        "authored physics configuration did not survive serialize/load");
     passed &= expect(candidate.findGameObject("base")->authoredTexturePath() ==
                          "textures/override.png",
                      "logical texture override path did not round trip");
@@ -349,8 +362,7 @@ bool serializerTests() {
 
     nlohmann::json unknownProperty = document;
     unknownProperty["objects"][0]["properties"]["futureProperty"] = 5;
-    PersistenceScene unknownCandidate;
-    unknownCandidate.init();
+    EmptyScene unknownCandidate;
     SceneLoadData unknownLoad;
     result = SceneSerializer::applyDocument(
         unknownProperty, unknownCandidate, registry, unknownLoad);
@@ -359,8 +371,7 @@ bool serializerTests() {
 
     nlohmann::json noEditor = document;
     noEditor.erase("editor");
-    PersistenceScene noEditorCandidate;
-    noEditorCandidate.init();
+    EmptyScene noEditorCandidate;
     SceneLoadData noEditorLoad;
     result = SceneSerializer::applyDocument(
         noEditor, noEditorCandidate, registry, noEditorLoad);
@@ -369,8 +380,7 @@ bool serializerTests() {
 
     nlohmann::json invalidEditor = document;
     invalidEditor["editor"]["camera"]["front"] = {0.0f, 0.0f, 0.0f};
-    PersistenceScene invalidEditorCandidate;
-    invalidEditorCandidate.init();
+    EmptyScene invalidEditorCandidate;
     SceneLoadData invalidEditorLoad;
     result = SceneSerializer::applyDocument(
         invalidEditor, invalidEditorCandidate, registry, invalidEditorLoad);
@@ -382,8 +392,7 @@ bool serializerTests() {
     nlohmann::json extra = customRecord;
     extra["id"] = "factory_extra";
     dynamicObject["objects"].push_back(extra);
-    PersistenceScene dynamicCandidate;
-    dynamicCandidate.init();
+    EmptyScene dynamicCandidate;
     SceneLoadData dynamicLoad;
     result = SceneSerializer::applyDocument(
         dynamicObject, dynamicCandidate, registry, dynamicLoad);
@@ -394,8 +403,7 @@ bool serializerTests() {
 
     nlohmann::json unknownType = document;
     unknownType["objects"][0]["type"] = "MissingType";
-    PersistenceScene unknownTypeCandidate;
-    unknownTypeCandidate.init();
+    EmptyScene unknownTypeCandidate;
     SceneLoadData ignored;
     result = SceneSerializer::applyDocument(
         unknownType, unknownTypeCandidate, registry, ignored);
@@ -403,24 +411,20 @@ bool serializerTests() {
 
     nlohmann::json wrongType = document;
     wrongType["objects"][0]["properties"]["position"] = "bad";
-    PersistenceScene untouched;
-    untouched.init();
-    const glm::vec3 originalPosition = untouched.findGameObject("base")->position;
+    EmptyScene untouched;
     result = SceneSerializer::applyDocument(wrongType, untouched, registry, ignored);
-    passed &= expect(!result && untouched.findGameObject("base")->position == originalPosition,
-                     "wrong property type was accepted or mutated its target property");
+    passed &= expect(!result,
+                     "wrong property type was accepted");
 
     nlohmann::json unsupported = document;
     unsupported["formatVersion"] = 2;
-    PersistenceScene versionCandidate;
-    versionCandidate.init();
+    EmptyScene versionCandidate;
     result = SceneSerializer::applyDocument(unsupported, versionCandidate, registry, ignored);
     passed &= expect(!result, "unsupported format version was accepted");
 
     nlohmann::json duplicate = document;
     duplicate["objects"].push_back(duplicate["objects"][0]);
-    PersistenceScene duplicateCandidate;
-    duplicateCandidate.init();
+    EmptyScene duplicateCandidate;
     result = SceneSerializer::applyDocument(duplicate, duplicateCandidate, registry, ignored);
     passed &= expect(!result, "duplicate persistent ID was accepted");
 
@@ -488,9 +492,9 @@ bool characterPersistenceTests() {
         : nullptr;
     passed &= expect(
         result && document.at("formatVersion") == 1 && record &&
-            !record->at("properties").contains("capsuleHeight") &&
-            !record->at("properties").contains("capsuleRadius"),
-        "Character capsule dimensions leaked into persisted JSON");
+            record->at("properties").contains("capsuleHeight") &&
+            record->at("properties").contains("capsuleRadius"),
+        "Character capsule dimensions were not persisted");
 
     EmptyScene candidate;
     SceneLoadData load;
@@ -504,12 +508,18 @@ bool characterPersistenceTests() {
     const nlohmann::json* roundTripRecord = roundTripResult
         ? findObjectRecord(roundTrip, "character")
         : nullptr;
+    const auto* restoredCharacter = result
+        ? dynamic_cast<const Character*>(
+              candidate.findGameObject("character"))
+        : nullptr;
     passed &= expect(
         result && roundTripResult && roundTrip.at("formatVersion") == 1 &&
             roundTripRecord &&
-            !roundTripRecord->at("properties").contains("capsuleHeight") &&
-            !roundTripRecord->at("properties").contains("capsuleRadius"),
-        "Character persistence round trip introduced capsule dimensions");
+            roundTripRecord->at("properties").contains("capsuleHeight") &&
+            roundTripRecord->at("properties").contains("capsuleRadius") &&
+            restoredCharacter && restoredCharacter->capsuleHeight == 211.0f &&
+            restoredCharacter->capsuleRadius == 41.0f,
+        "Character capsule dimensions did not survive serialize/load");
     return passed;
 }
 
@@ -532,8 +542,8 @@ bool managerDirtyTests() {
     editingCustom->runtimeOnly = 777.0f;
     editingCustom->transferOnlyValue = 123.0f;
     const bool configuredCameraFov = editingCamera->setFov(90.0f);
-    passed &= expect(!manager.hasUnsavedChanges(),
-                     "runtime-only property changes became persisted dirty state");
+    passed &= expect(configuredCameraFov && manager.hasUnsavedChanges(),
+                     "authored camera FOV did not become persisted dirty state");
     editingCustom->spinSpeed = 270.0f;
     result = manager.prepareRuntimeScene();
     const auto* runtimeCustom = result
@@ -546,11 +556,11 @@ bool managerDirtyTests() {
         : nullptr;
     passed &= expect(result && runtimeCustom &&
                          runtimeCustom->spinSpeed == 270.0f &&
-                         runtimeCustom->runtimeOnly == 99.0f &&
+                         runtimeCustom->runtimeOnly == 0.0f &&
                          runtimeCustom->transferOnlyValue == 123.0f &&
                          configuredCameraFov && runtimeCamera &&
                          runtimeCamera->fov() == 90.0f,
-                     "generic runtime transfer omitted authored custom state or copied runtime-only state");
+                     "runtime clone omitted authored custom state or copied transient state");
     manager.cancelPreparedRuntimeScene();
 
     editingCustom->transferOnlyValue = CustomObject::transferFailureSentinel;
@@ -575,10 +585,10 @@ bool managerDirtyTests() {
         findObjectRecord(savedDocument, "camera");
     passed &= expect(savedDocument.at("formatVersion") == 1 && savedCustom &&
                          savedCamera &&
-                         !savedCustom->at("properties").contains("physics") &&
+                         savedCustom->at("properties").contains("physics") &&
                          !savedCustom->at("properties").contains("transferOnlyValue") &&
-                         !savedCamera->at("properties").contains("fov"),
-                     "runtime-only state changed the persisted scene format");
+                         savedCamera->at("properties").contains("fov"),
+                     "authored property state was not persisted");
     editor.position.x = 50.0f;
     passed &= expect(!manager.hasUnsavedChanges(),
                      "editor camera movement made authored state dirty");
@@ -620,12 +630,12 @@ bool managerDirtyTests() {
                                  }), objects.end());
     { std::ofstream stream(path); stream << oldDocument.dump(2); }
     result = manager.prepareEditingSceneLoad(path);
-    passed &= expect(static_cast<bool>(result), "older scene document was rejected");
+    passed &= expect(static_cast<bool>(result), "scene document without a custom object was rejected");
     result = manager.commitPreparedEditingSceneLoad();
     manager.finishEditingSceneLoad();
-    passed &= expect(result && manager.editingScene()->findGameObject("custom") &&
-                         manager.hasUnsavedChanges(),
-                     "new C++ default object did not survive older JSON as dirty");
+    passed &= expect(result && manager.editingScene()->findGameObject("custom") == nullptr &&
+                         !manager.hasUnsavedChanges(),
+                     "JSON topology was not authoritative during scene load");
 
     manager.shutdown();
     std::error_code error;

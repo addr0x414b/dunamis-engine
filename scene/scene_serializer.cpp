@@ -15,6 +15,12 @@ Result encodeCamera(const Camera& camera, nlohmann::json& output) {
     return authored_property::encode(camera.up, output["up"]);
 }
 
+Result encodeAttachedCamera(const Camera& camera, nlohmann::json& output) {
+    Result result = encodeCamera(camera, output);
+    if (!result) return result;
+    return authored_property::encode(camera.fov(), output["fov"]);
+}
+
 Result decodeCamera(const nlohmann::json& input, EditorCameraState& state) {
     if (!input.is_object()) return Result::failure("expected camera object");
     for (const char* field : {"position", "front", "up"}) {
@@ -38,6 +44,24 @@ Result decodeCamera(const nlohmann::json& input, EditorCameraState& state) {
         glm::dot(glm::cross(validation.front, validation.up),
                  glm::cross(validation.front, validation.up)) <= 1.0e-8f) {
         return Result::failure("camera orientation is invalid");
+    }
+    return Result::success();
+}
+
+Result decodeAttachedCamera(const nlohmann::json& input, Camera& camera) {
+    EditorCameraState state;
+    Result result = decodeCamera(input, state);
+    if (!result) return result;
+    camera.position = state.position;
+    camera.front = state.front;
+    camera.up = state.up;
+    if (input.contains("fov")) {
+        float fov = 0.0f;
+        result = authored_property::decode(input.at("fov"), fov);
+        if (!result) return result;
+        if (!camera.setFov(fov)) {
+            return Result::failure("camera FOV must be finite and between 0 and 180 degrees");
+        }
     }
     return Result::success();
 }
@@ -187,7 +211,7 @@ Result SceneSerializer::serializeObject(const GameObject& object,
     }
     if (const Camera* attached = object.attachedCamera()) {
         nlohmann::json camera = nlohmann::json::object();
-        Result result = encodeCamera(*attached, camera);
+        Result result = encodeAttachedCamera(*attached, camera);
         if (!result) return Result::failure("Invalid attached camera on object '" +
                                             object.persistentId + "': " + result.error());
         output["attachedCamera"] = std::move(camera);
@@ -356,12 +380,8 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
                 Camera* attached = object->attachedCamera();
                 if (!attached) return Result::failure("Object '" + id +
                                                       "' has saved attached-camera data but no attached camera");
-                EditorCameraState attachedState;
-                result = decodeCamera(record.at("attachedCamera"), attachedState);
+                result = decodeAttachedCamera(record.at("attachedCamera"), *attached);
                 if (!result) return Result::failure("Invalid attached camera on object '" + id + "': " + result.error());
-                attached->position = attachedState.position;
-                attached->front = attachedState.front;
-                attached->up = attachedState.up;
             }
         }
 

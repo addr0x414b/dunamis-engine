@@ -81,7 +81,7 @@ bool matrixNear(const glm::mat4& actual, const glm::mat4& expected,
 
 class TestScene final : public Scene {
 public:
-    void init() override {}
+    void buildDefaults() override {}
     void start() override {}
     void update() override {}
 };

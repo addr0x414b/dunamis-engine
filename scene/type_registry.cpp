@@ -98,7 +98,7 @@ Result registerEngineTypes(TypeRegistry& registry) {
     if (!result) return result;
     result = registry.registerProperty(
         "GameObject", "physics", &GameObject::physics,
-        PropertyLifecycle::RuntimeTransferOnly);
+        PropertyLifecycle::Persisted);
     if (!result) return result;
     result = registry.registerAccessor<GameObject, std::string>(
         "GameObject", "texturePath",
@@ -120,11 +120,11 @@ Result registerEngineTypes(TypeRegistry& registry) {
     if (!result) return result;
     result = registry.registerProperty(
         "Character", "capsuleHeight", &Character::capsuleHeight,
-        PropertyLifecycle::RuntimeTransferOnly);
+        PropertyLifecycle::Persisted);
     if (!result) return result;
     result = registry.registerProperty(
         "Character", "capsuleRadius", &Character::capsuleRadius,
-        PropertyLifecycle::RuntimeTransferOnly);
+        PropertyLifecycle::Persisted);
     if (!result) return result;
 
     result = registry.registerType<Camera>(
@@ -143,7 +143,7 @@ Result registerEngineTypes(TypeRegistry& registry) {
                 : Result::failure(
                       "Camera FOV must be finite and between 0 and 180 degrees");
         },
-        PropertyLifecycle::RuntimeTransferOnly);
+        PropertyLifecycle::Persisted);
     if (!result) return result;
 
     result = registry.registerType<PointLight>(

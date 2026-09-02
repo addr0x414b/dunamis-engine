@@ -11,7 +11,7 @@ class TypeRegistry;
 class Level1 : public Scene {
 public:
     [[nodiscard]] static Result registerTypes(TypeRegistry& registry);
-    void init() override;
+    void buildDefaults() override;
     void start() override;
     void update() override;
 

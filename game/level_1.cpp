@@ -25,7 +25,7 @@ Result Level1::registerTypes(TypeRegistry& registry) {
     return result;
 }
 
-void Level1::init() {
+void Level1::buildDefaults() {
 
     spdlog::info("Initializing scene {}...", name);
 
@@ -55,7 +55,7 @@ void Level1::init() {
     (void)addGameObject(std::move(test2));*/
 
     auto test3 = std::make_unique<GameObject>();
-    test3->persistentId = "sponza";
+    //test3->persistentId = "sponza";
     test3->name = "Sponza";
     test3->scale = glm::vec3(1.0f, 1.0f, 1.0f);
     test3->physics.enabled = true;
@@ -66,7 +66,7 @@ void Level1::init() {
     requireSuccess(addGameObject(std::move(test3)), "Failed to add Sponza");
 
     auto test8 = std::make_unique<GameObject>();
-    test8->persistentId = "sponzaaaa";
+    //test8->persistentId = "sponzaaaa";
     test8->name = "Fox";
     test8->scale = glm::vec3(1.0f, 1.0f, 1.0f);
     test8->physics.enabled = true;
@@ -77,7 +77,7 @@ void Level1::init() {
     requireSuccess(addGameObject(std::move(test8)), "Failed to add Sponza");
 
     auto test9 = std::make_unique<GameObject>();
-    test9->persistentId = "sponzaaaa23123";
+    //test9->persistentId = "sponzaaaa23123";
     test9->name = "Pot";
     test9->scale = glm::vec3(750.0f, 750.0f, 750.0f);
     test9->physics.enabled = true;
@@ -89,7 +89,7 @@ void Level1::init() {
 
     auto test10 = std::make_unique<GameObject>();
     test10->name = "Brah";
-    test10->persistentId = "90du-918dey798qwdgd";
+    //test10->persistentId = "90du-918dey798qwdgd";
     test10->scale = glm::vec3(100.0f, 100.0f, 100.0f);
     test10->rotation = glm::vec3(-90.0f, 0.0f, 0.0f);
     test10->position = glm::vec3(322.0f, 0.0f, -122.0f);
@@ -101,7 +101,7 @@ void Level1::init() {
     // y≈-2.5). At 100 Dunamis units per meter, this gives the test body a
     // visible three-meter drop before it reaches the floor.
     auto avocado = std::make_unique<GameObject>();
-    avocado->persistentId = "physics_test_avocado";
+    //avocado->persistentId = "physics_test_avocado";
     avocado->name = "Physics Test Avocado";
     avocado->position = glm::vec3(0.0f, 300.0f, -175.0f);
     avocado->scale = glm::vec3(500.0f);
@@ -128,7 +128,7 @@ void Level1::init() {
     (void)addGameObject(std::move(test4));*/
 
     auto test4 = std::make_unique<DirectionalLight>();
-    test4->persistentId = "directional_light";
+    //test4->persistentId = "directional_light";
     test4->name = "Direc Light";
     test4->scale = glm::vec3(200.0f, 200.0f, 200.0f);
     test4->position = glm::vec3(50.0f, 20.0f, 100.0f);
@@ -138,7 +138,7 @@ void Level1::init() {
     requireSuccess(addGameObject(std::move(test4)), "Failed to add Directional Light");
 
     auto test5 = std::make_unique<PointLight>();
-    test5->persistentId = "point_light";
+    //test5->persistentId = "point_light";
     test5->name = "Point Light";
     test5->scale = glm::vec3(500.0f, 500.0f, 500.0f);
     test5->position = glm::vec3(250.0f, 20.0f, 100.0f);
@@ -182,7 +182,7 @@ void Level1::init() {
     (void)addGameObject(std::move(light2));*/
 
     auto player = std::make_unique<Player>();
-    player->persistentId = "player";
+    //player->persistentId = "player";
     Player* playerObserver = player.get();
     playerObserver->init();
     requireSuccess(addGameObject(std::move(player)),
@@ -193,19 +193,28 @@ void Level1::init() {
         throw std::runtime_error(
             "Failed to set the Level 1 camera: " + cameraResult.error());
     }
-    player_ = playerObserver;
-
     spdlog::info("Scene successfully initialized");
 
 } 
 
 void Level1::start() {
+    player_ = nullptr;
+    for (const auto& obj : gameObjects()) {
+        if (auto* player = dynamic_cast<Player*>(obj.get())) {
+            if (player_ != nullptr) {
+                throw std::runtime_error(
+                    "Level 1 requires exactly one Player");
+            }
+            player_ = player;
+        }
+    }
+    if (player_ == nullptr) {
+        throw std::runtime_error("Level 1 requires a Player");
+    }
     for (const auto& obj : gameObjects()) {
         obj->start();
     }
-    if (player_ != nullptr) {
-        player_->start(inputManager);
-    }
+    player_->start(inputManager);
 }
 
 void Level1::update() {

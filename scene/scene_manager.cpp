@@ -12,7 +12,7 @@ SceneManager::SceneManager() {
     registryInitialization_ = registerEngineTypes(typeRegistry_);
 }
 
-Result SceneManager::constructInitializedScene(
+Result SceneManager::constructBlankScene(
     std::unique_ptr<Scene>& scene) const {
     if (!sceneConstructor_) {
         return Result::failure("Scene constructor is not configured");
@@ -28,22 +28,53 @@ Result SceneManager::constructInitializedScene(
         }
         candidate->name = sceneName_;
         candidate->inputManager = inputManager_;
-        candidate->init();
-
-        Result result = candidate->validateForActivation();
-        if (!result) {
-            return Result::failure("Initialized scene is invalid: " +
-                                   result.error());
-        }
         scene = std::move(candidate);
         return Result::success();
     } catch (const std::exception& exception) {
-        return Result::failure("Scene initialization failed: " +
+        return Result::failure("Scene construction failed: " +
                                std::string(exception.what()));
     } catch (...) {
         return Result::failure(
-            "Scene initialization failed with an unknown error");
+            "Scene construction failed with an unknown error");
     }
+}
+
+Result SceneManager::loadSceneFromPath(
+    const std::filesystem::path& path, std::unique_ptr<Scene>& scene,
+    SceneLoadData& loadData) const {
+    if (path.empty()) return Result::failure("Scene path is empty");
+
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) {
+        return Result::failure("Failed to open scene file '" + path.string() + "'");
+    }
+
+    nlohmann::json document;
+    try {
+        stream >> document;
+    } catch (const std::exception& exception) {
+        return Result::failure("Failed to parse scene file '" + path.string() +
+                               "': " + exception.what());
+    }
+
+    std::unique_ptr<Scene> candidate;
+    Result result = constructBlankScene(candidate);
+    if (!result) return result;
+
+    SceneLoadData candidateLoadData;
+    result = SceneSerializer::applyDocument(
+        document, *candidate, typeRegistry_, candidateLoadData);
+    if (!result) return result;
+
+    result = candidate->validateForActivation();
+    if (!result) {
+        return Result::failure("Loaded candidate scene is invalid: " +
+                               result.error());
+    }
+
+    scene = std::move(candidate);
+    loadData = std::move(candidateLoadData);
+    return Result::success();
 }
 
 Result SceneManager::initializeEditingScene() {
@@ -56,18 +87,64 @@ Result SceneManager::initializeEditingScene() {
             "Cannot initialize Scene Manager with a null Input Manager");
     }
 
-    Result result = constructInitializedScene(editingScene_);
-    if (!result) {
-        return Result::failure("Failed to create editing scene: " +
-                               result.error());
+    std::error_code sceneFileQueryError;
+    const bool sceneFileExists = !currentScenePath_.empty() &&
+        std::filesystem::exists(currentScenePath_, sceneFileQueryError);
+    if (sceneFileQueryError) {
+        return Result::failure("Failed to query startup scene file '" +
+                               currentScenePath_.string() + "': " +
+                               sceneFileQueryError.message());
     }
+
+    Result result = Result::success();
+    if (sceneFileExists) {
+        std::unique_ptr<Scene> candidate;
+        SceneLoadData loadData;
+        result = loadSceneFromPath(currentScenePath_, candidate, loadData);
+        if (!result) {
+            return Result::failure("Failed to load editing scene: " +
+                                   result.error());
+        }
+        editingScene_ = std::move(candidate);
+        editingEditorCamera_ = loadData.editorCamera;
+        editorRenderColliders_ = std::move(loadData.renderColliders);
+        persistenceWarnings_ = std::move(loadData.warnings);
+    } else {
+        std::unique_ptr<Scene> candidate;
+        result = constructBlankScene(candidate);
+        if (!result) {
+            return Result::failure("Failed to create editing scene: " +
+                                   result.error());
+        }
+        try {
+            candidate->buildDefaults();
+        } catch (const std::exception& exception) {
+            return Result::failure("Failed to build scene defaults: " +
+                                   std::string(exception.what()));
+        } catch (...) {
+            return Result::failure(
+                "Failed to build scene defaults with an unknown error");
+        }
+        result = candidate->validateForActivation();
+        if (!result) {
+            return Result::failure("Default editing scene is invalid: " +
+                                   result.error());
+        }
+        editingScene_ = std::move(candidate);
+        editingEditorCamera_.reset();
+        editorRenderColliders_.clear();
+        persistenceWarnings_.clear();
+    }
+
     activeScene_ = editingScene_.get();
     nlohmann::json baseline;
     result = SceneSerializer::serializeAuthored(*editingScene_, typeRegistry_, baseline);
-    if (result) {
-        authoredBaseline_ = std::move(baseline);
-        authoredBaselineAvailable_ = true;
+    if (!result) {
+        return Result::failure("Failed to capture editing scene baseline: " +
+                               result.error());
     }
+    authoredBaseline_ = std::move(baseline);
+    authoredBaselineAvailable_ = true;
     return Result::success();
 }
 
@@ -84,7 +161,7 @@ Result SceneManager::prepareRuntimeScene() {
     }
 
     std::unique_ptr<Scene> candidate;
-    Result result = constructInitializedScene(candidate);
+    Result result = constructBlankScene(candidate);
     if (!result) {
         return Result::failure("Failed to create runtime scene: " +
                                result.error());
@@ -212,19 +289,13 @@ Result SceneManager::prepareEditingSceneLoad(const std::filesystem::path& path) 
         return Result::failure("Scene loading is unavailable during a runtime session");
     }
     if (path.empty()) return Result::failure("Scene path is empty");
-    std::ifstream stream(path, std::ios::binary);
-    if (!stream) return Result::failure("Failed to open scene file '" + path.string() + "'");
-    nlohmann::json document;
-    try { stream >> document; }
-    catch (const std::exception& exception) {
-        return Result::failure("Failed to parse scene file '" + path.string() + "': " + exception.what());
-    }
     std::unique_ptr<Scene> candidate;
-    Result result = constructInitializedScene(candidate);
-    if (!result) return Result::failure("Failed to construct candidate scene: " + result.error());
     SceneLoadData loadData;
-    result = SceneSerializer::applyDocument(document, *candidate, typeRegistry_, loadData);
-    if (!result) return Result::failure("Failed to load scene '" + path.string() + "': " + result.error());
+    Result result = loadSceneFromPath(path, candidate, loadData);
+    if (!result) {
+        return Result::failure("Failed to load scene '" + path.string() +
+                               "': " + result.error());
+    }
     preparedEditingScene_ = std::move(candidate);
     preparedScenePath_ = path;
     preparedLoadData_ = std::move(loadData);
@@ -259,6 +330,7 @@ Result SceneManager::commitPreparedEditingSceneLoad() {
     currentScenePath_ = std::move(preparedScenePath_);
     authoredBaseline_ = std::move(preparedLoadData_.authoredBaseline);
     authoredBaselineAvailable_ = true;
+    editingEditorCamera_ = preparedLoadData_.editorCamera;
     persistenceWarnings_ = std::move(preparedLoadData_.warnings);
     editorRenderColliders_ = std::move(preparedLoadData_.renderColliders);
     preparedLoadData_ = {};
@@ -301,6 +373,16 @@ void SceneManager::setCurrentScenePath(std::filesystem::path path) {
 
 const std::filesystem::path& SceneManager::currentScenePath() const noexcept {
     return currentScenePath_;
+}
+
+const std::optional<EditorCameraState>&
+SceneManager::editingEditorCamera() const noexcept {
+    return editingEditorCamera_;
+}
+
+const std::vector<std::string>&
+SceneManager::editorRenderColliders() const noexcept {
+    return editorRenderColliders_;
 }
 
 const std::vector<std::string>& SceneManager::persistenceWarnings() const noexcept {
@@ -390,6 +472,7 @@ void SceneManager::shutdown() noexcept {
     authoredBaselineAvailable_ = false;
     currentScenePath_.clear();
     preparedScenePath_.clear();
+    editingEditorCamera_.reset();
     preparedLoadData_ = {};
     persistenceWarnings_.clear();
     editorRenderColliders_.clear();

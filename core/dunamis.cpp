@@ -43,6 +43,9 @@ Result Dunamis::initialize() {
                                    result.error());
         }
 
+        sceneManager_.setCurrentScenePath(
+            std::filesystem::path(DUNAMIS_SOURCE_DIR) /
+            "game/scenes/level_1/level_1.scene.json");
         result = sceneManager_.initialize<Level1>("Level 1", inputManager);
         if (!result) {
             (void)shutdown();
@@ -57,53 +60,17 @@ Result Dunamis::initialize() {
                                    result.error());
         }
 
-        sceneManager_.setCurrentScenePath(
-            std::filesystem::path(DUNAMIS_SOURCE_DIR) /
-            "game/scenes/level_1/level_1.scene.json");
-        const std::filesystem::path startupScenePath =
-            sceneManager_.currentScenePath();
-        std::error_code sceneFileQueryError;
-        const bool sceneFileExists = std::filesystem::exists(
-            startupScenePath, sceneFileQueryError);
-        std::vector<std::string> restoredColliderIds;
-        if (sceneFileQueryError) {
-            (void)shutdown();
-            return Result::failure(
-                "Failed to query startup scene file '" +
-                startupScenePath.string() + "': " +
-                sceneFileQueryError.message());
+        const auto& restoredCamera = sceneManager_.editingEditorCamera();
+        if (restoredCamera) {
+            result = editorCameraController.restore(*restoredCamera);
+            if (!result) {
+                (void)shutdown();
+                return Result::failure("Startup editor camera restore failed: " +
+                                       result.error());
+            }
         }
-        if (sceneFileExists) {
-            result = sceneManager_.prepareEditingSceneLoad(startupScenePath);
-            if (!result) {
-                (void)shutdown();
-                return Result::failure("Startup scene restore failed: " +
-                                       result.error());
-            }
-            const auto restoredCamera = sceneManager_.preparedEditorCamera();
-            restoredColliderIds = sceneManager_.preparedRenderColliders();
-            result = sceneManager_.commitPreparedEditingSceneLoad();
-            if (!result) {
-                (void)shutdown();
-                return Result::failure("Startup scene commit failed: " +
-                                       result.error());
-            }
-            sceneManager_.finishEditingSceneLoad();
-            if (restoredCamera) {
-                result = editorCameraController.restore(*restoredCamera);
-                if (!result) {
-                    (void)shutdown();
-                    return Result::failure("Startup editor camera restore failed: " +
-                                           result.error());
-                }
-            }
-            for (const std::string& warning : sceneManager_.persistenceWarnings()) {
-                spdlog::warn("{}", warning);
-            }
-        } else {
-            spdlog::warn(
-                "Scene file '{}' was not found; using C++ scene defaults",
-                startupScenePath.string());
+        for (const std::string& warning : sceneManager_.persistenceWarnings()) {
+            spdlog::warn("{}", warning);
         }
 
         result = visualServer.initialize(platform.window(),
@@ -115,7 +82,7 @@ Result Dunamis::initialize() {
             return Result::failure("Visual Server initialization failed: " +
                                    result.error());
         }
-        editorSession_.setRenderColliderIds(restoredColliderIds);
+        editorSession_.setRenderColliderIds(sceneManager_.editorRenderColliders());
         editorSession_.setRunState(SceneRunState::Editing);
         visualServer.setCurrentScenePath(
             sceneManager_.currentScenePath().string());

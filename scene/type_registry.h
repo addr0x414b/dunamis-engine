@@ -25,6 +25,7 @@ template <typename T>
 inline constexpr bool is_supported_v =
     std::is_same_v<T, bool> || std::is_same_v<T, std::string> ||
     std::is_integral_v<T> || std::is_floating_point_v<T> ||
+    std::is_same_v<T, GameObject::PhysicsBodySettings> ||
     std::is_same_v<T, glm::vec2> || std::is_same_v<T, glm::vec3> ||
     std::is_same_v<T, glm::vec4>;
 
@@ -41,6 +42,34 @@ Result encode(const T& value, nlohmann::json& output) {
             return Result::failure("expected a finite number");
         }
         output = value;
+        return Result::success();
+    } else if constexpr (std::is_same_v<T, GameObject::PhysicsBodySettings>) {
+        const char* motionType = nullptr;
+        if (value.motionType == GameObject::PhysicsMotionType::Static) {
+            motionType = "static";
+        } else if (value.motionType == GameObject::PhysicsMotionType::Dynamic) {
+            motionType = "dynamic";
+        } else {
+            return Result::failure("invalid physics motion type");
+        }
+
+        const char* colliderType = nullptr;
+        if (value.colliderType == GameObject::PhysicsColliderType::Mesh) {
+            colliderType = "mesh";
+        } else if (value.colliderType == GameObject::PhysicsColliderType::Sphere) {
+            colliderType = "sphere";
+        } else if (value.colliderType == GameObject::PhysicsColliderType::ConvexHull) {
+            colliderType = "convexHull";
+        } else {
+            return Result::failure("invalid physics collider type");
+        }
+        if (!std::isfinite(value.sphereRadius)) {
+            return Result::failure("physics sphere radius must be finite");
+        }
+        output = {{"enabled", value.enabled},
+                  {"motionType", motionType},
+                  {"colliderType", colliderType},
+                  {"sphereRadius", value.sphereRadius}};
         return Result::success();
     } else if constexpr (std::is_same_v<T, glm::vec2> ||
                          std::is_same_v<T, glm::vec3> ||
@@ -98,6 +127,49 @@ Result decode(const nlohmann::json& input, T& value) {
                 return Result::failure("expected a finite in-range number");
             }
             value = static_cast<T>(decoded);
+        } else if constexpr (std::is_same_v<T, GameObject::PhysicsBodySettings>) {
+            if (!input.is_object()) {
+                return Result::failure("expected physics settings object");
+            }
+            for (const char* field : {"enabled", "motionType", "colliderType",
+                                      "sphereRadius"}) {
+                if (!input.contains(field)) {
+                    return Result::failure(std::string(
+                        "physics settings missing '") + field + "'");
+                }
+            }
+
+            GameObject::PhysicsBodySettings decoded = value;
+            Result result = decode(input.at("enabled"), decoded.enabled);
+            if (!result) return result;
+
+            std::string motionType;
+            result = decode(input.at("motionType"), motionType);
+            if (!result) return result;
+            if (motionType == "static") {
+                decoded.motionType = GameObject::PhysicsMotionType::Static;
+            } else if (motionType == "dynamic") {
+                decoded.motionType = GameObject::PhysicsMotionType::Dynamic;
+            } else {
+                return Result::failure("invalid physics motion type");
+            }
+
+            std::string colliderType;
+            result = decode(input.at("colliderType"), colliderType);
+            if (!result) return result;
+            if (colliderType == "mesh") {
+                decoded.colliderType = GameObject::PhysicsColliderType::Mesh;
+            } else if (colliderType == "sphere") {
+                decoded.colliderType = GameObject::PhysicsColliderType::Sphere;
+            } else if (colliderType == "convexHull") {
+                decoded.colliderType = GameObject::PhysicsColliderType::ConvexHull;
+            } else {
+                return Result::failure("invalid physics collider type");
+            }
+
+            result = decode(input.at("sphereRadius"), decoded.sphereRadius);
+            if (!result) return result;
+            value = decoded;
         } else if constexpr (std::is_same_v<T, glm::vec2> ||
                              std::is_same_v<T, glm::vec3> ||
                              std::is_same_v<T, glm::vec4>) {

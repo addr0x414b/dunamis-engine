@@ -1,19 +1,19 @@
 {
   "activeCamera": {
     "kind": "attached",
-    "ownerId": "player"
+    "ownerId": "cf23e6be-a781-42fd-9e69-ef72473dea3d"
   },
   "editor": {
     "camera": {
       "front": [
-        0.9267095923423767,
-        -0.3288666903972626,
-        -0.18181318044662476
+        0.8362024426460266,
+        -0.5475633144378662,
+        0.0306621715426445
       ],
       "position": [
-        -333.3299255371094,
-        345.4691162109375,
-        120.50764465332031
+        -474.7330017089844,
+        381.556884765625,
+        34.6076774597168
       ],
       "up": [
         0.0,
@@ -26,10 +26,16 @@
   "formatVersion": 1,
   "objects": [
     {
-      "id": "sponza",
+      "id": "42a7fed5-a7b7-4044-b937-1d69124317c4",
       "properties": {
         "modelPath": "game/assets/models/glTF-Sample-Assets/Models/Sponza/glTF/Sponza.gltf",
         "name": "Sponza",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
         "position": [
           0.0,
           0.0,
@@ -50,19 +56,25 @@
       "type": "GameObject"
     },
     {
-      "id": "sponzaaaa",
+      "id": "3db38306-ec46-465b-8bdf-0770bf9f86db",
       "properties": {
         "modelPath": "game/assets/models/glTF-Sample-Assets/Models/Fox/glTF/Fox.gltf",
         "name": "Fox",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
         "position": [
-          229.33766174316406,
+          -30.895004272460938,
           0.0,
-          0.0
+          -188.62521362304688
         ],
         "rotation": [
-          -180.0,
-          -68.70635223388672,
-          -180.0
+          -0.0,
+          -50.55841064453125,
+          -0.0
         ],
         "scale": [
           1.0,
@@ -74,17 +86,23 @@
       "type": "GameObject"
     },
     {
-      "id": "sponzaaaa23123",
+      "id": "693c3511-6e4e-4219-a03a-8235ae57b5f2",
       "properties": {
         "modelPath": "game/assets/models/glTF-Sample-Assets/Models/PotOfCoals/glTF/PotOfCoals.gltf",
         "name": "Pot",
+        "physics": {
+          "colliderType": "convexHull",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
         "position": [
-          96.95498657226563,
+          -205.18191528320313,
           0.0,
-          -155.74563598632813
+          -63.77246856689453
         ],
         "rotation": [
-          -90.59700012207031,
+          -90.12805938720703,
           0.0,
           -0.0
         ],
@@ -98,10 +116,16 @@
       "type": "GameObject"
     },
     {
-      "id": "90du-918dey798qwdgd",
+      "id": "67268e8d-fab0-4d53-a4b0-6ef39eac7718",
       "properties": {
         "modelPath": "game/assets/models/glTF-Sample-Assets/Models/BrainStem/glTF/BrainStem.gltf",
-        "name": "Brahawdawdawd",
+        "name": "Brah",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": false,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
         "position": [
           322.0,
           0.0,
@@ -122,10 +146,16 @@
       "type": "GameObject"
     },
     {
-      "id": "physics_test_avocado",
+      "id": "c340fb98-ba9d-4beb-b9de-705649152e0d",
       "properties": {
         "modelPath": "game/assets/models/Avocado.glb",
         "name": "Physics Test Avocado",
+        "physics": {
+          "colliderType": "convexHull",
+          "enabled": true,
+          "motionType": "dynamic",
+          "sphereRadius": 0.5
+        },
         "position": [
           0.0,
           300.0,
@@ -146,7 +176,7 @@
       "type": "GameObject"
     },
     {
-      "id": "directional_light",
+      "id": "bf688f0f-59cc-4d40-a87e-54e821092b0c",
       "properties": {
         "color": [
           1.0,
@@ -156,6 +186,12 @@
         "intensity": 1.0,
         "modelPath": "",
         "name": "Direc Light",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": false,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
         "position": [
           50.0,
           20.0,
@@ -185,7 +221,7 @@
       "type": "DirectionalLight"
     },
     {
-      "id": "point_light",
+      "id": "d66be226-04f6-4224-9313-b80c7cf5fd70",
       "properties": {
         "color": [
           1.0,
@@ -195,6 +231,12 @@
         "intensity": 100.0,
         "modelPath": "",
         "name": "Point Light",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": false,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
         "position": [
           250.0,
           20.0,
@@ -216,13 +258,14 @@
     },
     {
       "attachedCamera": {
+        "fov": 60.0,
         "front": [
           0.0,
           0.0,
           -1.0
         ],
         "position": [
-          -84.76264190673828,
+          0.0,
           150.0,
           0.0
         ],
@@ -232,12 +275,20 @@
           0.0
         ]
       },
-      "id": "player",
+      "id": "cf23e6be-a781-42fd-9e69-ef72473dea3d",
       "properties": {
+        "capsuleHeight": 180.0,
+        "capsuleRadius": 35.0,
         "modelPath": "",
         "name": "Player",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": false,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
         "position": [
-          -84.76264190673828,
+          0.0,
           0.0,
           0.0
         ],

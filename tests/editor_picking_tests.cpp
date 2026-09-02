@@ -29,7 +29,7 @@ public:
 
 class TestScene final : public Scene {
 public:
-    void init() override {}
+    void buildDefaults() override {}
     void start() override {}
     void update() override {}
 };

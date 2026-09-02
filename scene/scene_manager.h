@@ -4,6 +4,7 @@
 #include <functional>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -80,6 +81,10 @@ public:
     [[nodiscard]] Result captureCurrentAuthoredBaseline();
     void setCurrentScenePath(std::filesystem::path path);
     [[nodiscard]] const std::filesystem::path& currentScenePath() const noexcept;
+    [[nodiscard]] const std::optional<EditorCameraState>&
+    editingEditorCamera() const noexcept;
+    [[nodiscard]] const std::vector<std::string>&
+    editorRenderColliders() const noexcept;
     [[nodiscard]] const std::vector<std::string>& persistenceWarnings() const noexcept;
     [[nodiscard]] TypeRegistry& typeRegistry() noexcept;
     [[nodiscard]] const TypeRegistry& typeRegistry() const noexcept;
@@ -98,8 +103,12 @@ private:
     using SceneConstructor = std::function<std::unique_ptr<Scene>()>;
 
     [[nodiscard]] Result initializeEditingScene();
-    [[nodiscard]] Result constructInitializedScene(
+    [[nodiscard]] Result constructBlankScene(
         std::unique_ptr<Scene>& scene) const;
+    [[nodiscard]] Result loadSceneFromPath(
+        const std::filesystem::path& path,
+        std::unique_ptr<Scene>& scene,
+        SceneLoadData& loadData) const;
     [[nodiscard]] Result saveEditingSceneTo(
         const std::filesystem::path& path, const Camera& editorCamera);
 
@@ -117,6 +126,7 @@ private:
     bool authoredBaselineAvailable_ = false;
     std::filesystem::path currentScenePath_;
     std::filesystem::path preparedScenePath_;
+    std::optional<EditorCameraState> editingEditorCamera_;
     SceneLoadData preparedLoadData_;
     std::vector<std::string> persistenceWarnings_;
     std::vector<std::string> editorRenderColliders_;

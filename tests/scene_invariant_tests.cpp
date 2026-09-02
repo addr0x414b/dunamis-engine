@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <limits>
@@ -31,7 +32,7 @@ namespace {
 
 class TestScene final : public Scene {
 public:
-    void init() override {}
+    void buildDefaults() override {}
     void start() override {}
     void update() override {}
 };
@@ -58,18 +59,21 @@ public:
             [] { return std::make_unique<ManagedObject>(); });
     }
 
-    void init() override {
+    void buildDefaults() override {
+        ++defaultBuildCount;
         auto object = std::make_unique<ManagedObject>();
-        object->persistentId = "managed-object";
         Result result = addGameObject(std::move(object));
         if (!result) {
             throw std::runtime_error(result.error());
         }
     }
-    void start() override {}
-    void update() override {}
+    void start() override { ++startCount; }
+    void update() override { ++updateCount; }
 
     inline static int constructionCount = 0;
+    inline static int defaultBuildCount = 0;
+    inline static int startCount = 0;
+    inline static int updateCount = 0;
 };
 
 Result registerInvariantTypes(TypeRegistry& registry) {
@@ -88,6 +92,15 @@ bool expect(bool condition, const char* message) {
         return false;
     }
     return true;
+}
+
+Player* findPlayer(Scene& scene) {
+    for (const auto& object : scene.gameObjects()) {
+        if (auto* player = dynamic_cast<Player*>(object.get())) {
+            return player;
+        }
+    }
+    return nullptr;
 }
 
 bool nearlyEqual(float actual, float expected) {
@@ -224,10 +237,10 @@ bool runTypeRegistryHierarchyTests() {
         : nullptr;
     passed &= expect(
         capsuleHeight && capsuleRadius &&
-            capsuleHeight->lifecycle == PropertyLifecycle::RuntimeTransferOnly &&
-            capsuleRadius->lifecycle == PropertyLifecycle::RuntimeTransferOnly &&
-            !contains(characterPersisted, "capsuleHeight") &&
-            !contains(characterPersisted, "capsuleRadius") &&
+            capsuleHeight->lifecycle == PropertyLifecycle::Persisted &&
+            capsuleRadius->lifecycle == PropertyLifecycle::Persisted &&
+            contains(characterPersisted, "capsuleHeight") &&
+            contains(characterPersisted, "capsuleRadius") &&
             contains(characterRuntimeTransfer, "capsuleHeight") &&
             contains(characterRuntimeTransfer, "capsuleRadius") &&
             contains(playerRuntimeTransfer, "capsuleHeight") &&
@@ -279,6 +292,76 @@ bool runLevel1FailurePropagationTest() {
                       result.error().find("Failed to load Sponza") !=
                           std::string::npos,
                   "Level1 did not propagate a required model-load failure");
+}
+
+bool runLevel1JsonLifecycleTests() {
+    bool passed = true;
+    TypeRegistry registry;
+    Result result = registerEngineTypes(registry);
+    if (result) result = Level1::registerTypes(registry);
+    passed &= expect(static_cast<bool>(result),
+                     "Could not register Level1 JSON lifecycle types");
+    if (!result) return passed;
+
+    Level1 source;
+    source.name = "JSON Level 1";
+    auto player = std::make_unique<Player>();
+    Player* playerPointer = player.get();
+    playerPointer->init();
+    result = source.addGameObject(std::move(player));
+    if (result) result = source.setActiveCamera(playerPointer->camera);
+    nlohmann::json document;
+    if (result) result = SceneSerializer::serializeAuthored(
+        source, registry, document);
+    passed &= expect(static_cast<bool>(result),
+                     "Could not serialize the Level1 JSON lifecycle fixture");
+    if (!result) return passed;
+
+    const auto directory = std::filesystem::temp_directory_path() /
+        ("dunamis-level1-json-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto path = directory / "level_1.scene.json";
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    if (!error) {
+        std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+        stream << document.dump(2) << '\n';
+        if (!stream) error = std::make_error_code(std::errc::io_error);
+    }
+    passed &= expect(!error, "Level1 JSON lifecycle fixture could not be written");
+    if (error) {
+        std::filesystem::remove_all(directory, error);
+        return passed;
+    }
+
+    {
+        CurrentPathGuard guard(directory);
+        SceneManager manager;
+        manager.setCurrentScenePath(path);
+        result = manager.initialize<Level1>(
+            "Level 1", std::make_shared<InputManager>());
+        Player* loadedPlayer = result ? findPlayer(*manager.editingScene()) : nullptr;
+        passed &= expect(result && manager.editingScene()->gameObjects().size() == 1 &&
+                             loadedPlayer && loadedPlayer->persistentId ==
+                                 playerPointer->persistentId &&
+                             manager.editingScene()->activeCamera() ==
+                                 loadedPlayer->attachedCamera(),
+                         "JSON-loaded Level1 topology was not reconstructed from a blank scene");
+        if (result) {
+            try {
+                manager.editingScene()->start();
+                manager.editingScene()->update();
+            } catch (const std::exception& exception) {
+                passed &= expect(false,
+                                 (std::string("JSON-loaded Level1 could not start: ") +
+                                  exception.what()).c_str());
+            }
+        }
+        manager.shutdown();
+    }
+
+    std::filesystem::remove_all(directory, error);
+    return passed;
 }
 
 bool runAuthoringTransferTests() {
@@ -579,6 +662,9 @@ bool runAuthoringTransferTests() {
 bool runSceneManagerTests() {
     bool passed = true;
     ManagedScene::constructionCount = 0;
+    ManagedScene::defaultBuildCount = 0;
+    ManagedScene::startCount = 0;
+    ManagedScene::updateCount = 0;
     ManagedObject::liveCount = 0;
     ManagedObject::nextInstanceId = 0;
     auto input = std::make_shared<InputManager>();
@@ -591,8 +677,14 @@ bool runSceneManagerTests() {
     passed &= expect(manager.activeScene() == editing &&
                          !manager.isRuntimeSceneActive() &&
                          ManagedScene::constructionCount == 1 &&
+                         ManagedScene::defaultBuildCount == 1 &&
+                         ManagedScene::startCount == 0 &&
+                         ManagedScene::updateCount == 0 &&
                          ManagedObject::liveCount == 1,
                      "Scene Manager did not retain one editing scene");
+    const std::string editingObjectId = editingObject->persistentId;
+    passed &= expect(!editingObjectId.empty() && isUuidStyle(editingObjectId),
+                     "Scene Manager default object did not receive an automatic persistent ID");
 
     passed &= expect(static_cast<bool>(manager.prepareRuntimeScene()),
                      "Scene Manager could not prepare a runtime scene");
@@ -602,16 +694,27 @@ bool runSceneManagerTests() {
         static_cast<ManagedObject*>(firstRuntimeObject)->instanceId;
     passed &= expect(firstRuntime != editing &&
                          firstRuntimeObject != editingObject &&
+                         firstRuntimeObject->persistentId == editingObjectId &&
                          manager.activeScene() == editing &&
+                         ManagedScene::defaultBuildCount == 1 &&
+                         ManagedScene::startCount == 0 &&
+                         ManagedScene::updateCount == 0 &&
                          ManagedObject::liveCount == 2,
                      "Prepared runtime scene ownership is incorrect");
     passed &= expect(manager.commitRuntimeScene() &&
                          manager.activeScene() == firstRuntime &&
                          manager.isRuntimeSceneActive() &&
+                         ManagedScene::startCount == 0 &&
                          manager.returnToEditingScene() &&
-                         !manager.isRuntimeSceneActive() &&
-                         manager.destroyRuntimeScene(),
+                         !manager.isRuntimeSceneActive(),
                      "Scene Manager could not complete a runtime lifecycle");
+    firstRuntime->start();
+    firstRuntime->update();
+    passed &= expect(ManagedScene::startCount == 1 &&
+                         ManagedScene::updateCount == 1,
+                     "Runtime lifecycle hooks did not remain runtime-only");
+    passed &= expect(static_cast<bool>(manager.destroyRuntimeScene()),
+                     "Scene Manager could not destroy the completed runtime scene");
     passed &= expect(manager.editingScene() == editing &&
                          manager.runtimeScene() == nullptr &&
                          ManagedObject::liveCount == 1,
@@ -619,16 +722,68 @@ bool runSceneManagerTests() {
 
     passed &= expect(static_cast<bool>(manager.prepareRuntimeScene()),
                      "Scene Manager could not prepare a second runtime scene");
+    GameObject* secondRuntimeObject =
+        manager.runtimeScene()->gameObjects().front().get();
     passed &= expect(
-                         static_cast<ManagedObject*>(
-                             manager.runtimeScene()->gameObjects().front().get())
+                         static_cast<ManagedObject*>(secondRuntimeObject)
                                  ->instanceId != firstRuntimeObjectId &&
-                         ManagedScene::constructionCount == 3,
+                         secondRuntimeObject != editingObject &&
+                         secondRuntimeObject->persistentId == editingObjectId &&
+                         ManagedScene::constructionCount == 3 &&
+                         ManagedScene::defaultBuildCount == 1 &&
+                         ManagedScene::startCount == 1 &&
+                         ManagedScene::updateCount == 1,
                      "Repeated Play did not construct fresh runtime objects");
+    manager.runtimeScene()->start();
+    manager.runtimeScene()->update();
+    passed &= expect(ManagedScene::startCount == 2 &&
+                         ManagedScene::updateCount == 2,
+                     "A runtime session did not invoke start/update once");
     manager.cancelPreparedRuntimeScene();
     manager.shutdown();
     passed &= expect(ManagedObject::liveCount == 0,
                      "Scene Manager shutdown leaked owned scenes");
+
+    const auto directory = std::filesystem::temp_directory_path() /
+        ("dunamis-managed-scene-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto path = directory / "managed.scene.json";
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    passed &= expect(!error, "Managed scene test directory could not be created");
+
+    SceneManager bootstrapManager;
+    bootstrapManager.setCurrentScenePath(path);
+    ManagedScene::defaultBuildCount = 0;
+    Result bootstrapResult = bootstrapManager.initialize<ManagedScene>(
+        "Managed", std::make_shared<InputManager>());
+    passed &= expect(bootstrapResult && ManagedScene::defaultBuildCount == 1,
+                     "No-file scene did not call buildDefaults exactly once");
+    Camera editorCamera;
+    if (bootstrapResult) {
+        bootstrapResult = bootstrapManager.saveEditingScene(editorCamera);
+    }
+    const std::string savedObjectId = bootstrapResult
+        ? bootstrapManager.editingScene()->gameObjects().front()->persistentId
+        : std::string{};
+    passed &= expect(bootstrapResult && !savedObjectId.empty(),
+                     "Managed bootstrap scene could not be saved");
+    bootstrapManager.shutdown();
+
+    ManagedScene::defaultBuildCount = 0;
+    SceneManager loadedManager;
+    loadedManager.setCurrentScenePath(path);
+    Result loadedResult = loadedManager.initialize<ManagedScene>(
+        "Managed", std::make_shared<InputManager>());
+    const GameObject* loadedObject = loadedResult
+        ? loadedManager.editingScene()->gameObjects().front().get()
+        : nullptr;
+    passed &= expect(loadedResult && ManagedScene::defaultBuildCount == 0 &&
+                         loadedObject &&
+                         loadedObject->persistentId == savedObjectId,
+                     "JSON loading rebuilt topology through buildDefaults or lost identity");
+    loadedManager.shutdown();
+    std::filesystem::remove_all(directory, error);
     return passed;
 }
 
@@ -638,9 +793,8 @@ public:
         return Level1::registerTypes(registry);
     }
 
-    void init() override {
+    void buildDefaults() override {
         auto player = std::make_unique<Player>();
-        player->persistentId = "player";
         Player* playerPointer = player.get();
         playerPointer->init();
         Result result = addGameObject(std::move(player));
@@ -665,8 +819,7 @@ bool runPlayerRuntimeTransferTests() {
         return passed;
     }
 
-    auto* editingPlayer = dynamic_cast<Player*>(
-        manager.editingScene()->findGameObject("player"));
+    auto* editingPlayer = findPlayer(*manager.editingScene());
     passed &= expect(editingPlayer != nullptr,
                      "Player runtime-transfer scene did not create its Player");
     if (!editingPlayer) {
@@ -680,10 +833,7 @@ bool runPlayerRuntimeTransferTests() {
     editingPlayer->grounded = true;
 
     result = manager.prepareRuntimeScene();
-    auto* runtimePlayer = result
-        ? dynamic_cast<Player*>(
-              manager.runtimeScene()->findGameObject("player"))
-        : nullptr;
+    auto* runtimePlayer = result ? findPlayer(*manager.runtimeScene()) : nullptr;
     passed &= expect(
         result && runtimePlayer && runtimePlayer->capsuleHeight == 211.0f &&
             runtimePlayer->capsuleRadius == 41.0f &&
@@ -864,6 +1014,7 @@ static_assert(alignof(MaterialPushConstants) % 4 == 0);
 int main() {
     bool passed = true;
     passed &= runLevel1FailurePropagationTest();
+    passed &= runLevel1JsonLifecycleTests();
     passed &= runPersistentIdentityTests();
     passed &= runTypeRegistryHierarchyTests();
     passed &= runAuthoringTransferTests();

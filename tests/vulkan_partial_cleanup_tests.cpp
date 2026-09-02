@@ -210,7 +210,7 @@ constexpr int skipped = 77;
 
 class EmptyScene final : public Scene {
 public:
-    void init() override {}
+    void buildDefaults() override {}
     void start() override {}
     void update() override {}
 };

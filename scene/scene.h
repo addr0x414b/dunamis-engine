@@ -22,7 +22,7 @@ class VisualServer;
 
 class Scene {
 public:
-    virtual void init() = 0;
+    virtual void buildDefaults() = 0;
     virtual void start() = 0;
     virtual void update() = 0;
     virtual ~Scene() = default;
