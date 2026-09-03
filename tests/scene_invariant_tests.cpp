@@ -3,6 +3,7 @@
 #include "scene/scene_serializer.h"
 #include "scene/type_registry.h"
 #include "scene/model_renderable.h"
+#include "math/transform_math.h"
 #include "game/level_1.h"
 #include "input/input_manager.h"
 #include "rendering/utils/vulkan_utils.h"
@@ -26,6 +27,17 @@ class PlayerTestAccess {
 public:
     static double yaw(const Player& player) { return player.yaw; }
     static double pitch(const Player& player) { return player.pitch; }
+};
+
+class GameObjectTestAccess {
+public:
+    static void setParent(GameObject& object, GameObject* parent) {
+        object.parent_ = parent;
+    }
+
+    static void addChild(GameObject& object, GameObject* child) {
+        object.children_.push_back(child);
+    }
 };
 
 namespace {
@@ -109,6 +121,409 @@ bool nearlyEqual(float actual, float expected) {
 
 bool sameVector(const glm::vec3& first, const glm::vec3& second) {
     return glm::length(first - second) < 1.0e-5f;
+}
+
+bool sameMatrix(const glm::mat4& first, const glm::mat4& second,
+                float tolerance = 1.0e-4f) {
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            if (std::fabs(first[column][row] - second[column][row]) >
+                tolerance) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+GameObject* addHierarchyObject(TestScene& scene, const char* persistentId) {
+    auto object = std::make_unique<GameObject>();
+    object->persistentId = persistentId;
+    GameObject* pointer = object.get();
+    if (!scene.addGameObject(std::move(object))) return nullptr;
+    return pointer;
+}
+
+bool containsChild(const GameObject& parent, const GameObject* child) {
+    return std::count(parent.children().begin(), parent.children().end(), child) !=
+           0;
+}
+
+std::size_t childCount(const GameObject& parent, const GameObject* child) {
+    return static_cast<std::size_t>(std::count(
+        parent.children().begin(), parent.children().end(), child));
+}
+
+bool runHierarchyTransformTests() {
+    bool passed = true;
+
+    {
+        TestScene scene;
+        GameObject* root = addHierarchyObject(scene, "root-transform");
+        if (!root) return expect(false, "Could not create root transform fixture");
+        root->position = {2.0f, 3.0f, 4.0f};
+        root->rotation = {10.0f, 20.0f, 30.0f};
+        root->scale = {2.0f, 3.0f, 4.0f};
+        passed &= expect(sameMatrix(root->localTransformMatrix(),
+                                    root->worldTransformMatrix()),
+                         "A root world transform differed from its local transform");
+    }
+
+    {
+        TestScene scene;
+        GameObject* parent = addHierarchyObject(scene, "translation-parent");
+        GameObject* child = addHierarchyObject(scene, "translation-child");
+        if (!parent || !child) {
+            return expect(false, "Could not create translation hierarchy fixture");
+        }
+        parent->position = {10.0f, 0.0f, 0.0f};
+        child->position = {5.0f, 0.0f, 0.0f};
+        const Result result = scene.reparentGameObject(
+            *child, parent, TestScene::ReparentMode::PreserveLocal);
+        passed &= expect(result && child->parent() == parent &&
+                             sameVector(glm::vec3(child->worldTransformMatrix()[3]),
+                                         {15.0f, 0.0f, 0.0f}),
+                         "Parent translation did not compose with child local position");
+    }
+
+    {
+        TestScene scene;
+        GameObject* parent = addHierarchyObject(scene, "rotation-parent");
+        GameObject* child = addHierarchyObject(scene, "rotation-child");
+        if (!parent || !child) {
+            return expect(false, "Could not create rotation hierarchy fixture");
+        }
+        parent->rotation = {0.0f, 0.0f, 90.0f};
+        child->position = {1.0f, 0.0f, 0.0f};
+        const glm::mat4 localBefore = child->localTransformMatrix();
+        passed &= expect(static_cast<bool>(scene.reparentGameObject(
+                             *child, parent, TestScene::ReparentMode::PreserveLocal)),
+                         "Parent rotation hierarchy setup failed");
+        passed &= expect(sameMatrix(child->localTransformMatrix(), localBefore) &&
+                             sameMatrix(child->worldTransformMatrix(),
+                                        parent->localTransformMatrix() * localBefore),
+                         "Parent rotation did not compose as a matrix");
+    }
+
+    {
+        TestScene scene;
+        GameObject* parent = addHierarchyObject(scene, "scale-parent");
+        GameObject* child = addHierarchyObject(scene, "scale-child");
+        if (!parent || !child) {
+            return expect(false, "Could not create scale hierarchy fixture");
+        }
+        parent->scale = {2.0f, 3.0f, 4.0f};
+        child->position = {1.0f, 2.0f, 3.0f};
+        passed &= expect(static_cast<bool>(scene.reparentGameObject(
+                             *child, parent, TestScene::ReparentMode::PreserveLocal)),
+                         "Parent scale hierarchy setup failed");
+        passed &= expect(sameVector(glm::vec3(child->worldTransformMatrix()[3]),
+                                    {2.0f, 6.0f, 12.0f}),
+                         "Parent scale did not affect child world translation");
+    }
+
+    {
+        TestScene scene;
+        GameObject* parent = addHierarchyObject(scene, "multi-parent");
+        GameObject* child = addHierarchyObject(scene, "multi-child");
+        GameObject* grandchild = addHierarchyObject(scene, "multi-grandchild");
+        if (!parent || !child || !grandchild) {
+            return expect(false, "Could not create multi-level hierarchy fixture");
+        }
+        parent->position = {3.0f, 4.0f, 5.0f};
+        parent->rotation = {10.0f, 20.0f, 30.0f};
+        parent->scale = {2.0f, 2.0f, 2.0f};
+        child->position = {6.0f, 7.0f, 8.0f};
+        child->rotation = {-5.0f, 12.0f, 18.0f};
+        grandchild->position = {-2.0f, 1.0f, 4.0f};
+        passed &= expect(
+            scene.reparentGameObject(*child, parent,
+                                     TestScene::ReparentMode::PreserveLocal) &&
+                scene.reparentGameObject(*grandchild, child,
+                                         TestScene::ReparentMode::PreserveLocal),
+            "Multi-level hierarchy setup failed");
+        passed &= expect(
+            sameMatrix(grandchild->worldTransformMatrix(),
+                       parent->localTransformMatrix() *
+                           child->localTransformMatrix() *
+                           grandchild->localTransformMatrix()),
+            "Grandchild world transform did not compose all local transforms");
+    }
+
+    return passed;
+}
+
+bool runReparentModeTests() {
+    bool passed = true;
+
+    {
+        TestScene scene;
+        GameObject* parentA = addHierarchyObject(scene, "local-parent-a");
+        GameObject* parentB = addHierarchyObject(scene, "local-parent-b");
+        GameObject* child = addHierarchyObject(scene, "local-child");
+        if (!parentA || !parentB || !child) {
+            return expect(false, "Could not create PreserveLocal fixture");
+        }
+        parentA->position = {100.0f, 20.0f, 0.0f};
+        parentB->position = {500.0f, -10.0f, 2.0f};
+        child->position = {10.0f, 1.0f, 2.0f};
+        child->rotation = {10.0f, 20.0f, 30.0f};
+        child->scale = {2.0f, 3.0f, 4.0f};
+        passed &= expect(
+            static_cast<bool>(scene.reparentGameObject(
+                *child, parentA, TestScene::ReparentMode::PreserveLocal)),
+            "Initial PreserveLocal parenting failed");
+        const glm::vec3 localPosition = child->position;
+        const glm::vec3 localRotation = child->rotation;
+        const glm::vec3 localScale = child->scale;
+        passed &= expect(
+            static_cast<bool>(scene.reparentGameObject(
+                *child, parentB, TestScene::ReparentMode::PreserveLocal)),
+            "PreserveLocal reparent failed");
+        passed &= expect(child->parent() == parentB &&
+                             child->position == localPosition &&
+                             child->rotation == localRotation &&
+                             child->scale == localScale &&
+                             !containsChild(*parentA, child) &&
+                             childCount(*parentB, child) == 1 &&
+                             sameMatrix(child->worldTransformMatrix(),
+                                        parentB->localTransformMatrix() *
+                                            child->localTransformMatrix()),
+                         "PreserveLocal changed authored local transform or topology incorrectly");
+    }
+
+    {
+        TestScene scene;
+        GameObject* parentA = addHierarchyObject(scene, "world-parent-a");
+        GameObject* parentB = addHierarchyObject(scene, "world-parent-b");
+        GameObject* child = addHierarchyObject(scene, "world-child");
+        if (!parentA || !parentB || !child) {
+            return expect(false, "Could not create PreserveWorld fixture");
+        }
+        parentA->position = {3.0f, 4.0f, 5.0f};
+        parentA->rotation = {0.0f, 20.0f, 0.0f};
+        parentA->scale = {2.0f, 2.0f, 2.0f};
+        parentB->position = {-7.0f, 8.0f, 9.0f};
+        parentB->rotation = {10.0f, 0.0f, 30.0f};
+        parentB->scale = {0.5f, 0.5f, 0.5f};
+        child->position = {1.0f, 2.0f, 3.0f};
+        child->rotation = {15.0f, -25.0f, 35.0f};
+        child->scale = {1.0f, 2.0f, 3.0f};
+        passed &= expect(
+            static_cast<bool>(scene.reparentGameObject(
+                *child, parentA, TestScene::ReparentMode::PreserveLocal)),
+            "Initial PreserveWorld parenting failed");
+        const glm::mat4 worldBefore = child->worldTransformMatrix();
+        const glm::mat4 localBefore = child->localTransformMatrix();
+        passed &= expect(
+            static_cast<bool>(scene.reparentGameObject(
+                *child, parentB, TestScene::ReparentMode::PreserveWorld)),
+            "Representable PreserveWorld reparent failed");
+        passed &= expect(child->parent() == parentB &&
+                             sameMatrix(child->worldTransformMatrix(), worldBefore,
+                                        2.0e-4f) &&
+                             !sameMatrix(child->localTransformMatrix(), localBefore) &&
+                             !containsChild(*parentA, child) &&
+                             childCount(*parentB, child) == 1,
+                         "PreserveWorld did not preserve world transform and topology");
+
+        const glm::mat4 worldBeforeUnparent = child->worldTransformMatrix();
+        passed &= expect(
+            static_cast<bool>(scene.reparentGameObject(
+                *child, nullptr, TestScene::ReparentMode::PreserveWorld)),
+            "PreserveWorld unparenting failed");
+        passed &= expect(child->parent() == nullptr &&
+                             sameMatrix(child->worldTransformMatrix(),
+                                        worldBeforeUnparent, 2.0e-4f) &&
+                             !containsChild(*parentB, child),
+                         "PreserveWorld unparenting changed world transform or topology");
+    }
+
+    {
+        TestScene scene;
+        GameObject* parent = addHierarchyObject(scene, "repeat-parent");
+        GameObject* child = addHierarchyObject(scene, "repeat-child");
+        if (!parent || !child) {
+            return expect(false, "Could not create duplicate-child fixture");
+        }
+        passed &= expect(
+            scene.reparentGameObject(*child, parent,
+                                     TestScene::ReparentMode::PreserveLocal) &&
+                scene.reparentGameObject(*child, parent,
+                                         TestScene::ReparentMode::PreserveWorld),
+            "Repeated same-parent reparenting was not a safe no-op");
+        passed &= expect(childCount(*parent, child) == 1,
+                         "Repeated reparenting duplicated a child pointer");
+    }
+
+    {
+        TestScene scene;
+        GameObject* a = addHierarchyObject(scene, "cycle-a");
+        GameObject* b = addHierarchyObject(scene, "cycle-b");
+        GameObject* c = addHierarchyObject(scene, "cycle-c");
+        if (!a || !b || !c) {
+            return expect(false, "Could not create cycle-rejection fixture");
+        }
+        passed &= expect(
+            scene.reparentGameObject(*b, a,
+                                     TestScene::ReparentMode::PreserveLocal) &&
+                scene.reparentGameObject(*c, b,
+                                         TestScene::ReparentMode::PreserveLocal),
+            "Cycle-rejection hierarchy setup failed");
+        const Result result = scene.reparentGameObject(
+            *a, c, TestScene::ReparentMode::PreserveLocal);
+        passed &= expect(!result && a->parent() == nullptr && b->parent() == a &&
+                             c->parent() == b && childCount(*a, b) == 1 &&
+                             childCount(*b, c) == 1 && !containsChild(*c, a),
+                         "Descendant-cycle rejection mutated hierarchy state");
+    }
+
+    {
+        TestScene sceneA;
+        TestScene sceneB;
+        GameObject* childA = addHierarchyObject(sceneA, "cross-child-a");
+        GameObject* parentB = addHierarchyObject(sceneB, "cross-parent-b");
+        GameObject* childB = addHierarchyObject(sceneB, "cross-child-b");
+        if (!childA || !parentB || !childB) {
+            return expect(false, "Could not create cross-scene fixture");
+        }
+        const Result foreignChild = sceneA.reparentGameObject(
+            *childB, childA, TestScene::ReparentMode::PreserveLocal);
+        const Result foreignParent = sceneA.reparentGameObject(
+            *childA, parentB, TestScene::ReparentMode::PreserveLocal);
+        passed &= expect(!foreignChild && !foreignParent &&
+                             childA->parent() == nullptr &&
+                             childB->parent() == nullptr &&
+                             !containsChild(*childA, childB) &&
+                             !containsChild(*parentB, childA),
+                         "Cross-scene parenting changed either scene");
+    }
+
+    {
+        TestScene scene;
+        GameObject* parent = addHierarchyObject(scene, "self-parent");
+        if (!parent) return expect(false, "Could not create self-parent fixture");
+        const Result result = scene.reparentGameObject(
+            *parent, parent, TestScene::ReparentMode::PreserveLocal);
+        passed &= expect(!result && parent->parent() == nullptr &&
+                             parent->children().empty(),
+                         "Self-parenting was accepted or mutated state");
+    }
+
+    return passed;
+}
+
+bool runHierarchyValidationTests() {
+    bool passed = true;
+
+    {
+        TestScene scene;
+        GameObject* parent = addHierarchyObject(scene, "invalid-parent");
+        GameObject* child = addHierarchyObject(scene, "invalid-child");
+        if (!parent || !child) {
+            return expect(false, "Could not create inconsistent-hierarchy fixture");
+        }
+        GameObjectTestAccess::setParent(*child, parent);
+        const Result result = scene.validateAuthoredState();
+        passed &= expect(!result &&
+                             result.error().find("inconsistent") !=
+                                 std::string::npos,
+                         "Validation missed a one-way parent relationship");
+    }
+
+    {
+        TestScene scene;
+        GameObject* parent = addHierarchyObject(scene, "duplicate-parent");
+        GameObject* child = addHierarchyObject(scene, "duplicate-child");
+        if (!parent || !child) {
+            return expect(false, "Could not create duplicate-hierarchy fixture");
+        }
+        GameObjectTestAccess::setParent(*child, parent);
+        GameObjectTestAccess::addChild(*parent, child);
+        GameObjectTestAccess::addChild(*parent, child);
+        const Result result = scene.validateAuthoredState();
+        passed &= expect(!result &&
+                             result.error().find("more than once") !=
+                                 std::string::npos,
+                         "Validation missed a duplicate child pointer");
+    }
+
+    {
+        TestScene scene;
+        GameObject* a = addHierarchyObject(scene, "invalid-cycle-a");
+        GameObject* b = addHierarchyObject(scene, "invalid-cycle-b");
+        if (!a || !b) {
+            return expect(false, "Could not create malformed-cycle fixture");
+        }
+        GameObjectTestAccess::setParent(*a, b);
+        GameObjectTestAccess::setParent(*b, a);
+        GameObjectTestAccess::addChild(*a, b);
+        GameObjectTestAccess::addChild(*b, a);
+        const Result result = scene.validateAuthoredState();
+        passed &= expect(!result &&
+                             result.error().find("cycle") != std::string::npos,
+                         "Validation missed a hierarchy cycle");
+    }
+
+    return passed;
+}
+
+bool runHierarchyFailureTests() {
+    bool passed = true;
+
+    {
+        TestScene scene;
+        GameObject* oldParent = addHierarchyObject(scene, "shear-old-parent");
+        GameObject* newParent = addHierarchyObject(scene, "shear-new-parent");
+        GameObject* child = addHierarchyObject(scene, "shear-child");
+        if (!oldParent || !newParent || !child) {
+            return expect(false, "Could not create shear-rejection fixture");
+        }
+        newParent->rotation = {0.0f, 0.0f, 45.0f};
+        newParent->scale = {2.0f, 1.0f, 1.0f};
+        child->position = {1.0f, 2.0f, 3.0f};
+        child->rotation = {10.0f, 20.0f, 30.0f};
+        child->scale = {1.0f, 1.5f, 2.0f};
+        passed &= expect(
+            static_cast<bool>(scene.reparentGameObject(
+                *child, oldParent, TestScene::ReparentMode::PreserveLocal)),
+            "Shear-rejection hierarchy setup failed");
+        const glm::vec3 positionBefore = child->position;
+        const glm::vec3 rotationBefore = child->rotation;
+        const glm::vec3 scaleBefore = child->scale;
+        const Result result = scene.reparentGameObject(
+            *child, newParent, TestScene::ReparentMode::PreserveWorld);
+        passed &= expect(!result && child->parent() == oldParent &&
+                             !containsChild(*newParent, child) &&
+                             childCount(*oldParent, child) == 1 &&
+                             child->position == positionBefore &&
+                             child->rotation == rotationBefore &&
+                             child->scale == scaleBefore,
+                         "PreserveWorld shear rejection was not transactional");
+    }
+
+    {
+        TestScene scene;
+        GameObject* oldParent = addHierarchyObject(scene, "singular-old-parent");
+        GameObject* newParent = addHierarchyObject(scene, "singular-new-parent");
+        GameObject* child = addHierarchyObject(scene, "singular-child");
+        if (!oldParent || !newParent || !child) {
+            return expect(false, "Could not create singular-parent fixture");
+        }
+        newParent->scale = {0.0f, 1.0f, 1.0f};
+        passed &= expect(
+            static_cast<bool>(scene.reparentGameObject(
+                *child, oldParent, TestScene::ReparentMode::PreserveLocal)),
+            "Singular-parent hierarchy setup failed");
+        const Result result = scene.reparentGameObject(
+            *child, newParent, TestScene::ReparentMode::PreserveWorld);
+        passed &= expect(!result && child->parent() == oldParent &&
+                             !containsChild(*newParent, child) &&
+                             childCount(*oldParent, child) == 1,
+                         "PreserveWorld singular-parent rejection was not transactional");
+    }
+
+    return passed;
 }
 
 bool hasDirectionalLightError(const Result& result) {
@@ -1013,6 +1428,10 @@ static_assert(alignof(MaterialPushConstants) % 4 == 0);
 
 int main() {
     bool passed = true;
+    passed &= runHierarchyTransformTests();
+    passed &= runReparentModeTests();
+    passed &= runHierarchyValidationTests();
+    passed &= runHierarchyFailureTests();
     passed &= runLevel1FailurePropagationTest();
     passed &= runLevel1JsonLifecycleTests();
     passed &= runPersistentIdentityTests();

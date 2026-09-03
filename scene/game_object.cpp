@@ -1,5 +1,6 @@
 #include "game_object.h"
 
+#include "../math/transform_math.h"
 #include "model_renderable.h"
 
 #include <utility>
@@ -53,4 +54,29 @@ Result GameObject::loadModel() {
     modelPath = renderable.modelPath;
     texturePath = renderable.texturePath;
     return result;
+}
+
+glm::mat4 GameObject::localTransformMatrix() const noexcept {
+    return transform_math::makeModelMatrix(position, rotation, scale);
+}
+
+glm::mat4 GameObject::worldTransformMatrix() const noexcept {
+    glm::mat4 world = localTransformMatrix();
+    for (const GameObject* ancestor = parent_; ancestor != nullptr;
+         ancestor = ancestor->parent_) {
+        world = ancestor->localTransformMatrix() * world;
+    }
+    return world;
+}
+
+GameObject* GameObject::parent() noexcept {
+    return parent_;
+}
+
+const GameObject* GameObject::parent() const noexcept {
+    return parent_;
+}
+
+const std::vector<GameObject*>& GameObject::children() const noexcept {
+    return children_;
 }

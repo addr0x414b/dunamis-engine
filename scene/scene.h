@@ -26,6 +26,8 @@ class EditorObjectCoordinator;
 
 class Scene {
 public:
+    enum class ReparentMode { PreserveWorld, PreserveLocal };
+
     virtual void buildDefaults() = 0;
     virtual void start() = 0;
     virtual void update() = 0;
@@ -33,6 +35,8 @@ public:
 
     [[nodiscard]] Result addGameObject(
         std::unique_ptr<GameObject> gameObject);
+    [[nodiscard]] Result reparentGameObject(
+        GameObject& child, GameObject* newParent, ReparentMode mode);
     [[nodiscard]] Result setActiveCamera(std::shared_ptr<Camera> camera);
     [[nodiscard]] Result setActiveCameraReference(Camera* camera);
     [[nodiscard]] Result validateForActivation() const;
@@ -75,6 +79,7 @@ private:
     [[nodiscard]] Result addGameObjectInternal(
         std::unique_ptr<GameObject> gameObject, bool allowActive,
         GameObject*& inserted);
+    [[nodiscard]] bool ownsGameObject(const GameObject* gameObject) const noexcept;
 
     [[nodiscard]] Result activate();
     void deactivate() noexcept;
@@ -91,5 +96,7 @@ private:
     float ambientIntensity_ = 0.1f;
     bool active_ = false;
 };
+
+using ReparentMode = Scene::ReparentMode;
 
 #endif

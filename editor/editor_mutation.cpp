@@ -187,73 +187,20 @@ Result extractDunamisRotation(const glm::mat4& matrix,
                               const glm::vec3& authoredScale,
                               glm::vec3& rotation) {
     rotation = {};
-    if (!isFiniteMatrix(matrix) || !isFiniteVector(authoredScale)) {
-        return invalidTransform();
-    }
-
-    glm::vec3 basis[3];
-    for (int axis = 0; axis < 3; ++axis) {
-        const glm::vec3 column(matrix[axis]);
-        const float lengthSquared = glm::dot(column, column);
-        if (!std::isfinite(lengthSquared) || lengthSquared <= 1.0e-12f) {
-            return invalidTransform();
-        }
-
-        const float length = std::sqrt(lengthSquared);
-        if (!std::isfinite(length) || length <= 0.0f) {
-            return invalidTransform();
-        }
-
-        basis[axis] = column / length;
-        if (authoredScale[axis] < 0.0f) {
-            basis[axis] *= -1.0f;
-        }
-        if (!isFiniteVector(basis[axis])) {
-            return invalidTransform();
-        }
-    }
-
-    // Dunamis composes Rx * Ry * Rz. Extract the authored angles from the
-    // normalized manipulated basis instead of using the widget convention.
-    const float r00 = basis[0].x;
-    const float r01 = basis[1].x;
-    const float r02 = basis[2].x;
-    const float r12 = basis[2].y;
-    const float r22 = basis[2].z;
-    const float yDenominator = std::sqrt(r00 * r00 + r01 * r01);
-    if (!std::isfinite(yDenominator)) {
-        return invalidTransform();
-    }
-
-    rotation.x = glm::degrees(std::atan2(-r12, r22));
-    rotation.y = glm::degrees(std::atan2(r02, yDenominator));
-    rotation.z = glm::degrees(std::atan2(-r01, r00));
-    return isFiniteVector(rotation) ? Result::success() : invalidTransform();
+    transform_math::DecomposedTransform decomposition;
+    const Result result = transform_math::decomposeModelMatrix(
+        matrix, authoredScale, decomposition);
+    if (!result) return invalidTransform();
+    rotation = decomposition.rotation;
+    return Result::success();
 }
 
 Result extractDunamisScale(const glm::mat4& matrix,
                            const glm::vec3& authoredScale,
                            glm::vec3& scale) {
-    scale = {};
-    if (!isFiniteMatrix(matrix) || !isFiniteVector(authoredScale)) {
-        return invalidTransform();
-    }
-
-    for (int axis = 0; axis < 3; ++axis) {
-        const float lengthSquared = glm::dot(glm::vec3(matrix[axis]),
-                                             glm::vec3(matrix[axis]));
-        if (!std::isfinite(lengthSquared) || lengthSquared < 0.0f) {
-            return invalidTransform();
-        }
-
-        const float magnitude = std::sqrt(lengthSquared);
-        if (!std::isfinite(magnitude)) {
-            return invalidTransform();
-        }
-        scale[axis] = authoredScale[axis] < 0.0f ? -magnitude : magnitude;
-    }
-
-    return isFiniteVector(scale) ? Result::success() : invalidTransform();
+    const Result result = transform_math::extractScale(
+        matrix, authoredScale, scale);
+    return result ? Result::success() : invalidTransform();
 }
 
 Result applyPointLightColor(PointLight& light, const glm::vec3& color) {

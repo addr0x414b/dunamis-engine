@@ -1,9 +1,12 @@
 #include "scene.h"
 
+#include "../math/transform_math.h"
 #include "persistent_id.h"
 
+#include <algorithm>
 #include <cmath>
 #include <exception>
+#include <limits>
 #include <stdexcept>
 #include <unordered_set>
 #include <utility>
@@ -64,6 +67,181 @@ Result validateDirectionalLightState(const DirectionalLight& light) {
 Result Scene::addGameObject(std::unique_ptr<GameObject> gameObject) {
     GameObject* ignored = nullptr;
     return addGameObjectInternal(std::move(gameObject), false, ignored);
+}
+
+Result Scene::reparentGameObject(GameObject& child, GameObject* newParent,
+                                 ReparentMode mode) {
+    if (!ownsGameObject(&child)) {
+        return Result::failure(
+            "Cannot reparent a game object that is not owned by this scene");
+    }
+    if (newParent != nullptr && !ownsGameObject(newParent)) {
+        return Result::failure(
+            "Cannot use a parent that is not owned by this scene");
+    }
+    if (newParent == &child) {
+        return Result::failure("A game object cannot be its own parent");
+    }
+
+    switch (mode) {
+    case ReparentMode::PreserveWorld:
+    case ReparentMode::PreserveLocal:
+        break;
+    default:
+        return Result::failure("Unknown game object reparent mode");
+    }
+
+    if (child.parent_ == newParent) {
+        return Result::success();
+    }
+
+    std::unordered_set<GameObject*> ancestorChain;
+    for (GameObject* ancestor = newParent; ancestor != nullptr;
+         ancestor = ancestor->parent_) {
+        if (!ownsGameObject(ancestor)) {
+            return Result::failure(
+                "Existing hierarchy parent is not owned by this scene");
+        }
+        if (ancestor == &child) {
+            return Result::failure(
+                "Cannot reparent a game object beneath its descendant");
+        }
+        if (!ancestorChain.insert(ancestor).second) {
+            return Result::failure("Cannot reparent into a hierarchy cycle");
+        }
+    }
+
+    GameObject* oldParent = child.parent_;
+    std::unordered_set<GameObject*> existingParentChain;
+    for (GameObject* ancestor = oldParent; ancestor != nullptr;
+         ancestor = ancestor->parent_) {
+        if (!ownsGameObject(ancestor) || ancestor == &child ||
+            !existingParentChain.insert(ancestor).second) {
+            return Result::failure(
+                "Existing hierarchy contains an invalid cycle");
+        }
+    }
+
+    std::vector<GameObject*>::iterator oldChild = {};
+    if (oldParent != nullptr) {
+        if (!ownsGameObject(oldParent)) {
+            return Result::failure(
+                "Existing hierarchy parent is not owned by this scene");
+        }
+        const auto oldBegin = oldParent->children_.begin();
+        const auto oldEnd = oldParent->children_.end();
+        if (std::count(oldBegin, oldEnd, &child) != 1) {
+            return Result::failure(
+                "Existing parent/child relationship is inconsistent");
+        }
+        oldChild = std::find(oldBegin, oldEnd, &child);
+    }
+
+    for (const auto& object : gameObjects_) {
+        if (!object) {
+            return Result::failure(
+                "Cannot reparent within a scene containing a null game object");
+        }
+        const std::size_t occurrences = static_cast<std::size_t>(std::count(
+            object->children_.begin(), object->children_.end(), &child));
+        if (object.get() == oldParent) {
+            continue;
+        }
+        if (occurrences != 0) {
+            return Result::failure(
+                "Existing parent/child relationship is inconsistent");
+        }
+    }
+
+    if (newParent != nullptr &&
+        std::count(newParent->children_.begin(), newParent->children_.end(),
+                   &child) != 0) {
+        return Result::failure(
+            "The new parent already contains this child");
+    }
+
+    transform_math::DecomposedTransform newLocalTransform;
+    if (mode == ReparentMode::PreserveWorld) {
+        const glm::mat4 oldWorld = child.worldTransformMatrix();
+        if (!transform_math::isFiniteMatrix(oldWorld)) {
+            return Result::failure(
+                "PreserveWorld requires a finite current world transform");
+        }
+
+        glm::mat4 newParentWorld(1.0f);
+        if (newParent != nullptr) {
+            newParentWorld = newParent->worldTransformMatrix();
+        }
+        if (!transform_math::isFiniteMatrix(newParentWorld)) {
+            return Result::failure(
+                "PreserveWorld requires a finite new-parent transform");
+        }
+
+        const glm::mat3 linearPart(newParentWorld);
+        float maximumLinearMagnitude = 0.0f;
+        for (int column = 0; column < 3; ++column) {
+            for (int row = 0; row < 3; ++row) {
+                maximumLinearMagnitude = std::max(
+                    maximumLinearMagnitude,
+                    std::fabs(linearPart[column][row]));
+            }
+        }
+        const float determinant = glm::determinant(linearPart);
+        const float determinantTolerance =
+            128.0f * std::numeric_limits<float>::epsilon() *
+            maximumLinearMagnitude * maximumLinearMagnitude *
+            maximumLinearMagnitude;
+        if (!std::isfinite(determinant) ||
+            !std::isfinite(maximumLinearMagnitude) ||
+            maximumLinearMagnitude <= 0.0f ||
+            std::fabs(determinant) <= determinantTolerance) {
+            return Result::failure(
+                "PreserveWorld requires an invertible new-parent transform");
+        }
+
+        const glm::mat4 inverseParent = glm::inverse(newParentWorld);
+        if (!transform_math::isFiniteMatrix(inverseParent)) {
+            return Result::failure(
+                "PreserveWorld could not safely invert the new-parent transform");
+        }
+
+        const glm::mat4 candidateLocal = inverseParent * oldWorld;
+        if (!transform_math::isFiniteMatrix(candidateLocal)) {
+            return Result::failure(
+                "PreserveWorld produced a non-finite local transform");
+        }
+        const Result decomposition = transform_math::decomposeModelMatrix(
+            candidateLocal, newLocalTransform);
+        if (!decomposition) {
+            return Result::failure(
+                "PreserveWorld cannot represent the required local transform: " +
+                decomposition.error());
+        }
+    }
+
+    // Add first so a possible allocation failure leaves the old relationship
+    // untouched. Erasing from the old vector and assigning parent_ cannot
+    // throw after this point.
+    if (newParent != nullptr) {
+        try {
+            newParent->children_.push_back(&child);
+        } catch (const std::exception& exception) {
+            return Result::failure(
+                "Failed to add child to the new parent: " +
+                std::string(exception.what()));
+        } catch (...) {
+            return Result::failure(
+                "Failed to add child to the new parent");
+        }
+    }
+    if (oldParent != nullptr) oldParent->children_.erase(oldChild);
+    child.parent_ = newParent;
+    if (mode == ReparentMode::PreserveWorld) {
+        child.position = newLocalTransform.position;
+        child.rotation = newLocalTransform.rotation;
+        child.scale = newLocalTransform.scale;
+    }
+    return Result::success();
 }
 
 Result Scene::validateEditorGameObjectInsertion(
@@ -162,6 +340,11 @@ Result Scene::addGameObjectInternal(
 Result Scene::validateGameObjectInsertion(
     const GameObject& gameObject) const {
 
+    if (gameObject.parent_ != nullptr || !gameObject.children_.empty()) {
+        return Result::failure(
+            "Cannot add a game object with an existing hierarchy relationship");
+    }
+
     const bool isPointLight =
         dynamic_cast<const PointLight*>(&gameObject) != nullptr;
     const bool isDirectionalLight =
@@ -197,6 +380,10 @@ Result Scene::removeGameObjectForEditor(
     if (gameObjects_.empty() || gameObjects_.back().get() != gameObject) {
         return Result::failure(
             "Controlled editor rollback can remove only the last inserted object");
+    }
+    if (gameObject->parent_ != nullptr || !gameObject->children_.empty()) {
+        return Result::failure(
+            "Controlled editor rollback cannot remove a related game object");
     }
 
     const std::size_t objectIndex = gameObjects_.size() - 1;
@@ -247,19 +434,70 @@ Result Scene::validateAuthoredState() const {
             "Scene exceeds the maximum point-light count");
     }
 
-    std::unordered_set<std::string> persistentIds;
+    std::unordered_set<const GameObject*> ownedObjects;
+    ownedObjects.reserve(gameObjects_.size());
     for (std::size_t index = 0; index < gameObjects_.size(); ++index) {
         if (!gameObjects_[index]) {
             return Result::failure(
                 "Scene contains a null game object at index " +
                 std::to_string(index));
         }
+        ownedObjects.insert(gameObjects_[index].get());
+    }
+
+    const auto isOwned = [&ownedObjects](const GameObject* object) {
+        return object != nullptr && ownedObjects.find(object) !=
+               ownedObjects.end();
+    };
+
+    std::unordered_set<std::string> persistentIds;
+    for (std::size_t index = 0; index < gameObjects_.size(); ++index) {
         const std::string& id = gameObjects_[index]->persistentId;
         if (!id.empty() && !persistentIds.insert(id).second) {
             return Result::failure("Scene contains duplicate persistent ID '" +
                                    id + "'");
         }
         const GameObject& object = *gameObjects_[index];
+        if (object.parent_ == &object) {
+            return Result::failure("GameObject cannot be its own parent");
+        }
+        if (object.parent_ != nullptr && !isOwned(object.parent_)) {
+            return Result::failure(
+                "GameObject parent is not owned by this scene");
+        }
+        if (object.parent_ != nullptr &&
+            std::count(object.parent_->children_.begin(),
+                       object.parent_->children_.end(), &object) != 1) {
+            return Result::failure(
+                "GameObject parent/child relationship is inconsistent");
+        }
+        for (const GameObject* child : object.children_) {
+            if (!isOwned(child)) {
+                return Result::failure(
+                    "GameObject child is not owned by this scene");
+            }
+            if (child == &object) {
+                return Result::failure("GameObject cannot be its own child");
+            }
+            if (child->parent_ != &object) {
+                return Result::failure(
+                    "GameObject child/parent relationship is inconsistent");
+            }
+            if (std::count(object.children_.begin(), object.children_.end(),
+                           child) != 1) {
+                return Result::failure(
+                    "GameObject child appears more than once in its parent");
+            }
+        }
+
+        std::unordered_set<const GameObject*> ancestors;
+        for (const GameObject* ancestor = object.parent_;
+             ancestor != nullptr; ancestor = ancestor->parent_) {
+            if (!ancestors.insert(ancestor).second || ancestor == &object) {
+                return Result::failure("Scene hierarchy contains a cycle");
+            }
+        }
+
         if (!isFiniteVector(object.position) ||
             !isFiniteVector(object.rotation) ||
             !isFiniteVector(object.scale)) {
@@ -347,6 +585,14 @@ Result Scene::validateAuthoredState() const {
     }
 
     return Result::success();
+}
+
+bool Scene::ownsGameObject(const GameObject* gameObject) const noexcept {
+    if (gameObject == nullptr) return false;
+    for (const auto& owned : gameObjects_) {
+        if (owned.get() == gameObject) return true;
+    }
+    return false;
 }
 
 const std::vector<std::unique_ptr<GameObject>>& Scene::gameObjects()

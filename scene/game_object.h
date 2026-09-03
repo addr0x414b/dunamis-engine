@@ -4,9 +4,11 @@
 #include <glm/glm.hpp>
 #include <memory>
 #include <string>
+#include <vector>
 #include "../core/result.h"
 
 class Scene;
+class GameObjectTestAccess;
 class Camera;
 class ModelRenderable;
 
@@ -64,10 +66,22 @@ public:
     [[nodiscard]] std::string authoredTexturePath() const;
     [[nodiscard]] Result setAuthoredTexturePath(std::string path);
 
+    // position, rotation, and scale are authored in the local space of the
+    // parent. For a root object, local and world space are identical.
+    [[nodiscard]] glm::mat4 localTransformMatrix() const noexcept;
+    [[nodiscard]] glm::mat4 worldTransformMatrix() const noexcept;
+
+    [[nodiscard]] GameObject* parent() noexcept;
+    [[nodiscard]] const GameObject* parent() const noexcept;
+    [[nodiscard]] const std::vector<GameObject*>& children() const noexcept;
+
 private:
     friend class Scene;
+    friend class GameObjectTestAccess;
 
     std::unique_ptr<ModelRenderable> modelRenderable_;
+    GameObject* parent_ = nullptr;
+    std::vector<GameObject*> children_;
 };
 
 #endif
