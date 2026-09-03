@@ -81,8 +81,7 @@ Result validateObjectTransform(const GameObject& object,
 }
 
 Result makeValidatedParentWorld(const GameObject& object,
-                                glm::mat4& parentWorld,
-                                bool rejectCharacterAncestors) {
+                                glm::mat4& parentWorld) {
     parentWorld = glm::mat4(1.0f);
     std::vector<const GameObject*> ancestors;
     std::unordered_set<const GameObject*> visited;
@@ -100,11 +99,10 @@ Result makeValidatedParentWorld(const GameObject& object,
                 "Physics hierarchy ancestor " + objectDescription(*ancestor) +
                 " has non-finite transform data");
         }
-        if (rejectCharacterAncestors &&
-            dynamic_cast<const Character*>(ancestor) != nullptr) {
+        if (dynamic_cast<const Character*>(ancestor) != nullptr) {
             return Result::failure(
                 "Physics hierarchy ancestor " + objectDescription(*ancestor) +
-                " is a Character; attached Character physics is unsupported");
+                " is a Character physics participant; attached physics participant hierarchies are unsupported");
         }
         if (ancestor->physics.enabled) {
             return Result::failure(
@@ -142,16 +140,14 @@ Result makeValidatedParentWorld(const GameObject& object,
 Result makePhysicsWorldMatrix(const GameObject& object,
                               const glm::vec3& localPosition,
                               const glm::vec3& localRotation,
-                              glm::mat4& worldMatrix,
-                              bool rejectCharacterAncestors = false) {
+                              glm::mat4& worldMatrix) {
     worldMatrix = glm::mat4(1.0f);
     const Result objectResult =
         validateObjectTransform(object, localPosition, localRotation);
     if (!objectResult) return objectResult;
 
     glm::mat4 parentWorld;
-    const Result parentResult = makeValidatedParentWorld(
-        object, parentWorld, rejectCharacterAncestors);
+    const Result parentResult = makeValidatedParentWorld(object, parentWorld);
     if (!parentResult) return parentResult;
 
     worldMatrix = parentWorld * transform_math::makeModelMatrix(
@@ -236,8 +232,7 @@ Result calculateSafeInverse(const glm::mat4& matrix, glm::mat4& inverse) {
 Result deriveLocalPoseFromWorldMatrixImpl(const GameObject& object,
                                           const glm::mat4& worldMatrix,
                                           glm::vec3& localPosition,
-                                          glm::vec3& localRotation,
-                                          bool rejectCharacterAncestors = false) {
+                                          glm::vec3& localRotation) {
     localPosition = {};
     localRotation = {};
     if (!isRigidTransform(worldMatrix)) {
@@ -250,8 +245,7 @@ Result deriveLocalPoseFromWorldMatrixImpl(const GameObject& object,
         object, object.position, object.rotation);
     if (!objectResult) return objectResult;
     glm::mat4 parentWorld;
-    const Result parentResult = makeValidatedParentWorld(
-        object, parentWorld, rejectCharacterAncestors);
+    const Result parentResult = makeValidatedParentWorld(object, parentWorld);
     if (!parentResult) return parentResult;
 
     glm::mat4 inverseParent;
@@ -351,7 +345,7 @@ Result deriveCharacterWorldPosition(const Character& character,
     worldPosition = {};
     glm::mat4 worldMatrix;
     const Result result = makePhysicsWorldMatrix(
-        character, character.position, character.rotation, worldMatrix, true);
+        character, character.position, character.rotation, worldMatrix);
     if (!result) return result;
 
     worldPosition = glm::vec3(worldMatrix[3]);
@@ -377,8 +371,7 @@ Result deriveCharacterLocalPositionFromPhysicsWorld(
     if (!objectResult) return objectResult;
 
     glm::mat4 parentWorld;
-    const Result parentResult = makeValidatedParentWorld(
-        character, parentWorld, true);
+    const Result parentResult = makeValidatedParentWorld(character, parentWorld);
     if (!parentResult) return parentResult;
 
     glm::mat4 inverseParent;

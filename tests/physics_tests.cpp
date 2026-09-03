@@ -1479,6 +1479,42 @@ void testPhysicsServerRejectsUnsupportedCharacterHierarchy() {
     expect(static_cast<bool>(server.initialize()),
            "failed to initialize Character hierarchy rejection server");
 
+    TestScene characterAncestorRigidBodyScene;
+    auto rigidCharacterParentOwner = std::make_unique<Character>();
+    Character* rigidCharacterParent = rigidCharacterParentOwner.get();
+    rigidCharacterParent->name = "Character Rigid Body Parent";
+    auto rigidChildOwner = std::make_unique<GameObject>();
+    GameObject* rigidChild = rigidChildOwner.get();
+    rigidChild->name = "Character Rigid Body Child";
+    rigidChild->physics.enabled = true;
+    rigidChild->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
+    rigidChild->physics.colliderType = GameObject::PhysicsColliderType::Sphere;
+    rigidChild->physics.sphereRadius = 5.0f;
+    expect(static_cast<bool>(characterAncestorRigidBodyScene.addGameObject(
+               std::move(rigidCharacterParentOwner))),
+           "failed to add Character rigid-body parent");
+    expect(static_cast<bool>(characterAncestorRigidBodyScene.addGameObject(
+               std::move(rigidChildOwner))),
+           "failed to add Character rigid-body child");
+    expect(static_cast<bool>(characterAncestorRigidBodyScene.reparentGameObject(
+               *rigidChild, rigidCharacterParent,
+               Scene::ReparentMode::PreserveLocal)),
+           "Scene rejected Character rigid-body fixture hierarchy");
+    const Result directResult =
+        physics::validatePhysicsHierarchy(*rigidChild);
+    expect(!directResult && directResult.error().find("Character") !=
+               std::string::npos &&
+               directResult.error().find("unsupported") != std::string::npos,
+           "direct physics validation accepted a Character ancestor");
+    const Result runtimeResult =
+        server.beginRuntimeSession(characterAncestorRigidBodyScene);
+    expect(!runtimeResult && runtimeResult.error().find("Character") !=
+               std::string::npos &&
+               runtimeResult.error().find("unsupported") != std::string::npos,
+           "runtime session accepted a Character ancestor for a rigid body");
+    expect(!server.runtimeSessionActive(),
+           "Character rigid-body hierarchy left a partial runtime physics session");
+
     TestScene scaledScene;
     auto scaledParentOwner = std::make_unique<GameObject>();
     GameObject* scaledParent = scaledParentOwner.get();
