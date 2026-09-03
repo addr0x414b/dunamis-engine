@@ -154,6 +154,94 @@ std::size_t childCount(const GameObject& parent, const GameObject* child) {
         parent.children().begin(), parent.children().end(), child));
 }
 
+bool runCameraWorldPoseTests() {
+    bool passed = true;
+
+    {
+        TestScene scene;
+        GameObject* root = addHierarchyObject(scene, "camera-pose-root");
+        GameObject* parent = addHierarchyObject(scene, "camera-pose-parent");
+        auto cameraObject = std::make_unique<Camera>();
+        Camera* camera = cameraObject.get();
+        camera->persistentId = "camera-pose-camera";
+        if (!root || !parent || !scene.addGameObject(std::move(cameraObject))) {
+            return expect(false, "Could not create Camera world-pose fixture");
+        }
+
+        root->position = {100.0f, 50.0f, -20.0f};
+        root->rotation = {10.0f, 25.0f, 35.0f};
+        root->scale = {2.0f, 3.0f, 1.5f};
+        parent->position = {10.0f, 5.0f, 2.0f};
+        parent->rotation = {-15.0f, 20.0f, 40.0f};
+        parent->scale = {0.75f, 2.0f, 1.25f};
+        camera->position = {10.0f, 5.0f, 0.0f};
+        camera->rotation = {35.0f, -20.0f, 15.0f};
+        camera->scale = {1.5f, 0.5f, 2.0f};
+        camera->front = {0.2f, 0.7f, -1.0f};
+        camera->up = {0.1f, 1.0f, 0.2f};
+
+        const Result parentingResult = scene.reparentGameObject(
+            *parent, root, TestScene::ReparentMode::PreserveLocal);
+        const Result cameraParentingResult = scene.reparentGameObject(
+            *camera, parent, TestScene::ReparentMode::PreserveLocal);
+        CameraWorldPose pose;
+        const bool poseResult = camera->calculateWorldPose(pose);
+
+        const glm::mat4 ancestorWorld = parent->worldTransformMatrix();
+        const glm::vec3 expectedPosition =
+            glm::vec3(camera->worldTransformMatrix()[3]);
+        const glm::vec3 transformedFront = glm::vec3(
+            ancestorWorld * glm::vec4(camera->front, 0.0f));
+        const glm::vec3 transformedUp = glm::vec3(
+            ancestorWorld * glm::vec4(camera->up, 0.0f));
+        const glm::vec3 expectedFront = glm::normalize(transformedFront);
+        const glm::vec3 expectedRight = glm::normalize(
+            glm::cross(expectedFront, glm::normalize(transformedUp)));
+        const glm::vec3 expectedUp = glm::normalize(
+            glm::cross(expectedRight, expectedFront));
+
+        passed &= expect(parentingResult && cameraParentingResult && poseResult,
+                         "Parented Camera world-pose calculation failed");
+        passed &= expect(sameVector(pose.position, expectedPosition),
+                         "Parented Camera position did not use its world transform");
+        passed &= expect(sameVector(pose.front, expectedFront) &&
+                             sameVector(pose.up, expectedUp),
+                         "Parented Camera orientation did not use ancestor transforms only");
+        passed &= expect(transform_math::isFiniteVector(pose.front) &&
+                             transform_math::isFiniteVector(pose.up) &&
+                             nearlyEqual(glm::length(pose.front), 1.0f) &&
+                             nearlyEqual(glm::length(pose.up), 1.0f) &&
+                             std::fabs(glm::dot(pose.front, pose.up)) < 1.0e-5f,
+                         "Parented Camera world basis was not robust and normalized");
+    }
+
+    {
+        TestScene scene;
+        GameObject* parent = addHierarchyObject(scene, "invalid-camera-parent");
+        auto cameraObject = std::make_unique<Camera>();
+        Camera* camera = cameraObject.get();
+        if (!parent || !scene.addGameObject(std::move(cameraObject))) {
+            return expect(false, "Could not create invalid Camera pose fixture");
+        }
+        parent->scale = glm::vec3(0.0f);
+        if (!scene.reparentGameObject(
+                *camera, parent, TestScene::ReparentMode::PreserveLocal)) {
+            return expect(false, "Could not parent invalid Camera pose fixture");
+        }
+
+        CameraWorldPose pose;
+        pose.position = glm::vec3(std::numeric_limits<float>::quiet_NaN());
+        const bool result = camera->calculateWorldPose(pose);
+        passed &= expect(!result &&
+                             transform_math::isFiniteVector(pose.position) &&
+                             transform_math::isFiniteVector(pose.front) &&
+                             transform_math::isFiniteVector(pose.up),
+                         "Degenerate Camera world pose did not fail safely");
+    }
+
+    return passed;
+}
+
 bool runHierarchyTransformTests() {
     bool passed = true;
 
@@ -1441,15 +1529,54 @@ bool runPlayerCameraInitializationTests() {
 
 bool runPlayerMovementInvariantTests() {
     bool passed = true;
-    Player player;
-    player.init();
-    player.position = {10.0f, 20.0f, 30.0f};
-    player.onPhysicsTransformResolved();
-    passed &= expect(
-        sameVector(player.camera->position, glm::vec3(10.0f, 170.0f, 30.0f)),
-        "Player camera did not follow the physics-resolved position at eye height");
-    passed &= expect(player.desiredVelocity == glm::vec3(0.0f),
-                     "Player starts with nonzero character movement intent");
+    {
+        Player player;
+        player.init();
+        player.position = {10.0f, 20.0f, 30.0f};
+        player.onPhysicsTransformResolved();
+        passed &= expect(
+            sameVector(player.camera->position, glm::vec3(10.0f, 170.0f, 30.0f)),
+            "Player camera did not follow the physics-resolved position at eye height");
+        passed &= expect(player.desiredVelocity == glm::vec3(0.0f),
+                         "Player starts with nonzero character movement intent");
+    }
+
+    {
+        TestScene scene;
+        GameObject* parent = addHierarchyObject(scene, "player-camera-parent");
+        auto playerObject = std::make_unique<Player>();
+        Player* player = playerObject.get();
+        player->persistentId = "player-camera-child";
+        player->init();
+        if (!parent || !scene.addGameObject(std::move(playerObject))) {
+            return expect(false, "Could not create parented Player camera fixture");
+        }
+
+        parent->position = {100.0f, 50.0f, -20.0f};
+        parent->rotation = {10.0f, 20.0f, 90.0f};
+        parent->scale = {2.0f, 3.0f, 4.0f};
+        player->position = {10.0f, 5.0f, 6.0f};
+        const glm::vec3 localPositionBefore = player->position;
+        const glm::vec3 frontBefore = player->camera->front;
+        const glm::vec3 upBefore = player->camera->up;
+        const Result parentingResult = scene.reparentGameObject(
+            *player, parent, TestScene::ReparentMode::PreserveLocal);
+        player->onPhysicsTransformResolved();
+
+        const glm::vec3 playerWorldPosition =
+            glm::vec3(player->worldTransformMatrix()[3]);
+        const glm::vec3 expectedCameraPosition =
+            playerWorldPosition + 150.0f * glm::vec3(0.0f, 1.0f, 0.0f);
+        passed &= expect(parentingResult &&
+                             sameVector(player->camera->position,
+                                        expectedCameraPosition),
+                         "Parented Player camera did not use Player world position");
+        passed &= expect(player->position == localPositionBefore,
+                         "Player camera synchronization changed local Player position");
+        passed &= expect(player->camera->front == frontBefore &&
+                             player->camera->up == upBefore,
+                         "Player camera synchronization changed gameplay orientation");
+    }
 
     return passed;
 }
@@ -1495,6 +1622,7 @@ static_assert(alignof(MaterialPushConstants) % 4 == 0);
 
 int main() {
     bool passed = true;
+    passed &= runCameraWorldPoseTests();
     passed &= runHierarchyTransformTests();
     passed &= runReparentModeTests();
     passed &= runHierarchyValidationTests();

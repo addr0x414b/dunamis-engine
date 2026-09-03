@@ -27,6 +27,17 @@ bool isFiniteMatrix(const glm::mat3& value) noexcept {
     return true;
 }
 
+bool isFiniteMatrix(const glm::mat4& value) noexcept {
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            if (!std::isfinite(value[column][row])) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool normalizeFinite(const glm::vec3& value,
                      glm::vec3& normalized) noexcept {
     normalized = {};
@@ -66,6 +77,63 @@ bool isValidFovDegrees(float fovDegrees) noexcept {
 
 Camera::Camera() {
     name = "Camera";
+}
+
+bool Camera::calculateWorldPose(CameraWorldPose& pose) const noexcept {
+    pose = {};
+
+    const glm::mat4 worldTransform = worldTransformMatrix();
+    if (!isFiniteMatrix(worldTransform)) {
+        return false;
+    }
+
+    glm::mat4 ancestorTransform(1.0f);
+    if (const GameObject* cameraParent = parent()) {
+        ancestorTransform = cameraParent->worldTransformMatrix();
+        if (!isFiniteMatrix(ancestorTransform)) {
+            return false;
+        }
+    }
+
+    const glm::vec3 worldPosition = glm::vec3(worldTransform[3]);
+    if (!isFiniteVector(worldPosition)) {
+        return false;
+    }
+
+    glm::vec3 localFront;
+    glm::vec3 localUp;
+    if (!normalizeFinite(front, localFront) ||
+        !normalizeFinite(up, localUp)) {
+        return false;
+    }
+
+    const glm::vec3 transformedFront = glm::vec3(
+        ancestorTransform * glm::vec4(localFront, 0.0f));
+    const glm::vec3 transformedUp = glm::vec3(
+        ancestorTransform * glm::vec4(localUp, 0.0f));
+
+    glm::vec3 normalizedFront;
+    glm::vec3 normalizedUp;
+    if (!normalizeFinite(transformedFront, normalizedFront) ||
+        !normalizeFinite(transformedUp, normalizedUp)) {
+        return false;
+    }
+
+    glm::vec3 right;
+    if (!normalizeFinite(glm::cross(normalizedFront, normalizedUp), right)) {
+        return false;
+    }
+
+    glm::vec3 correctedUp;
+    if (!normalizeFinite(glm::cross(right, normalizedFront), correctedUp) ||
+        !hasValidBasis(normalizedFront, correctedUp)) {
+        return false;
+    }
+
+    pose.position = worldPosition;
+    pose.front = normalizedFront;
+    pose.up = correctedUp;
+    return true;
 }
 
 float Camera::fov() const noexcept {

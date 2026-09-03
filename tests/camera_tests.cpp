@@ -29,6 +29,19 @@ bool isNormalized(const glm::vec3& value) {
            std::fabs(glm::length(value) - 1.0f) < 1.0e-5f;
 }
 
+bool sameMatrix(const glm::mat4& first, const glm::mat4& second,
+                float tolerance = 1.0e-5f) {
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            if (std::fabs(first[column][row] - second[column][row]) >
+                tolerance) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool runFovTests() {
     bool passed = true;
     Camera defaultCamera;
@@ -50,6 +63,40 @@ bool runFovTests() {
                          !wideCamera.setFov(
                              std::numeric_limits<float>::quiet_NaN()),
                      "Invalid Camera FOV was accepted");
+    return passed;
+}
+
+bool runRootWorldPoseTests() {
+    Camera camera;
+    camera.position = {12.0f, 34.0f, 56.0f};
+    camera.front = {0.0f, 0.0f, -2.0f};
+    camera.up = {0.0f, 3.0f, 0.25f};
+
+    CameraWorldPose pose;
+    bool passed = expect(camera.calculateWorldPose(pose),
+                         "Root Camera world-pose calculation failed");
+    passed &= expect(sameVector(pose.position, camera.position),
+                     "Root Camera world position changed");
+    passed &= expect(isNormalized(pose.front) && isNormalized(pose.up) &&
+                         std::fabs(glm::dot(pose.front, pose.up)) < 1.0e-5f,
+                     "Root Camera world basis was not normalized and orthogonal");
+
+    const glm::mat4 expectedView = glm::lookAt(
+        camera.position, camera.position + camera.front, camera.up);
+    const glm::mat4 actualView = glm::lookAt(
+        pose.position, pose.position + pose.front, pose.up);
+    passed &= expect(sameMatrix(actualView, expectedView),
+                     "Root Camera world view changed from existing behavior");
+
+    Camera invalidCamera;
+    invalidCamera.front = glm::vec3(0.0f);
+    pose.position = glm::vec3(std::numeric_limits<float>::quiet_NaN());
+    pose.front = glm::vec3(std::numeric_limits<float>::infinity());
+    pose.up = glm::vec3(std::numeric_limits<float>::quiet_NaN());
+    passed &= expect(!invalidCamera.calculateWorldPose(pose) &&
+                         isFiniteVector(pose.position) &&
+                         isFiniteVector(pose.front) && isFiniteVector(pose.up),
+                     "Invalid Camera world pose did not fail safely");
     return passed;
 }
 
@@ -225,7 +272,7 @@ bool runOrientationDeltaTests() {
 }  // namespace
 
 int main() {
-    return runFovTests() && runDerivationTests() &&
+    return runFovTests() && runRootWorldPoseTests() && runDerivationTests() &&
                    runYawPitchMutationTests() &&
                    runOrientationDeltaTests()
                ? 0

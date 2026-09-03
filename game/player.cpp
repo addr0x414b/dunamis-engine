@@ -1,5 +1,7 @@
 #include "player.h"
 
+#include "../math/transform_math.h"
+
 #include <algorithm>
 #include <cmath>
 #include <utility>
@@ -30,10 +32,27 @@ void Player::init() {
 }
 
 void Player::synchronizeCameraPosition() noexcept {
-    if (!camera || !isFiniteVector(position)) {
+    if (!camera) {
         return;
     }
-    camera->position = position + playerEyeHeightDunamisUnits * playerWorldUp;
+
+    const glm::mat4 worldTransform = worldTransformMatrix();
+    if (!transform_math::isFiniteMatrix(worldTransform)) {
+        return;
+    }
+
+    const glm::vec3 worldPosition = glm::vec3(worldTransform[3]);
+    if (!isFiniteVector(worldPosition)) {
+        return;
+    }
+
+    const glm::vec3 cameraPosition =
+        worldPosition + playerEyeHeightDunamisUnits * playerWorldUp;
+    if (!isFiniteVector(cameraPosition)) {
+        return;
+    }
+
+    camera->position = cameraPosition;
 }
 
 void Player::onPhysicsTransformResolved() noexcept {

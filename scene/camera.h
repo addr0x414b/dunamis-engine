@@ -3,9 +3,18 @@
 
 #include "game_object.h"
 
+struct CameraWorldPose {
+    glm::vec3 position{0.0f};
+    glm::vec3 front{0.0f, 0.0f, -1.0f};
+    glm::vec3 up{0.0f, 1.0f, 0.0f};
+};
+
 class Camera : public GameObject {
 public:
     Camera();
+
+    [[nodiscard]] bool calculateWorldPose(
+        CameraWorldPose& pose) const noexcept;
 
     // Vertical field of view in degrees.
     [[nodiscard]] float fov() const noexcept;

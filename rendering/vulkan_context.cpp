@@ -5112,6 +5112,11 @@ Result VulkanContext::drawFrame(Scene* scene, const Camera& renderCamera,
         return Result::failure(
             "Cannot draw a scene that exceeds the point-light limit");
     }
+    CameraWorldPose cameraWorldPose;
+    if (!renderCamera.calculateWorldPose(cameraWorldPose)) {
+        return Result::failure(
+            "Cannot draw with an invalid Camera world pose");
+    }
     VkResult result = vkWaitForFences(
         device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
     if (result != VK_SUCCESS) {
@@ -5153,8 +5158,9 @@ Result VulkanContext::drawFrame(Scene* scene, const Camera& renderCamera,
                                imguiResult.error());
     }
     const glm::mat4 view = glm::lookAt(
-        renderCamera.position, renderCamera.position + renderCamera.front,
-        renderCamera.up);
+        cameraWorldPose.position,
+        cameraWorldPose.position + cameraWorldPose.front,
+        cameraWorldPose.up);
     glm::mat4 projection = glm::perspective(
         glm::radians(renderCamera.fov()),
         swapchainExtent.width / static_cast<float>(swapchainExtent.height),
@@ -5174,7 +5180,7 @@ Result VulkanContext::drawFrame(Scene* scene, const Camera& renderCamera,
     for (const auto& obj : scene->gameObjects()) {
         Result uniformResult = updateUniformBuffer(
             ownership->second, currentFrame, obj, view, projection,
-            renderCamera.position);
+            cameraWorldPose.position);
         if (!uniformResult) return uniformResult;
     }
 

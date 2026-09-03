@@ -4,6 +4,7 @@
 #include "scene/directional_light.h"
 #include "scene/game_object.h"
 #include "scene/point_light.h"
+#include "scene/scene.h"
 
 #include <cmath>
 #include <iostream>
@@ -19,6 +20,13 @@ public:
     const Camera* attachedCamera() const noexcept override {
         return &camera;
     }
+};
+
+class MutationTestScene final : public Scene {
+public:
+    void buildDefaults() override {}
+    void start() override {}
+    void update() override {}
 };
 
 bool expect(bool condition, const char* message) {
@@ -75,6 +83,49 @@ bool runPositionTests() {
         sameVector(attachedObject.camera.position,
                    originalCameraPosition + ownerDelta),
         "Attached Camera did not move by the exact owner position delta");
+
+    {
+        MutationTestScene scene;
+        auto parentObject = std::make_unique<GameObject>();
+        auto attachedObjectInScene = std::make_unique<AttachedCameraObject>();
+        GameObject* parent = parentObject.get();
+        AttachedCameraObject* child = attachedObjectInScene.get();
+        parent->persistentId = "mutation-position-parent";
+        child->persistentId = "mutation-position-child";
+        if (!scene.addGameObject(std::move(parentObject)) ||
+            !scene.addGameObject(std::move(attachedObjectInScene))) {
+            return expect(false, "Could not create hierarchy position fixture");
+        }
+
+        parent->position = {100.0f, 50.0f, -10.0f};
+        parent->rotation = {10.0f, 20.0f, 90.0f};
+        parent->scale = {2.0f, 3.0f, 1.5f};
+        child->position = {10.0f, 5.0f, 2.0f};
+        child->rotation = {15.0f, -20.0f, 25.0f};
+        child->scale = {1.5f, 0.75f, 2.0f};
+        child->camera.position = {130.0f, 75.0f, 4.0f};
+        if (!scene.reparentGameObject(
+                *child, parent, MutationTestScene::ReparentMode::PreserveLocal)) {
+            return expect(false, "Could not parent hierarchy position fixture");
+        }
+
+        const glm::vec3 oldCameraPosition = child->camera.position;
+        const glm::vec3 newLocalPosition{12.0f, 8.0f, 1.0f};
+        const glm::mat4 oldOwnerWorld = child->worldTransformMatrix();
+        const glm::mat4 candidateOwnerWorld = parent->worldTransformMatrix() *
+            transform_math::makeModelMatrix(
+                newLocalPosition, child->rotation, child->scale);
+        const glm::vec3 expectedWorldDelta =
+            glm::vec3(candidateOwnerWorld[3]) - glm::vec3(oldOwnerWorld[3]);
+
+        passed &= expect(static_cast<bool>(editor_mutation::applyPosition(
+                             *child, newLocalPosition)),
+                         "Parented attached-camera position mutation failed");
+        passed &= expect(child->position == newLocalPosition &&
+                             sameVector(child->camera.position,
+                                        oldCameraPosition + expectedWorldDelta),
+                         "Parented attached Camera did not follow the owner's world position delta");
+    }
 
     Camera standaloneCamera;
     standaloneCamera.position = {7.0f, 8.0f, 9.0f};
@@ -147,6 +198,71 @@ bool runRotationTests() {
     passed &= expect(sameVector(attachedObject.camera.up, expectedAttachedUp),
                      "Attached Camera up did not receive the orientation delta");
 
+    {
+        MutationTestScene scene;
+        auto parentObject = std::make_unique<GameObject>();
+        auto attachedObjectInScene = std::make_unique<AttachedCameraObject>();
+        GameObject* parent = parentObject.get();
+        AttachedCameraObject* child = attachedObjectInScene.get();
+        parent->persistentId = "mutation-rotation-parent";
+        child->persistentId = "mutation-rotation-child";
+        if (!scene.addGameObject(std::move(parentObject)) ||
+            !scene.addGameObject(std::move(attachedObjectInScene))) {
+            return expect(false, "Could not create hierarchy rotation fixture");
+        }
+
+        parent->position = {100.0f, 50.0f, -10.0f};
+        parent->rotation = {15.0f, 25.0f, 40.0f};
+        parent->scale = {2.0f, 3.0f, 1.5f};
+        child->position = {10.0f, 5.0f, 2.0f};
+        child->rotation = {15.0f, -20.0f, 25.0f};
+        child->scale = {1.5f, 0.75f, 2.0f};
+        child->camera.position = {130.0f, 75.0f, 4.0f};
+        child->camera.front = glm::normalize(glm::vec3(0.3f, 0.2f, -0.9f));
+        child->camera.up = glm::vec3(0.0f, 1.0f, 0.0f);
+        if (!scene.reparentGameObject(
+                *child, parent, MutationTestScene::ReparentMode::PreserveLocal)) {
+            return expect(false, "Could not parent hierarchy rotation fixture");
+        }
+
+        const glm::mat4 oldOwnerWorld = child->worldTransformMatrix();
+        const glm::mat4 newOwnerWorld = parent->worldTransformMatrix() *
+            transform_math::makeModelMatrix(
+                child->position, {35.0f, 10.0f, -15.0f}, child->scale);
+        const glm::mat4 inverseOldOwnerWorld = glm::inverse(oldOwnerWorld);
+        const glm::vec3 oldCameraPosition = child->camera.position;
+        const glm::vec3 oldCameraFront = child->camera.front;
+        const glm::vec3 oldCameraUp = child->camera.up;
+        const glm::vec3 expectedCameraPosition = glm::vec3(
+            newOwnerWorld *
+            (inverseOldOwnerWorld * glm::vec4(oldCameraPosition, 1.0f)));
+        const glm::vec3 expectedCameraFront = glm::normalize(glm::vec3(
+            newOwnerWorld *
+            (inverseOldOwnerWorld * glm::vec4(oldCameraFront, 0.0f))));
+        const glm::vec3 expectedCameraUp = glm::normalize(glm::vec3(
+            newOwnerWorld *
+            (inverseOldOwnerWorld * glm::vec4(oldCameraUp, 0.0f))));
+
+        passed &= expect(static_cast<bool>(editor_mutation::applyRotation(
+                             *child, {35.0f, 10.0f, -15.0f})),
+                         "Parented attached-camera rotation mutation failed");
+        passed &= expect(child->rotation == glm::vec3(35.0f, 10.0f, -15.0f) &&
+                             sameVector(child->camera.position,
+                                        expectedCameraPosition) &&
+                             sameVector(child->camera.front,
+                                        expectedCameraFront) &&
+                             sameVector(child->camera.up, expectedCameraUp),
+                         "Parented attached Camera did not follow the owner world-frame rotation");
+        passed &= expect(std::fabs(glm::length(child->camera.front) - 1.0f) <
+                             1.0e-5f &&
+                             std::fabs(glm::length(child->camera.up) - 1.0f) <
+                                 1.0e-5f &&
+                             glm::length(glm::cross(child->camera.front,
+                                                    child->camera.up)) >
+                                 1.0e-4f,
+                         "Parented attached Camera rotation produced an invalid basis");
+    }
+
     Camera standaloneCamera;
     standaloneCamera.position = {20.0f, 21.0f, 22.0f};
     standaloneCamera.rotation = glm::vec3(0.0f);
@@ -171,6 +287,49 @@ bool runRotationTests() {
                          standaloneCamera.up,
                          glm::normalize(glm::mat3(standaloneDelta) * standaloneUp)),
                      "Standalone Camera up did not follow editor rotation");
+
+    {
+        MutationTestScene scene;
+        auto parentObject = std::make_unique<GameObject>();
+        auto cameraObject = std::make_unique<Camera>();
+        GameObject* parent = parentObject.get();
+        Camera* camera = cameraObject.get();
+        parent->persistentId = "standalone-camera-parent";
+        camera->persistentId = "standalone-camera-child";
+        if (!scene.addGameObject(std::move(parentObject)) ||
+            !scene.addGameObject(std::move(cameraObject))) {
+            return expect(false, "Could not create parented standalone Camera fixture");
+        }
+        parent->position = {100.0f, 50.0f, -10.0f};
+        parent->rotation = {10.0f, 20.0f, 90.0f};
+        parent->scale = {2.0f, 3.0f, 1.5f};
+        camera->position = {1.0f, 2.0f, 3.0f};
+        camera->rotation = glm::vec3(0.0f);
+        camera->front = {0.0f, 0.0f, -1.0f};
+        camera->up = {0.0f, 1.0f, 0.0f};
+        if (!scene.reparentGameObject(
+                *camera, parent, MutationTestScene::ReparentMode::PreserveLocal)) {
+            return expect(false, "Could not parent standalone Camera fixture");
+        }
+
+        const glm::vec3 newLocalPosition{4.0f, 5.0f, 6.0f};
+        const glm::vec3 newLocalRotation{15.0f, -25.0f, 35.0f};
+        const glm::vec3 originalFront = camera->front;
+        const glm::vec3 originalUp = camera->up;
+        passed &= expect(static_cast<bool>(editor_mutation::applyPosition(
+                             *camera, newLocalPosition)) &&
+                             camera->position == newLocalPosition,
+                         "Parented standalone Camera position was not local");
+        const glm::mat3 localRotation = glm::mat3(
+            transform_math::makeRotationMatrix(newLocalRotation));
+        passed &= expect(static_cast<bool>(editor_mutation::applyRotation(
+                             *camera, newLocalRotation)) &&
+                             sameVector(camera->front,
+                                        glm::normalize(localRotation * originalFront)) &&
+                             sameVector(camera->up,
+                                        glm::normalize(localRotation * originalUp)),
+                         "Parented standalone Camera mutation used parent orientation");
+    }
 
     const glm::vec3 authoredRotation{23.0f, -41.0f, 17.0f};
     const glm::vec3 authoredScale{-2.0f, 3.0f, -4.0f};
@@ -230,6 +389,43 @@ bool runRotationTests() {
             sameVector(invalidCameraObject.camera.front, invalidCameraFront) &&
             sameVector(invalidCameraObject.camera.up, invalidCameraUp),
         "Failed Camera rotation left partial state behind");
+
+    {
+        MutationTestScene scene;
+        auto parentObject = std::make_unique<GameObject>();
+        auto attachedObjectInScene = std::make_unique<AttachedCameraObject>();
+        GameObject* parent = parentObject.get();
+        AttachedCameraObject* child = attachedObjectInScene.get();
+        parent->persistentId = "singular-mutation-parent";
+        child->persistentId = "singular-mutation-child";
+        if (!scene.addGameObject(std::move(parentObject)) ||
+            !scene.addGameObject(std::move(attachedObjectInScene))) {
+            return expect(false, "Could not create singular mutation fixture");
+        }
+        parent->scale = {0.0f, 1.0f, 1.0f};
+        child->position = {2.0f, 3.0f, 4.0f};
+        child->camera.position = {7.0f, 8.0f, 9.0f};
+        child->camera.front = {0.0f, 0.0f, -1.0f};
+        child->camera.up = {0.0f, 1.0f, 0.0f};
+        if (!scene.reparentGameObject(
+                *child, parent, MutationTestScene::ReparentMode::PreserveLocal)) {
+            return expect(false, "Could not parent singular mutation fixture");
+        }
+
+        const glm::vec3 originalPosition = child->position;
+        const glm::vec3 originalRotation = child->rotation;
+        const glm::vec3 originalCameraPosition = child->camera.position;
+        const glm::vec3 originalCameraFront = child->camera.front;
+        const glm::vec3 originalCameraUp = child->camera.up;
+        const Result result = editor_mutation::applyRotation(
+            *child, {10.0f, 20.0f, 30.0f});
+        passed &= expect(!result && child->position == originalPosition &&
+                             child->rotation == originalRotation &&
+                             child->camera.position == originalCameraPosition &&
+                             child->camera.front == originalCameraFront &&
+                             child->camera.up == originalCameraUp,
+                         "Singular attached-camera rotation was not transactional");
+    }
     return passed;
 }
 
