@@ -33,7 +33,9 @@
 #include "../physics/collision_shapes.h"
 #include "../physics/physics_shape_cache.h"
 #include "../physics/physics_server.h"
+#include "../physics/physics_transforms.h"
 #include "../physics/physics_units.h"
+#include "../math/transform_math.h"
 #include "../scene/character.h"
 #include "../scene/game_object.h"
 #include "../scene/model_renderable.h"
@@ -111,6 +113,179 @@ public:
         return layer == 1 || broadPhase == JPH::BroadPhaseLayer(1);
     }
 };
+
+void testPhysicsHierarchyPoseHelpers() {
+    GameObject root;
+    root.name = "Root Rigid Body";
+    root.physics.enabled = true;
+    root.position = {17.0f, -23.0f, 41.0f};
+    root.rotation = {13.0f, -27.0f, 41.0f};
+    root.scale = {2.0f, 3.0f, 4.0f};
+
+    physics::PhysicsWorldPose rootPose;
+    expect(static_cast<bool>(physics::derivePhysicsWorldPose(root, rootPose)),
+           "root physics world pose derivation failed");
+    expect(glm::length(rootPose.position - root.position) <= 1.0e-4f,
+           "root physics world position changed from authored position");
+    expect(matrixNear(transform_math::makeRotationMatrix(rootPose.rotation),
+                      transform_math::makeRotationMatrix(root.rotation)),
+           "root physics world rotation changed from authored rotation");
+
+    TestScene scene;
+    auto rootOwner = std::make_unique<GameObject>();
+    GameObject* rootPointer = rootOwner.get();
+    rootPointer->name = "Hierarchy Root";
+    rootPointer->position = {100.0f, 5.0f, -30.0f};
+    rootPointer->rotation = {9.0f, 21.0f, -17.0f};
+    auto parentOwner = std::make_unique<GameObject>();
+    GameObject* parentPointer = parentOwner.get();
+    parentPointer->name = "Hierarchy Parent";
+    parentPointer->position = {20.0f, 7.0f, 4.0f};
+    parentPointer->rotation = {-11.0f, 18.0f, 33.0f};
+    auto childOwner = std::make_unique<GameObject>();
+    GameObject* childPointer = childOwner.get();
+    childPointer->name = "Hierarchy Physics Child";
+    childPointer->physics.enabled = true;
+    childPointer->position = {5.0f, -2.0f, 12.0f};
+    childPointer->rotation = {24.0f, -31.0f, 8.0f};
+    childPointer->scale = {2.0f, 3.0f, 4.0f};
+    expect(static_cast<bool>(scene.addGameObject(std::move(rootOwner))),
+           "failed to add hierarchy root fixture");
+    expect(static_cast<bool>(scene.addGameObject(std::move(parentOwner))),
+           "failed to add hierarchy parent fixture");
+    expect(static_cast<bool>(scene.addGameObject(std::move(childOwner))),
+           "failed to add hierarchy child fixture");
+    expect(static_cast<bool>(scene.reparentGameObject(
+               *parentPointer, rootPointer, Scene::ReparentMode::PreserveLocal)),
+           "failed to parent hierarchy parent fixture");
+    expect(static_cast<bool>(scene.reparentGameObject(
+               *childPointer, parentPointer, Scene::ReparentMode::PreserveLocal)),
+           "failed to parent hierarchy child fixture");
+
+    physics::PhysicsWorldPose childPose;
+    expect(static_cast<bool>(physics::validatePhysicsHierarchy(*childPointer)),
+           "supported hierarchy was rejected by physics validation");
+    expect(static_cast<bool>(physics::derivePhysicsWorldPose(*childPointer,
+                                                              childPose)),
+           "multi-level physics world pose derivation failed");
+    const glm::mat4 expectedWorld = childPointer->worldTransformMatrix();
+    expect(glm::length(childPose.position - glm::vec3(expectedWorld[3])) <=
+               1.0e-3f,
+           "parented physics world translation was not fully composed");
+    const glm::mat4 expectedRotation =
+        transform_math::makeRotationMatrix(rootPointer->rotation) *
+        transform_math::makeRotationMatrix(parentPointer->rotation) *
+        transform_math::makeRotationMatrix(childPointer->rotation);
+    expect(matrixNear(transform_math::makeRotationMatrix(childPose.rotation),
+                      expectedRotation, 1.0e-3f),
+           "parented physics world rotation was not matrix-composed");
+
+    const glm::vec3 candidateLocalPosition{31.0f, 8.0f, -6.0f};
+    const glm::vec3 candidateLocalRotation{-19.0f, 28.0f, 47.0f};
+    physics::PhysicsWorldPose candidateWorld;
+    expect(static_cast<bool>(physics::derivePhysicsWorldPose(
+               *childPointer, candidateLocalPosition, candidateLocalRotation,
+               candidateWorld)),
+           "candidate local physics world pose derivation failed");
+    const glm::mat4 candidateWorldMatrix = transform_math::makeModelMatrix(
+        candidateWorld.position, candidateWorld.rotation, glm::vec3(1.0f));
+    glm::vec3 recoveredPosition;
+    glm::vec3 recoveredRotation;
+    expect(static_cast<bool>(physics::deriveLocalPoseFromPhysicsWorld(
+               *childPointer, candidateWorldMatrix, recoveredPosition,
+               recoveredRotation)),
+           "parented physics world-to-local conversion failed");
+    expect(matrixNear(
+               transform_math::makeModelMatrix(
+                   recoveredPosition, recoveredRotation, glm::vec3(1.0f)),
+               transform_math::makeModelMatrix(
+                   candidateLocalPosition, candidateLocalRotation,
+                   glm::vec3(1.0f)),
+               1.0e-3f),
+           "parented physics world-to-local conversion changed local pose");
+
+    const glm::mat4 joltWorldMatrix = candidateWorldMatrix;
+    rootPointer->position.x += 50.0f;
+    expect(static_cast<bool>(physics::deriveLocalPoseFromPhysicsWorld(
+               *childPointer, joltWorldMatrix, recoveredPosition,
+               recoveredRotation)),
+           "world-to-local conversion failed after parent movement");
+    const glm::mat4 reconstructedWorld =
+        childPointer->parent()->worldTransformMatrix() *
+        transform_math::makeModelMatrix(recoveredPosition, recoveredRotation,
+                                        glm::vec3(1.0f));
+    expect(matrixNear(reconstructedWorld, joltWorldMatrix, 1.0e-3f),
+           "dynamic child local writeback did not preserve Jolt world pose");
+    expect(glm::length(recoveredPosition - candidateLocalPosition) > 1.0f,
+           "dynamic child local pose did not respond to parent movement");
+
+    const glm::vec3 invalidLocalPosition = childPointer->position;
+    const glm::vec3 invalidLocalRotation = childPointer->rotation;
+    parentPointer->scale = {2.0f, 1.0f, 1.0f};
+    const Result invalidScale = physics::validatePhysicsHierarchy(*childPointer);
+    expect(!invalidScale && invalidScale.error().find("scale") != std::string::npos,
+           "scaled physics ancestor was not rejected clearly");
+    expect(!physics::deriveLocalPoseFromPhysicsWorld(
+               *childPointer, joltWorldMatrix, recoveredPosition,
+               recoveredRotation),
+           "world-to-local conversion accepted scaled physics ancestry");
+    expect(glm::length(childPointer->position - invalidLocalPosition) <= 1.0e-4f &&
+               glm::length(childPointer->rotation - invalidLocalRotation) <=
+                   1.0e-4f,
+           "failed physics conversion changed authored local state");
+
+    TestScene rejectedScene;
+    auto physicsParentOwner = std::make_unique<GameObject>();
+    GameObject* physicsParent = physicsParentOwner.get();
+    physicsParent->name = "Physics Ancestor";
+    physicsParent->physics.enabled = true;
+    auto physicsChildOwner = std::make_unique<GameObject>();
+    GameObject* physicsChild = physicsChildOwner.get();
+    physicsChild->name = "Physics Descendant";
+    physicsChild->physics.enabled = true;
+    expect(static_cast<bool>(rejectedScene.addGameObject(
+               std::move(physicsParentOwner))),
+           "failed to add physics ancestor fixture");
+    expect(static_cast<bool>(rejectedScene.addGameObject(
+               std::move(physicsChildOwner))),
+           "failed to add physics descendant fixture");
+    expect(static_cast<bool>(rejectedScene.reparentGameObject(
+               *physicsChild, physicsParent, Scene::ReparentMode::PreserveLocal)),
+           "scene rejected legal physics ancestor fixture hierarchy");
+    const Result physicsAncestorResult =
+        physics::validatePhysicsHierarchy(*physicsChild);
+    expect(!physicsAncestorResult &&
+               physicsAncestorResult.error().find("physics enabled") !=
+                   std::string::npos,
+           "physics ancestor was not rejected clearly");
+
+    const glm::vec3 rejectedScales[] = {
+        {2.0f, 1.0f, 1.0f}, {2.0f, 2.0f, 2.0f}, {-1.0f, 1.0f, 1.0f},
+        {0.0f, 1.0f, 1.0f}};
+    for (const glm::vec3& rejectedScale : rejectedScales) {
+        TestScene scaleScene;
+        auto scaleParentOwner = std::make_unique<GameObject>();
+        GameObject* scaleParent = scaleParentOwner.get();
+        scaleParent->name = "Scaled Physics Ancestor";
+        scaleParent->scale = rejectedScale;
+        auto scaleChildOwner = std::make_unique<GameObject>();
+        GameObject* scaleChild = scaleChildOwner.get();
+        scaleChild->name = "Scaled Physics Child";
+        scaleChild->physics.enabled = true;
+        expect(static_cast<bool>(scaleScene.addGameObject(
+                   std::move(scaleParentOwner))),
+               "failed to add scaled parent fixture");
+        expect(static_cast<bool>(scaleScene.addGameObject(
+                   std::move(scaleChildOwner))),
+               "failed to add scaled child fixture");
+        expect(static_cast<bool>(scaleScene.reparentGameObject(
+                   *scaleChild, scaleParent, Scene::ReparentMode::PreserveLocal)),
+               "scene rejected legal scaled physics fixture hierarchy");
+        const Result result = physics::validatePhysicsHierarchy(*scaleChild);
+        expect(!result && result.error().find("scale") != std::string::npos,
+               "unsupported scaled physics ancestor was not rejected");
+    }
+}
 
 MeshInstance triangleInstance(const glm::vec3& vertex) {
     MeshInstance instance;
@@ -725,6 +900,12 @@ MeshInstance floorInstance() {
     return instance;
 }
 
+MeshInstance upwardSmallFloorInstance() {
+    MeshInstance instance = floorInstance();
+    instance.mesh.indices = {0, 2, 1, 0, 3, 2};
+    return instance;
+}
+
 MeshInstance characterFloorInstance() {
     MeshInstance instance;
     instance.mesh.vertices = {
@@ -886,6 +1067,174 @@ void advanceRuntimePhysics(PhysicsServer& server, int frameCount) {
         TimeTestAccess::update();
         server.update();
     }
+}
+
+void testPhysicsServerHierarchyStaticFollow() {
+    TestScene scene;
+    const std::string modelIdentity =
+        "__dunamis_hierarchy_static_follow_" +
+        std::to_string(reinterpret_cast<std::uintptr_t>(&scene));
+
+    auto parentOwner = std::make_unique<GameObject>();
+    GameObject* parent = parentOwner.get();
+    parent->name = "Static Physics Parent";
+    parent->position = {100.0f, 0.0f, 0.0f};
+
+    auto floorOwner = std::make_unique<GameObject>();
+    GameObject* floor = floorOwner.get();
+    floor->name = "Parented Static Floor";
+    floor->persistentId = "parented-static-floor";
+    floor->modelPath = modelIdentity.c_str();
+    floor->physics.enabled = true;
+    floor->physics.motionType = GameObject::PhysicsMotionType::Static;
+    floor->physics.colliderType = GameObject::PhysicsColliderType::Mesh;
+    floor->position = {20.0f, 0.0f, 0.0f};
+    expect(static_cast<bool>(floor->modelRenderable().addMeshInstance(
+               upwardSmallFloorInstance())),
+           "failed to create parented static floor");
+
+    auto sphereOwner = std::make_unique<GameObject>();
+    GameObject* sphere = sphereOwner.get();
+    sphere->name = "Static Follow Test Sphere";
+    sphere->position = {120.0f, 100.0f, 0.0f};
+    sphere->physics.enabled = true;
+    sphere->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
+    sphere->physics.colliderType = GameObject::PhysicsColliderType::Sphere;
+    sphere->physics.sphereRadius = 5.0f;
+
+    expect(static_cast<bool>(scene.addGameObject(std::move(parentOwner))),
+           "failed to add static physics parent");
+    expect(static_cast<bool>(scene.addGameObject(std::move(floorOwner))),
+           "failed to add parented static floor");
+    expect(static_cast<bool>(scene.addGameObject(std::move(sphereOwner))),
+           "failed to add static-follow sphere");
+    expect(static_cast<bool>(scene.reparentGameObject(
+               *floor, parent, Scene::ReparentMode::PreserveLocal)),
+           "failed to parent static floor fixture");
+
+    PhysicsServer server;
+    expect(static_cast<bool>(server.initialize()),
+           "failed to initialize static hierarchy PhysicsServer");
+    expect(static_cast<bool>(server.beginRuntimeSession(scene)),
+           "failed to create parented static hierarchy physics session");
+    advanceRuntimePhysics(server, 120);
+    const float settledPosition = sphere->position.y;
+    expect(settledPosition > 0.0f && settledPosition < 20.0f,
+           "static child world placement did not support the dynamic body at the parented floor");
+
+    parent->position.x = 200.0f;
+    advanceRuntimePhysics(server, 20);
+    expect(sphere->position.y < settledPosition - 2.0f,
+           "static child did not follow a supported moving parent in Jolt");
+
+    server.endRuntimeSession();
+    server.shutdown();
+    physics::PhysicsShapeCache cache;
+    const physics::StaticMeshShapeCacheKey key =
+        physics::makeStaticMeshShapeCacheKey(
+            modelIdentity, floor->modelRenderable().meshInstances(), floor->scale);
+    std::error_code error;
+    std::filesystem::remove(cache.pathFor(key), error);
+}
+
+void testPhysicsServerHierarchyDynamicWritebackAndEdit() {
+    TestScene scene;
+    auto parentOwner = std::make_unique<GameObject>();
+    GameObject* parent = parentOwner.get();
+    parent->name = "Dynamic Physics Parent";
+    parent->position = {100.0f, 0.0f, 0.0f};
+
+    auto childOwner = std::make_unique<GameObject>();
+    GameObject* child = childOwner.get();
+    child->name = "Parented Dynamic Body";
+    child->physics.enabled = true;
+    child->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
+    child->physics.colliderType = GameObject::PhysicsColliderType::Sphere;
+    child->physics.sphereRadius = 5.0f;
+    child->position = {30.0f, 200.0f, 0.0f};
+    child->scale = {2.0f, 3.0f, 4.0f};
+
+    expect(static_cast<bool>(scene.addGameObject(std::move(parentOwner))),
+           "failed to add dynamic physics parent");
+    expect(static_cast<bool>(scene.addGameObject(std::move(childOwner))),
+           "failed to add dynamic physics child");
+    expect(static_cast<bool>(scene.reparentGameObject(
+               *child, parent, Scene::ReparentMode::PreserveLocal)),
+           "failed to parent dynamic physics fixture");
+
+    PhysicsServer server;
+    expect(static_cast<bool>(server.initialize()),
+           "failed to initialize dynamic hierarchy PhysicsServer");
+    expect(static_cast<bool>(server.beginRuntimeSession(scene)),
+           "failed to create dynamic hierarchy physics session");
+
+    const glm::vec3 editedLocalPosition{45.0f, 250.0f, -12.0f};
+    const glm::vec3 editedLocalRotation{15.0f, 25.0f, -10.0f};
+    server.applyRuntimeTransform(*child, editedLocalPosition,
+                                 editedLocalRotation, true);
+    advanceRuntimePhysics(server, 1);
+    expect(glm::length(child->position - editedLocalPosition) <= 1.0e-4f &&
+               matrixNear(transform_math::makeRotationMatrix(child->rotation),
+                          transform_math::makeRotationMatrix(editedLocalRotation)),
+           "dynamic editor override did not retain authored local transform");
+    expect(glm::length(child->scale - glm::vec3(2.0f, 3.0f, 4.0f)) <=
+               1.0e-4f,
+           "dynamic editor override changed authored local scale");
+
+    parent->position.x += 50.0f;
+    server.applyRuntimeTransform(*child, child->position, child->rotation,
+                                 false);
+    advanceRuntimePhysics(server, 2);
+    expect(std::abs(child->position.x - editedLocalPosition.x) <= 1.0e-3f,
+           "dynamic Jolt world pose was not converted back to the authored local position");
+    expect(matrixNear(transform_math::makeRotationMatrix(child->rotation),
+                      transform_math::makeRotationMatrix(editedLocalRotation),
+                      1.0e-3f),
+           "dynamic Jolt world rotation was not converted back to local rotation");
+
+    server.endRuntimeSession();
+    server.shutdown();
+}
+
+void testPhysicsServerRejectsUnsupportedHierarchy() {
+    TestScene scene;
+    auto parentOwner = std::make_unique<GameObject>();
+    GameObject* parent = parentOwner.get();
+    parent->name = "Rejected Physics Parent";
+    parent->physics.enabled = true;
+    auto childOwner = std::make_unique<GameObject>();
+    GameObject* child = childOwner.get();
+    child->name = "Rejected Physics Child";
+    child->physics.enabled = true;
+    child->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
+    child->physics.colliderType = GameObject::PhysicsColliderType::Sphere;
+    expect(static_cast<bool>(scene.addGameObject(std::move(parentOwner))),
+           "failed to add rejected physics parent");
+    expect(static_cast<bool>(scene.addGameObject(std::move(childOwner))),
+           "failed to add rejected physics child");
+    expect(static_cast<bool>(scene.reparentGameObject(
+               *child, parent, Scene::ReparentMode::PreserveLocal)),
+           "scene rejected legal unsupported-physics fixture hierarchy");
+
+    PhysicsServer server;
+    expect(static_cast<bool>(server.initialize()),
+           "failed to initialize unsupported-hierarchy PhysicsServer");
+    const Result result = server.beginRuntimeSession(scene);
+    expect(!result && result.error().find("physics enabled") !=
+               std::string::npos,
+           "runtime session did not reject a physics ancestor");
+    expect(!server.runtimeSessionActive(),
+           "unsupported hierarchy left a partial runtime physics session");
+
+    parent->physics.enabled = false;
+    parent->scale = {2.0f, 1.0f, 1.0f};
+    const Result scaledResult = server.beginRuntimeSession(scene);
+    expect(!scaledResult && scaledResult.error().find("scale") !=
+               std::string::npos,
+           "runtime session did not reject a scaled physics ancestor");
+    expect(!server.runtimeSessionActive(),
+           "scaled hierarchy left a partial runtime physics session");
+    server.shutdown();
 }
 
 void testRuntimeCharacterFloorWallAndLifecycle() {
@@ -1102,6 +1451,7 @@ void testFloorSphere() {
 int main() {
     testAccumulator();
     testPhysicsUnits();
+    testPhysicsHierarchyPoseHelpers();
     testScaledLocalTriangleMesh();
     testConvexHullInputAndRotation();
     testShapeCenterOfMassTransform();
@@ -1114,6 +1464,9 @@ int main() {
     testDynamicConvexRotationIntegration();
     testFloorSphere();
     testPhysicsServerEditorRelease();
+    testPhysicsServerHierarchyStaticFollow();
+    testPhysicsServerHierarchyDynamicWritebackAndEdit();
+    testPhysicsServerRejectsUnsupportedHierarchy();
     testRuntimeCharacterFloorWallAndLifecycle();
     testDynamicPositionAndGravityWorldScale();
     testStaticTransformAndWake();

@@ -33,6 +33,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include "../core/time.h"
+#include "../math/transform_math.h"
 #include "../scene/character.h"
 #include "../scene/game_object.h"
 #include "../scene/loading_cache_key.h"
@@ -40,6 +41,7 @@
 #include "../scene/scene.h"
 #include "collision_shapes.h"
 #include "physics_shape_cache.h"
+#include "physics_transforms.h"
 #include "physics_units.h"
 
 namespace {
@@ -131,10 +133,62 @@ std::string objectDescription(const GameObject& object) {
            object.persistentId + "')";
 }
 
-bool fromJoltRotation(const JPH::Quat& quaternion, glm::vec3& rotation) {
+bool makeDunamisWorldMatrix(const JPH::RVec3& position,
+                            const JPH::Quat& quaternion,
+                            glm::mat4& worldMatrix) {
+    const glm::vec3 worldPosition = physics::metersToDunamis(glm::vec3(
+        static_cast<float>(position.GetX()), static_cast<float>(position.GetY()),
+        static_cast<float>(position.GetZ())));
+    if (!transform_math::isFiniteVector(worldPosition) ||
+        !std::isfinite(quaternion.GetX()) || !std::isfinite(quaternion.GetY()) ||
+        !std::isfinite(quaternion.GetZ()) || !std::isfinite(quaternion.GetW())) {
+        worldMatrix = glm::mat4(1.0f);
+        return false;
+    }
     const glm::quat glmQuaternion(quaternion.GetW(), quaternion.GetX(),
                                   quaternion.GetY(), quaternion.GetZ());
-    return physics::extractDunamisRotation(glm::mat4_cast(glmQuaternion), rotation);
+    const float quaternionLengthSquared = glm::dot(glmQuaternion, glmQuaternion);
+    if (!std::isfinite(quaternionLengthSquared) ||
+        quaternionLengthSquared <= 1.0e-12f) {
+        worldMatrix = glm::mat4(1.0f);
+        return false;
+    }
+    worldMatrix = glm::mat4_cast(glm::normalize(glmQuaternion));
+    worldMatrix[3] = glm::vec4(worldPosition, 1.0f);
+    return transform_math::isFiniteMatrix(worldMatrix);
+}
+
+bool samePhysicsWorldPose(const physics::PhysicsWorldPose& first,
+                          const physics::PhysicsWorldPose& second) noexcept {
+    constexpr float positionTolerance = 1.0e-4f;
+    if (!transform_math::isFiniteVector(first.position) ||
+        !transform_math::isFiniteVector(second.position) ||
+        !transform_math::isFiniteVector(first.rotation) ||
+        !transform_math::isFiniteVector(second.rotation)) {
+        return false;
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+        if (std::fabs(first.position[axis] - second.position[axis]) >
+            positionTolerance) {
+            return false;
+        }
+    }
+
+    const glm::mat4 firstRotation =
+        transform_math::makeRotationMatrix(first.rotation);
+    const glm::mat4 secondRotation =
+        transform_math::makeRotationMatrix(second.rotation);
+    constexpr float rotationTolerance = 1.0e-5f;
+    for (int column = 0; column < 3; ++column) {
+        for (int row = 0; row < 3; ++row) {
+            if (std::fabs(firstRotation[column][row] -
+                          secondRotation[column][row]) >
+                rotationTolerance) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 double milliseconds(std::chrono::steady_clock::duration duration) {
@@ -244,6 +298,8 @@ struct PhysicsServer::Impl {
         GameObject* object = nullptr;
         bool isDynamic = false;
         bool editorOverride = false;
+        physics::PhysicsWorldPose submittedWorldPose;
+        bool hasSubmittedWorldPose = false;
     };
 
     struct RuntimeCharacter {
@@ -266,7 +322,85 @@ struct PhysicsServer::Impl {
     bool factoryCreated = false;
     bool typesRegistered = false;
     bool initialized = false;
+
+    void activateDynamicBodies(JPH::BodyInterface& bodies) const;
+    void synchronizeStaticBodies();
 };
+
+void PhysicsServer::Impl::activateDynamicBodies(
+    JPH::BodyInterface& bodies) const {
+    std::vector<JPH::BodyID> dynamicBodyIds;
+    dynamicBodyIds.reserve(runtimeBodies.size());
+    for (const RuntimeBody& runtimeBody : runtimeBodies) {
+        if (runtimeBody.isDynamic && !runtimeBody.id.IsInvalid()) {
+            dynamicBodyIds.push_back(runtimeBody.id);
+        }
+    }
+    if (!dynamicBodyIds.empty()) {
+        bodies.ActivateBodies(dynamicBodyIds.data(),
+                              static_cast<int>(dynamicBodyIds.size()));
+    }
+}
+
+void PhysicsServer::Impl::synchronizeStaticBodies() {
+    if (!physicsSystem) return;
+    JPH::BodyInterface& bodies = physicsSystem->GetBodyInterface();
+    bool staticBodyMoved = false;
+    for (RuntimeBody& body : runtimeBodies) {
+        if (body.isDynamic || body.object == nullptr || body.id.IsInvalid()) {
+            continue;
+        }
+
+        physics::PhysicsWorldPose currentPose;
+        const Result result =
+            physics::derivePhysicsWorldPose(*body.object, currentPose);
+        if (!result) {
+            spdlog::error(
+                "Static physics body synchronization failed for {}: {}",
+                objectDescription(*body.object), result.error());
+            continue;
+        }
+        if (body.hasSubmittedWorldPose &&
+            samePhysicsWorldPose(body.submittedWorldPose, currentPose)) {
+            continue;
+        }
+
+        bodies.SetPositionAndRotation(
+            body.id, physics::toJoltPosition(currentPose.position),
+            physics::toJoltRotation(currentPose.rotation),
+            JPH::EActivation::DontActivate);
+        body.submittedWorldPose = currentPose;
+        body.hasSubmittedWorldPose = true;
+        staticBodyMoved = true;
+    }
+    if (staticBodyMoved) activateDynamicBodies(bodies);
+}
+
+Result validateRigidBodyConfiguration(const GameObject& object) {
+    const GameObject::PhysicsBodySettings& settings = object.physics;
+    if (settings.motionType == GameObject::PhysicsMotionType::Static &&
+        settings.colliderType != GameObject::PhysicsColliderType::Mesh &&
+        settings.colliderType != GameObject::PhysicsColliderType::ConvexHull) {
+        return Result::failure(
+            "Static physics requires a mesh or convex-hull collider for " +
+            objectDescription(object));
+    }
+    if (settings.motionType == GameObject::PhysicsMotionType::Dynamic &&
+        settings.colliderType != GameObject::PhysicsColliderType::Sphere &&
+        settings.colliderType != GameObject::PhysicsColliderType::ConvexHull) {
+        return Result::failure(
+            "Dynamic physics requires a sphere or convex-hull collider for " +
+            objectDescription(object));
+    }
+
+    const Result hierarchyResult = physics::validatePhysicsHierarchy(object);
+    if (!hierarchyResult) {
+        return Result::failure(
+            "Unsupported rigid-body hierarchy for " +
+            objectDescription(object) + ": " + hierarchyResult.error());
+    }
+    return Result::success();
+}
 
 Result PhysicsServer::Impl::acquireStaticShape(
     const GameObject& object, physics::CookedShape& output,
@@ -450,6 +584,20 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
 
     accumulator_.reset();
     try {
+        // Validate every ordinary rigid body before allocating shapes or
+        // bodies so unsupported hierarchy configurations fail atomically.
+        for (const std::unique_ptr<GameObject>& objectOwner :
+             runtimeScene.gameObjects()) {
+            if (!objectOwner) continue;
+            GameObject& object = *objectOwner;
+            if (dynamic_cast<Character*>(&object) != nullptr ||
+                !object.physics.enabled) {
+                continue;
+            }
+            const Result configuration = validateRigidBodyConfiguration(object);
+            if (!configuration) return configuration;
+        }
+
         const Clock::time_point totalStart = Clock::now();
         StaticShapeAcquisitionStats staticShapeStats;
         Clock::duration convexGeometryConversion{};
@@ -484,19 +632,16 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                 continue;
             }
             const GameObject::PhysicsBodySettings& settings = object.physics;
-            if (settings.motionType == GameObject::PhysicsMotionType::Static &&
-                settings.colliderType != GameObject::PhysicsColliderType::Mesh &&
-                settings.colliderType != GameObject::PhysicsColliderType::ConvexHull) {
+
+            physics::PhysicsWorldPose worldPose;
+            const Result worldPoseResult =
+                physics::derivePhysicsWorldPose(object, worldPose);
+            if (!worldPoseResult) {
                 endRuntimeSession();
-                return Result::failure("Static physics requires a mesh or convex-hull collider for " +
-                                       objectDescription(object));
-            }
-            if (settings.motionType == GameObject::PhysicsMotionType::Dynamic &&
-                settings.colliderType != GameObject::PhysicsColliderType::Sphere &&
-                settings.colliderType != GameObject::PhysicsColliderType::ConvexHull) {
-                endRuntimeSession();
-                return Result::failure("Dynamic physics requires a sphere or convex-hull collider for " +
-                                       objectDescription(object));
+                return Result::failure(
+                    "Failed to derive rigid-body world pose for " +
+                    objectDescription(object) + ": " +
+                    worldPoseResult.error());
             }
 
             JPH::BodyID bodyId;
@@ -520,9 +665,9 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                                            objectDescription(object));
                 }
                 JPH::BodyCreationSettings bodySettings(
-                    shape.GetPtr(), physics::toJoltPosition(object.position),
-                    physics::toJoltRotation(object.rotation), JPH::EMotionType::Static,
-                    layers::nonMoving);
+                    shape.GetPtr(), physics::toJoltPosition(worldPose.position),
+                    physics::toJoltRotation(worldPose.rotation),
+                    JPH::EMotionType::Static, layers::nonMoving);
                 const Clock::time_point creationStart = Clock::now();
                 bodyId = bodies.CreateAndAddBody(bodySettings,
                                                   JPH::EActivation::DontActivate);
@@ -546,9 +691,9 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                 }
                 shape = cooked.shape;
                 JPH::BodyCreationSettings bodySettings(
-                    shape.GetPtr(), physics::toJoltPosition(object.position),
-                    physics::toJoltRotation(object.rotation), JPH::EMotionType::Dynamic,
-                    layers::moving);
+                    shape.GetPtr(), physics::toJoltPosition(worldPose.position),
+                    physics::toJoltRotation(worldPose.rotation),
+                    JPH::EMotionType::Dynamic, layers::moving);
                 const Clock::time_point creationStart = Clock::now();
                 bodyId = bodies.CreateAndAddBody(bodySettings,
                                                   JPH::EActivation::Activate);
@@ -560,9 +705,10 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                 }
                 ++dynamicCount;
             }
+            const bool isDynamic =
+                settings.motionType == GameObject::PhysicsMotionType::Dynamic;
             impl_->runtimeBodies.push_back(
-                {bodyId, &object,
-                 settings.motionType == GameObject::PhysicsMotionType::Dynamic});
+                {bodyId, &object, isDynamic, false, worldPose, !isDynamic});
         }
         const Clock::time_point broadPhaseStart = Clock::now();
         impl_->physicsSystem->OptimizeBroadPhase();
@@ -634,39 +780,41 @@ void PhysicsServer::applyRuntimeTransform(GameObject& object,
     if (!impl_ || !impl_->physicsSystem) {
         return;
     }
-    if (!std::isfinite(position.x) || !std::isfinite(position.y) ||
-        !std::isfinite(position.z) || !std::isfinite(rotation.x) ||
-        !std::isfinite(rotation.y) || !std::isfinite(rotation.z)) {
-        return;
-    }
     JPH::BodyInterface& bodies = impl_->physicsSystem->GetBodyInterface();
     for (Impl::RuntimeBody& body : impl_->runtimeBodies) {
         if (body.object != &object) {
             continue;
         }
+
+        physics::PhysicsWorldPose worldPose;
+        const Result worldPoseResult = physics::derivePhysicsWorldPose(
+            object, position, rotation, worldPose);
+        if (!worldPoseResult) {
+            spdlog::error(
+                "Runtime rigid-body transform edit rejected for {}: {}",
+                objectDescription(object), worldPoseResult.error());
+            return;
+        }
+
         bodies.SetPositionAndRotation(body.id,
-                                      physics::toJoltPosition(position),
-                                      physics::toJoltRotation(rotation),
+                                      physics::toJoltPosition(worldPose.position),
+                                      physics::toJoltRotation(worldPose.rotation),
                                       body.isDynamic ? JPH::EActivation::Activate
                                                      : JPH::EActivation::DontActivate);
         if (body.isDynamic) {
             bodies.SetLinearAndAngularVelocity(body.id, JPH::Vec3::sZero(),
                                                JPH::Vec3::sZero());
         } else {
-            std::vector<JPH::BodyID> dynamicBodyIds;
-            dynamicBodyIds.reserve(impl_->runtimeBodies.size());
-            for (const Impl::RuntimeBody& runtimeBody : impl_->runtimeBodies) {
-                if (runtimeBody.isDynamic && !runtimeBody.id.IsInvalid()) {
-                    dynamicBodyIds.push_back(runtimeBody.id);
-                }
-            }
-            if (!dynamicBodyIds.empty()) {
-                bodies.ActivateBodies(dynamicBodyIds.data(),
-                                     static_cast<int>(dynamicBodyIds.size()));
-            }
+            impl_->activateDynamicBodies(bodies);
         }
+        // These are authored local values, even though worldPose is what was
+        // submitted to Jolt.
         body.object->position = position;
         body.object->rotation = rotation;
+        if (!body.isDynamic) {
+            body.submittedWorldPose = worldPose;
+            body.hasSubmittedWorldPose = true;
+        }
         body.editorOverride = body.isDynamic && manipulating;
         return;
     }
@@ -676,6 +824,9 @@ void PhysicsServer::update() {
     if (!impl_->physicsSystem) {
         return;
     }
+    // Static bodies are authored/environmental. Keep their Jolt world pose in
+    // sync with supported hierarchy movement before the next simulation step.
+    impl_->synchronizeStaticBodies();
     const std::size_t steps = accumulator_.addFrameDelta(Time::deltaTime());
     for (std::size_t step = 0; step < steps; ++step) {
         const JPH::Vec3 gravity = impl_->physicsSystem->GetGravity();
@@ -745,13 +896,28 @@ void PhysicsServer::update() {
             continue;
         }
         const JPH::RVec3 position = bodies.GetPosition(body.id);
-        body.object->position = physics::metersToDunamis(glm::vec3(
-            static_cast<float>(position.GetX()), static_cast<float>(position.GetY()),
-            static_cast<float>(position.GetZ())));
-        glm::vec3 rotation;
-        if (fromJoltRotation(bodies.GetRotation(body.id), rotation)) {
-            body.object->rotation = rotation;
+        glm::mat4 worldMatrix;
+        if (!makeDunamisWorldMatrix(position, bodies.GetRotation(body.id),
+                                     worldMatrix)) {
+            spdlog::error(
+                "Dynamic physics produced a non-finite world transform for {}",
+                objectDescription(*body.object));
+            continue;
         }
+
+        glm::vec3 localPosition;
+        glm::vec3 localRotation;
+        const Result localResult = physics::deriveLocalPoseFromPhysicsWorld(
+            *body.object, worldMatrix, localPosition, localRotation);
+        if (!localResult) {
+            spdlog::error(
+                "Dynamic physics world-to-local writeback failed for {}: {}",
+                objectDescription(*body.object), localResult.error());
+            continue;
+        }
+        // Commit both fields only after the complete conversion succeeds.
+        body.object->position = localPosition;
+        body.object->rotation = localRotation;
     }
     for (const Impl::RuntimeCharacter& runtimeCharacter :
          impl_->runtimeCharacters) {

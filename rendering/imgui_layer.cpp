@@ -1129,20 +1129,6 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
     ImGuizmo::SetRect(viewport->Pos.x, viewport->Pos.y, viewport->Size.x,
                       viewport->Size.y);
     const TransformTool transformTool = editorSession_->transformTool();
-    if (runState == SceneRunState::Simulating && selected->physics.enabled &&
-        selected->parent() != nullptr &&
-        (transformTool == TransformTool::Translate ||
-         transformTool == TransformTool::Rotate)) {
-        gizmoDragActive_ = false;
-        runtimeTransformDragActive_ = false;
-        runtimeTransformObject_ = nullptr;
-        inspectorError_ =
-            "Runtime hierarchy transform gizmos are unavailable for physics "
-            "bodies until hierarchy-aware physics support is implemented.";
-        drawList->PopClipRect();
-        return;
-    }
-
     const glm::mat4 worldTransform = selected->worldTransformMatrix();
     if (!isFiniteMatrix(worldTransform)) {
         gizmoDragActive_ = false;

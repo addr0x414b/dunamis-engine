@@ -1,5 +1,6 @@
 add_library(Physics STATIC
         physics_server.cpp
+        physics_transforms.cpp
         collision_shapes.cpp
         physics_shape_cache.cpp)
 

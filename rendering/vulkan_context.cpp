@@ -3,6 +3,7 @@
 #include "renderer_configuration.h"
 #include "../editor/editor_session.h"
 #include "../physics/physics_server.h"
+#include "../physics/physics_transforms.h"
 #include "../scene/model_renderable.h"
 #include "../scene/character.h"
 
@@ -5465,10 +5466,26 @@ Result VulkanContext::preparePhysicsDebugDraws(Scene* scene, SceneRunState runSt
             scene, object, character, signature, preparationDuration, rebuilt,
             error);
         if (cooked == nullptr || cooked->shape == nullptr) continue;
+
+        glm::vec3 bodyPosition = object.position;
+        glm::vec3 bodyRotation = object.rotation;
+        if (!character) {
+            physics::PhysicsWorldPose worldPose;
+            const Result poseResult =
+                physics::derivePhysicsWorldPose(object, worldPose);
+            if (!poseResult) {
+                spdlog::warn(
+                    "Skipping collider debug draw for {}: {}",
+                    object.name, poseResult.error());
+                continue;
+            }
+            bodyPosition = worldPose.position;
+            bodyRotation = worldPose.rotation;
+        }
         cooked->shape->Draw(
             physicsDebugRenderer_.get(),
             physics::makeShapeCenterOfMassTransform(
-                *cooked->shape, object.position, object.rotation),
+                *cooked->shape, bodyPosition, bodyRotation),
             JPH::Vec3::sReplicate(1.0f), JPH::Color(0, 140, 255, 255), false,
             true);
     }
