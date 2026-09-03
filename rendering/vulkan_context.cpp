@@ -2,7 +2,6 @@
 
 #include "renderer_configuration.h"
 #include "../editor/editor_session.h"
-#include "../math/transform_math.h"
 #include "../physics/physics_server.h"
 #include "../scene/model_renderable.h"
 #include "../scene/character.h"
@@ -4930,9 +4929,7 @@ Result VulkanContext::updateUniformBuffer(
     }
     for (MeshRenderState& renderState : states->second) {
         const UniformBufferObject ubo = makeUniformBufferObject(
-            transform_math::makeModelMatrix(gameObject->position,
-                                            gameObject->rotation,
-                                            gameObject->scale),
+            gameObject->worldTransformMatrix(),
             view, projection, cameraPosition);
         memcpy(renderState.renderData.uniformBuffersMapped[currentImage], &ubo,
                sizeof(ubo));
@@ -4950,7 +4947,8 @@ Result VulkanContext::updateLightsUniformBuffer(Scene* scene) {
         static_cast<std::int32_t>(scene->pointLightCount());
     for (std::size_t i = 0; i < scene->pointLightCount(); ++i) {
         const PointLight& light = scene->pointLightAt(i);
-        lightsUbo.lights[i].position = light.position;
+        lightsUbo.lights[i].position =
+            glm::vec3(light.worldTransformMatrix()[3]);
         lightsUbo.lights[i].color = light.color;
         lightsUbo.lights[i].intensity = light.intensity;
     }

@@ -2,8 +2,6 @@
 
 #include <cmath>
 
-#include "../math/transform_math.h"
-
 namespace {
 
 constexpr float minDirectionLengthSquared = 1.0e-8f;
@@ -43,29 +41,24 @@ DirectionalLight::DirectionalLight() {
 bool DirectionalLight::calculateWorldDirection(
     glm::vec3& worldDirection) const noexcept {
     worldDirection = {};
-    if (!isFiniteVector(rotation)) {
+    const glm::mat4 worldTransform = worldTransformMatrix();
+    if (!isFiniteMatrix(worldTransform)) {
         return false;
     }
 
-    const glm::mat4 rotationMatrix =
-        transform_math::makeRotationMatrix(rotation);
-    if (!isFiniteMatrix(rotationMatrix)) {
+    const glm::vec3 transformedDirection = glm::vec3(
+        worldTransform * glm::vec4(0.0f, -1.0f, 0.0f, 0.0f));
+    if (!isValidDirection(transformedDirection)) {
         return false;
     }
 
-    const glm::vec3 rotatedDirection = glm::vec3(
-        rotationMatrix * glm::vec4(0.0f, -1.0f, 0.0f, 0.0f));
-    if (!isValidDirection(rotatedDirection)) {
-        return false;
-    }
-
-    const float length = std::sqrt(glm::dot(rotatedDirection,
-                                            rotatedDirection));
+    const float length = std::sqrt(glm::dot(transformedDirection,
+                                            transformedDirection));
     if (!std::isfinite(length) || length <= 0.0f) {
         return false;
     }
 
-    const glm::vec3 normalizedDirection = rotatedDirection / length;
+    const glm::vec3 normalizedDirection = transformedDirection / length;
     if (!isFiniteVector(normalizedDirection)) {
         return false;
     }

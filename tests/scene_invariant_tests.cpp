@@ -164,8 +164,15 @@ bool runHierarchyTransformTests() {
         root->position = {2.0f, 3.0f, 4.0f};
         root->rotation = {10.0f, 20.0f, 30.0f};
         root->scale = {2.0f, 3.0f, 4.0f};
+        const UniformBufferObject renderUbo = makeUniformBufferObject(
+            root->worldTransformMatrix(), glm::mat4(1.0f), glm::mat4(1.0f),
+            glm::vec3(0.0f));
         passed &= expect(sameMatrix(root->localTransformMatrix(),
-                                    root->worldTransformMatrix()),
+                                    root->worldTransformMatrix()) &&
+                             sameMatrix(renderUbo.model,
+                                        transform_math::makeModelMatrix(
+                                            root->position, root->rotation,
+                                            root->scale)),
                          "A root world transform differed from its local transform");
     }
 
@@ -180,9 +187,17 @@ bool runHierarchyTransformTests() {
         child->position = {5.0f, 0.0f, 0.0f};
         const Result result = scene.reparentGameObject(
             *child, parent, TestScene::ReparentMode::PreserveLocal);
+        const glm::mat4 expectedWorld =
+            parent->localTransformMatrix() * child->localTransformMatrix();
+        const UniformBufferObject renderUbo = makeUniformBufferObject(
+            child->worldTransformMatrix(), glm::mat4(1.0f), glm::mat4(1.0f),
+            glm::vec3(0.0f));
         passed &= expect(result && child->parent() == parent &&
                              sameVector(glm::vec3(child->worldTransformMatrix()[3]),
-                                         {15.0f, 0.0f, 0.0f}),
+                                         {15.0f, 0.0f, 0.0f}) &&
+                             sameMatrix(renderUbo.model, expectedWorld) &&
+                             sameMatrix(renderUbo.model,
+                                        child->worldTransformMatrix()),
                          "Parent translation did not compose with child local position");
     }
 
@@ -194,14 +209,22 @@ bool runHierarchyTransformTests() {
             return expect(false, "Could not create rotation hierarchy fixture");
         }
         parent->rotation = {0.0f, 0.0f, 90.0f};
+        parent->scale = {2.0f, 3.0f, 4.0f};
         child->position = {1.0f, 0.0f, 0.0f};
+        child->rotation = {10.0f, 20.0f, 30.0f};
+        child->scale = {1.5f, 0.5f, 2.0f};
         const glm::mat4 localBefore = child->localTransformMatrix();
         passed &= expect(static_cast<bool>(scene.reparentGameObject(
                              *child, parent, TestScene::ReparentMode::PreserveLocal)),
                          "Parent rotation hierarchy setup failed");
+        const UniformBufferObject renderUbo = makeUniformBufferObject(
+            child->worldTransformMatrix(), glm::mat4(1.0f), glm::mat4(1.0f),
+            glm::vec3(0.0f));
         passed &= expect(sameMatrix(child->localTransformMatrix(), localBefore) &&
                              sameMatrix(child->worldTransformMatrix(),
-                                        parent->localTransformMatrix() * localBefore),
+                                        parent->localTransformMatrix() * localBefore) &&
+                             sameMatrix(renderUbo.model,
+                                        child->worldTransformMatrix()),
                          "Parent rotation did not compose as a matrix");
     }
 
@@ -220,6 +243,50 @@ bool runHierarchyTransformTests() {
         passed &= expect(sameVector(glm::vec3(child->worldTransformMatrix()[3]),
                                     {2.0f, 6.0f, 12.0f}),
                          "Parent scale did not affect child world translation");
+    }
+
+    {
+        TestScene scene;
+        GameObject* root = addHierarchyObject(scene, "point-root");
+        auto pointLight = std::make_unique<PointLight>();
+        pointLight->persistentId = "point-root-light";
+        PointLight* rootLight = pointLight.get();
+        if (!root || !scene.addGameObject(std::move(pointLight))) {
+            return expect(false, "Could not create root point-light fixture");
+        }
+        rootLight->position = {4.0f, 5.0f, 6.0f};
+        LightData uploadedLight{};
+        uploadedLight.position =
+            glm::vec3(rootLight->worldTransformMatrix()[3]);
+        passed &= expect(sameVector(uploadedLight.position, {4.0f, 5.0f, 6.0f}),
+                         "A root point light did not retain its world position");
+    }
+
+    {
+        TestScene scene;
+        GameObject* parent = addHierarchyObject(scene, "point-parent");
+        auto pointLight = std::make_unique<PointLight>();
+        pointLight->persistentId = "point-child";
+        PointLight* childLight = pointLight.get();
+        if (!parent || !scene.addGameObject(std::move(pointLight))) {
+            return expect(false, "Could not create parented point-light fixture");
+        }
+        parent->position = {100.0f, 50.0f, 0.0f};
+        parent->rotation = {0.0f, 0.0f, 90.0f};
+        parent->scale = {2.0f, 3.0f, 1.0f};
+        childLight->position = {10.0f, 5.0f, 0.0f};
+        const Result result = scene.reparentGameObject(
+            *childLight, parent, TestScene::ReparentMode::PreserveLocal);
+        const glm::vec3 worldPosition =
+            glm::vec3(childLight->worldTransformMatrix()[3]);
+        LightData uploadedLight{};
+        uploadedLight.position = worldPosition;
+        passed &= expect(result &&
+                             sameVector(uploadedLight.position,
+                                        {85.0f, 70.0f, 0.0f}) &&
+                             sameVector(glm::vec3(childLight->position),
+                                        {10.0f, 5.0f, 0.0f}),
+                         "A parented point light did not derive world position from its matrix");
     }
 
     {

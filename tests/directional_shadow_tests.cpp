@@ -1,11 +1,28 @@
 #include "rendering/directional_shadow.h"
 #include "math/transform_math.h"
+#include "scene/scene.h"
 
 #include <cmath>
 #include <iostream>
 #include <limits>
 
 namespace {
+
+class TestScene final : public Scene {
+public:
+    void buildDefaults() override {}
+    void start() override {}
+    void update() override {}
+};
+
+template <typename ObjectType>
+ObjectType* addHierarchyObject(TestScene& scene, const char* persistentId) {
+    auto object = std::make_unique<ObjectType>();
+    object->persistentId = persistentId;
+    ObjectType* pointer = object.get();
+    if (!scene.addGameObject(std::move(object))) return nullptr;
+    return pointer;
+}
 
 bool expect(bool condition, const char* message) {
     if (!condition) std::cerr << message << '\n';
@@ -33,6 +50,11 @@ bool sameVector(const glm::vec3& first, const glm::vec3& second) {
 glm::vec3 expectedDirection(const glm::vec3& rotation) {
     return glm::vec3(transform_math::makeRotationMatrix(rotation) *
                      glm::vec4(0.0f, -1.0f, 0.0f, 0.0f));
+}
+
+glm::vec3 expectedWorldDirection(const DirectionalLight& light) {
+    return glm::normalize(glm::vec3(
+        light.worldTransformMatrix() * glm::vec4(0.0f, -1.0f, 0.0f, 0.0f)));
 }
 
 bool runDirectionalLightDirectionTests() {
@@ -113,12 +135,61 @@ bool runDirectionalLightDirectionTests() {
                        glm::normalize(expectedDirection(editorPath.rotation))),
         "Editor rotation path did not produce the derived direction");
 
+    {
+        TestScene scene;
+        GameObject* root = addHierarchyObject<GameObject>(
+            scene, "direction-root");
+        GameObject* parent = addHierarchyObject<GameObject>(
+            scene, "direction-parent");
+        DirectionalLight* light = addHierarchyObject<DirectionalLight>(
+            scene, "direction-light");
+        if (!root || !parent || !light) {
+            return expect(false, "Could not create directional hierarchy fixture");
+        }
+        root->rotation = {0.0f, 0.0f, 25.0f};
+        root->scale = {1.5f, 1.5f, 1.5f};
+        parent->rotation = {15.0f, 20.0f, 5.0f};
+        parent->scale = {1.0f, 2.0f, 0.75f};
+        light->rotation = {30.0f, -10.0f, 40.0f};
+        const Result parentResult = scene.reparentGameObject(
+            *parent, root, Scene::ReparentMode::PreserveLocal);
+        const Result lightResult = scene.reparentGameObject(
+            *light, parent, Scene::ReparentMode::PreserveLocal);
+        const glm::vec3 expected = expectedWorldDirection(*light);
+        glm::vec3 actual{1.0f};
+        const bool calculated = light->calculateWorldDirection(actual);
+        directional_shadow::LightMatrices shadowMatrices;
+        const Result shadowResult = directional_shadow::calculateLightMatrices(
+            *light, shadowMatrices);
+        passed &= expect(
+            parentResult && lightResult && calculated &&
+                sameVector(actual, expected) &&
+                nearlyEqual(glm::length(actual), 1.0f) && shadowResult &&
+                sameVector(shadowMatrices.normalizedDirection, expected),
+            "Parented directional light did not use its complete world transform");
+    }
+
     DirectionalLight invalid;
     invalid.rotation.x = std::numeric_limits<float>::quiet_NaN();
     glm::vec3 invalidDirection{1.0f, 2.0f, 3.0f};
     passed &= expect(!invalid.calculateWorldDirection(invalidDirection) &&
                          invalidDirection == glm::vec3(0.0f),
                      "Nonfinite directional-light rotation was not rejected");
+
+    DirectionalLight unusable;
+    unusable.scale = {1.0f, 0.0f, 1.0f};
+    glm::vec3 unusableDirection{1.0f, 2.0f, 3.0f};
+    passed &= expect(!unusable.calculateWorldDirection(unusableDirection) &&
+                         unusableDirection == glm::vec3(0.0f),
+                     "An unusable transformed directional vector was accepted");
+
+    DirectionalLight nonfiniteWorld;
+    nonfiniteWorld.position.x = std::numeric_limits<float>::infinity();
+    glm::vec3 nonfiniteWorldDirection{1.0f, 2.0f, 3.0f};
+    passed &= expect(
+        !nonfiniteWorld.calculateWorldDirection(nonfiniteWorldDirection) &&
+            nonfiniteWorldDirection == glm::vec3(0.0f),
+        "A nonfinite directional-light world transform was accepted");
     return passed;
 }
 
