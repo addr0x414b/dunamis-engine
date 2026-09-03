@@ -30,6 +30,7 @@
 #include <utility>
 
 #include "../core/time.h"
+#include "../game/player.h"
 #include "../physics/collision_shapes.h"
 #include "../physics/physics_shape_cache.h"
 #include "../physics/physics_server.h"
@@ -86,6 +87,15 @@ public:
     void buildDefaults() override {}
     void start() override {}
     void update() override {}
+};
+
+class CountingCharacter final : public Character {
+public:
+    void onPhysicsTransformResolved() noexcept override {
+        ++transformResolvedCount;
+    }
+
+    int transformResolvedCount = 0;
 };
 
 class PairFilter final : public JPH::ObjectLayerPairFilter {
@@ -285,6 +295,152 @@ void testPhysicsHierarchyPoseHelpers() {
         expect(!result && result.error().find("scale") != std::string::npos,
                "unsupported scaled physics ancestor was not rejected");
     }
+}
+
+void testCharacterPhysicsHierarchyHelpers() {
+    Character rootCharacter;
+    rootCharacter.name = "Root Character";
+    rootCharacter.position = {10.0f, 20.0f, 30.0f};
+    rootCharacter.rotation = {17.0f, -23.0f, 41.0f};
+    rootCharacter.scale = {2.0f, 3.0f, 4.0f};
+
+    glm::vec3 rootWorldPosition;
+    expect(static_cast<bool>(physics::validateCharacterPhysicsHierarchy(
+               rootCharacter)),
+           "root Character hierarchy was rejected");
+    expect(static_cast<bool>(physics::deriveCharacterWorldPosition(
+               rootCharacter, rootWorldPosition)),
+           "root Character world position derivation failed");
+    expect(glm::length(rootWorldPosition - rootCharacter.position) <=
+               1.0e-4f,
+           "root Character world position changed from authored position");
+
+    TestScene scene;
+    auto rootOwner = std::make_unique<GameObject>();
+    GameObject* hierarchyRoot = rootOwner.get();
+    hierarchyRoot->name = "Character Hierarchy Root";
+    hierarchyRoot->position = {100.0f, 5.0f, -30.0f};
+    hierarchyRoot->rotation = {9.0f, 21.0f, -17.0f};
+
+    auto parentOwner = std::make_unique<GameObject>();
+    GameObject* hierarchyParent = parentOwner.get();
+    hierarchyParent->name = "Character Hierarchy Parent";
+    hierarchyParent->position = {20.0f, 7.0f, 4.0f};
+    hierarchyParent->rotation = {-11.0f, 18.0f, 33.0f};
+
+    auto characterOwner = std::make_unique<Character>();
+    Character* character = characterOwner.get();
+    character->name = "Parented Character";
+    character->position = {31.0f, 80.0f, -6.0f};
+    character->rotation = {-19.0f, 28.0f, 47.0f};
+    character->scale = {2.0f, 3.0f, 4.0f};
+
+    expect(static_cast<bool>(scene.addGameObject(std::move(rootOwner))),
+           "failed to add Character hierarchy root");
+    expect(static_cast<bool>(scene.addGameObject(std::move(parentOwner))),
+           "failed to add Character hierarchy parent");
+    expect(static_cast<bool>(scene.addGameObject(std::move(characterOwner))),
+           "failed to add parented Character");
+    expect(static_cast<bool>(scene.reparentGameObject(
+               *hierarchyParent, hierarchyRoot,
+               Scene::ReparentMode::PreserveLocal)),
+           "failed to parent Character hierarchy parent");
+    expect(static_cast<bool>(scene.reparentGameObject(
+               *character, hierarchyParent, Scene::ReparentMode::PreserveLocal)),
+           "failed to parent Character");
+
+    const glm::vec3 authoredLocalPosition = character->position;
+    const glm::vec3 expectedWorldPosition =
+        glm::vec3(character->worldTransformMatrix()[3]);
+    glm::vec3 worldPosition;
+    expect(static_cast<bool>(physics::deriveCharacterWorldPosition(
+               *character, worldPosition)),
+           "multi-level Character world position derivation failed");
+    expect(glm::length(worldPosition - expectedWorldPosition) <= 1.0e-3f,
+           "Character world position did not use the complete hierarchy");
+
+    glm::vec3 recoveredLocalPosition;
+    expect(static_cast<bool>(
+               physics::deriveCharacterLocalPositionFromPhysicsWorld(
+                   *character, expectedWorldPosition, recoveredLocalPosition)),
+           "Character world-to-local conversion failed");
+    expect(glm::length(recoveredLocalPosition - authoredLocalPosition) <=
+               1.0e-3f,
+           "Character world-to-local conversion changed authored position");
+
+    const glm::vec3 fixedWorldPosition = expectedWorldPosition;
+    hierarchyRoot->position.x += 50.0f;
+    expect(static_cast<bool>(
+               physics::deriveCharacterLocalPositionFromPhysicsWorld(
+                   *character, fixedWorldPosition, recoveredLocalPosition)),
+           "Character writeback failed after parent movement");
+    expect(glm::length(recoveredLocalPosition - authoredLocalPosition) > 1.0f,
+           "Character local position did not respond to parent movement");
+    character->position = recoveredLocalPosition;
+    expect(static_cast<bool>(physics::deriveCharacterWorldPosition(
+               *character, worldPosition)),
+           "Character world reconstruction failed after parent movement");
+    expect(glm::length(worldPosition - fixedWorldPosition) <= 1.0e-3f,
+           "Character local writeback did not preserve the physics world position");
+
+    const glm::vec3 rejectedScales[] = {
+        {2.0f, 1.0f, 1.0f}, {2.0f, 2.0f, 2.0f}, {-1.0f, 1.0f, 1.0f},
+        {0.0f, 1.0f, 1.0f}};
+    for (const glm::vec3& rejectedScale : rejectedScales) {
+        const glm::vec3 localBeforeFailure = character->position;
+        hierarchyParent->scale = rejectedScale;
+        const Result invalidScale =
+            physics::validateCharacterPhysicsHierarchy(*character);
+        expect(!invalidScale && invalidScale.error().find("scale") !=
+                   std::string::npos,
+               "scaled Character ancestor was not rejected clearly");
+        expect(!physics::deriveCharacterLocalPositionFromPhysicsWorld(
+                   *character, fixedWorldPosition, recoveredLocalPosition),
+               "Character world-to-local conversion accepted scaled ancestry");
+        expect(glm::length(character->position - localBeforeFailure) <=
+                   1.0e-4f &&
+                   transform_math::isFiniteVector(character->position),
+               "failed Character conversion changed authored local state");
+    }
+    hierarchyParent->scale = glm::vec3(1.0f);
+
+    hierarchyParent->physics.enabled = true;
+    const Result physicsAncestor =
+        physics::validateCharacterPhysicsHierarchy(*character);
+    expect(!physicsAncestor && physicsAncestor.error().find("physics enabled") !=
+               std::string::npos,
+           "physics Character ancestor was not rejected clearly");
+    hierarchyParent->physics.enabled = false;
+
+    hierarchyParent->position.x = std::numeric_limits<float>::quiet_NaN();
+    const Result nonFiniteAncestor =
+        physics::validateCharacterPhysicsHierarchy(*character);
+    expect(!nonFiniteAncestor &&
+               nonFiniteAncestor.error().find("non-finite") !=
+                   std::string::npos,
+           "non-finite Character ancestor was not rejected clearly");
+
+    TestScene characterParentScene;
+    auto characterParentOwner = std::make_unique<Character>();
+    Character* characterParent = characterParentOwner.get();
+    characterParent->name = "Character Parent";
+    auto childOwner = std::make_unique<Character>();
+    Character* child = childOwner.get();
+    child->name = "Character Child";
+    expect(static_cast<bool>(characterParentScene.addGameObject(
+               std::move(characterParentOwner))),
+           "failed to add Character parent fixture");
+    expect(static_cast<bool>(characterParentScene.addGameObject(
+               std::move(childOwner))),
+           "failed to add Character child fixture");
+    expect(static_cast<bool>(characterParentScene.reparentGameObject(
+               *child, characterParent, Scene::ReparentMode::PreserveLocal)),
+           "Scene rejected a Character parent fixture hierarchy");
+    const Result characterAncestor =
+        physics::validateCharacterPhysicsHierarchy(*child);
+    expect(!characterAncestor && characterAncestor.error().find("Character") !=
+               std::string::npos,
+           "Character ancestor was not rejected clearly");
 }
 
 MeshInstance triangleInstance(const glm::vec3& vertex) {
@@ -1237,6 +1393,234 @@ void testPhysicsServerRejectsUnsupportedHierarchy() {
     server.shutdown();
 }
 
+void testPhysicsServerCharacterHierarchy() {
+    TestScene scene;
+    auto parentOwner = std::make_unique<GameObject>();
+    GameObject* parent = parentOwner.get();
+    parent->name = "Character Runtime Parent";
+    parent->position = {100.0f, 50.0f, -40.0f};
+    parent->rotation = {15.0f, 25.0f, 35.0f};
+
+    auto characterOwner = std::make_unique<CountingCharacter>();
+    CountingCharacter* character = characterOwner.get();
+    character->name = "Parented Runtime Character";
+    character->position = {30.0f, 300.0f, -10.0f};
+    character->rotation = {-20.0f, 10.0f, 5.0f};
+    character->desiredVelocity = {200.0f, 17.0f, -300.0f};
+
+    expect(static_cast<bool>(scene.addGameObject(std::move(parentOwner))),
+           "failed to add Character runtime parent");
+    expect(static_cast<bool>(scene.addGameObject(std::move(characterOwner))),
+           "failed to add runtime Character");
+    expect(static_cast<bool>(scene.reparentGameObject(
+               *character, parent, Scene::ReparentMode::PreserveLocal)),
+           "failed to parent runtime Character");
+
+    const glm::vec3 authoredLocalPosition = character->position;
+    const glm::vec3 expectedStartupWorldPosition =
+        glm::vec3(character->worldTransformMatrix()[3]);
+
+    PhysicsServer server;
+    expect(static_cast<bool>(server.initialize()),
+           "failed to initialize Character hierarchy PhysicsServer");
+    expect(static_cast<bool>(server.beginRuntimeSession(scene)),
+           "failed to begin parented Character physics session");
+
+    TimeTestAccess::initialize();
+    TimeTestAccess::update();
+    server.update();
+    expect(glm::length(character->position - authoredLocalPosition) <=
+               1.0e-3f,
+           "CharacterVirtual startup did not use the authored local position relative to its parent");
+    expect(character->transformResolvedCount == 1,
+           "Character physics did not resolve its initial transform");
+    expect(character->desiredVelocity == glm::vec3(200.0f, 17.0f, -300.0f),
+           "Character physics changed the world-space desired velocity");
+
+    glm::vec3 worldPosition;
+    expect(static_cast<bool>(physics::deriveCharacterWorldPosition(
+               *character, worldPosition)),
+           "failed to derive Character world position after startup");
+    expect(glm::length(worldPosition - expectedStartupWorldPosition) <=
+               1.0e-3f,
+           "CharacterVirtual startup world position did not match hierarchy composition");
+
+    const glm::vec3 localBeforeParentMovement = character->position;
+    const glm::vec3 fixedWorldPosition = worldPosition;
+    parent->position.x += 50.0f;
+    server.update();
+    expect(character->transformResolvedCount == 2,
+           "Character parent movement did not produce a resolved writeback");
+    expect(glm::length(character->position - localBeforeParentMovement) > 1.0f,
+           "Character local position did not compensate for parent movement");
+    expect(static_cast<bool>(physics::deriveCharacterWorldPosition(
+               *character, worldPosition)),
+           "failed to reconstruct Character world position after parent movement");
+    expect(glm::length(worldPosition - fixedWorldPosition) <= 1.0e-3f,
+           "CharacterVirtual was incorrectly dragged by a moving parent");
+
+    const glm::vec3 localBeforeFailure = character->position;
+    const int callbackCountBeforeFailure = character->transformResolvedCount;
+    parent->scale = {2.0f, 1.0f, 1.0f};
+    server.update();
+    expect(character->position == localBeforeFailure &&
+               transform_math::isFiniteVector(character->position),
+           "unsupported Character writeback changed authored local state");
+    expect(character->transformResolvedCount == callbackCountBeforeFailure,
+           "failed Character writeback invoked the transform-resolved callback");
+    parent->scale = glm::vec3(1.0f);
+
+    server.endRuntimeSession();
+    server.shutdown();
+}
+
+void testPhysicsServerRejectsUnsupportedCharacterHierarchy() {
+    PhysicsServer server;
+    expect(static_cast<bool>(server.initialize()),
+           "failed to initialize Character hierarchy rejection server");
+
+    TestScene scaledScene;
+    auto scaledParentOwner = std::make_unique<GameObject>();
+    GameObject* scaledParent = scaledParentOwner.get();
+    scaledParent->name = "Scaled Character Parent";
+    scaledParent->scale = {2.0f, 1.0f, 1.0f};
+    auto scaledCharacterOwner = std::make_unique<Character>();
+    Character* scaledCharacter = scaledCharacterOwner.get();
+    scaledCharacter->name = "Scaled Character Child";
+    expect(static_cast<bool>(scaledScene.addGameObject(
+               std::move(scaledParentOwner))),
+           "failed to add scaled Character parent");
+    expect(static_cast<bool>(scaledScene.addGameObject(
+               std::move(scaledCharacterOwner))),
+           "failed to add scaled Character child");
+    expect(static_cast<bool>(scaledScene.reparentGameObject(
+               *scaledCharacter, scaledParent,
+               Scene::ReparentMode::PreserveLocal)),
+           "Scene rejected scaled Character fixture hierarchy");
+    const Result scaledResult = server.beginRuntimeSession(scaledScene);
+    expect(!scaledResult && scaledResult.error().find("scale") !=
+               std::string::npos,
+           "runtime Character setup accepted a scaled ancestor");
+    expect(!server.runtimeSessionActive(),
+           "scaled Character hierarchy left a partial runtime session");
+
+    TestScene physicsAncestorScene;
+    auto physicsParentOwner = std::make_unique<GameObject>();
+    GameObject* physicsParent = physicsParentOwner.get();
+    physicsParent->name = "Physics Character Parent";
+    physicsParent->physics.enabled = true;
+    auto physicsCharacterOwner = std::make_unique<Character>();
+    Character* physicsCharacter = physicsCharacterOwner.get();
+    physicsCharacter->name = "Physics Character Child";
+    expect(static_cast<bool>(physicsAncestorScene.addGameObject(
+               std::move(physicsParentOwner))),
+           "failed to add physics Character parent");
+    expect(static_cast<bool>(physicsAncestorScene.addGameObject(
+               std::move(physicsCharacterOwner))),
+           "failed to add physics Character child");
+    expect(static_cast<bool>(physicsAncestorScene.reparentGameObject(
+               *physicsCharacter, physicsParent,
+               Scene::ReparentMode::PreserveLocal)),
+           "Scene rejected physics Character fixture hierarchy");
+    const Result physicsResult =
+        server.beginRuntimeSession(physicsAncestorScene);
+    expect(!physicsResult && physicsResult.error().find("physics enabled") !=
+               std::string::npos,
+           "runtime Character setup accepted a physics ancestor");
+    expect(!server.runtimeSessionActive(),
+           "physics Character hierarchy left a partial runtime session");
+
+    TestScene characterAncestorScene;
+    auto characterParentOwner = std::make_unique<Character>();
+    Character* characterParent = characterParentOwner.get();
+    characterParent->name = "Character Physics Parent";
+    auto characterChildOwner = std::make_unique<Character>();
+    Character* characterChild = characterChildOwner.get();
+    characterChild->name = "Character Physics Child";
+    expect(static_cast<bool>(characterAncestorScene.addGameObject(
+               std::move(characterParentOwner))),
+           "failed to add Character physics parent");
+    expect(static_cast<bool>(characterAncestorScene.addGameObject(
+               std::move(characterChildOwner))),
+           "failed to add Character physics child");
+    expect(static_cast<bool>(characterAncestorScene.reparentGameObject(
+               *characterChild, characterParent,
+               Scene::ReparentMode::PreserveLocal)),
+           "Scene rejected nested Character fixture hierarchy");
+    const Result characterResult =
+        server.beginRuntimeSession(characterAncestorScene);
+    expect(!characterResult && characterResult.error().find("Character") !=
+               std::string::npos,
+           "runtime Character setup accepted a Character ancestor");
+    expect(!server.runtimeSessionActive(),
+           "nested Character hierarchy left a partial runtime session");
+
+    server.shutdown();
+}
+
+void testPhysicsServerParentedPlayerCamera() {
+    TestScene scene;
+    auto parentOwner = std::make_unique<GameObject>();
+    GameObject* parent = parentOwner.get();
+    parent->name = "Player Camera Parent";
+    parent->position = {120.0f, 30.0f, -80.0f};
+    parent->rotation = {12.0f, -28.0f, 37.0f};
+
+    auto playerOwner = std::make_unique<Player>();
+    Player* player = playerOwner.get();
+    player->init();
+    player->position = {25.0f, 250.0f, -15.0f};
+    expect(static_cast<bool>(scene.addGameObject(std::move(parentOwner))),
+           "failed to add Player camera parent");
+    expect(static_cast<bool>(scene.addGameObject(std::move(playerOwner))),
+           "failed to add parented Player");
+    expect(static_cast<bool>(scene.reparentGameObject(
+               *player, parent, Scene::ReparentMode::PreserveLocal)),
+           "failed to parent Player");
+
+    const glm::vec3 expectedWorldPosition =
+        glm::vec3(player->worldTransformMatrix()[3]);
+    const glm::vec3 authoredLocalPosition = player->position;
+
+    PhysicsServer server;
+    expect(static_cast<bool>(server.initialize()),
+           "failed to initialize Player hierarchy PhysicsServer");
+    expect(static_cast<bool>(server.beginRuntimeSession(scene)),
+           "failed to begin parented Player physics session");
+
+    TimeTestAccess::initialize();
+    TimeTestAccess::update();
+    server.update();
+    const glm::vec3 playerWorldPosition =
+        glm::vec3(player->worldTransformMatrix()[3]);
+    expect(glm::length(player->position - authoredLocalPosition) <=
+               1.0e-3f &&
+               glm::length(playerWorldPosition - expectedWorldPosition) <=
+                   1.0e-3f,
+           "parented Player CharacterVirtual writeback changed its world position");
+    expect(glm::length(player->camera->position -
+                       (playerWorldPosition + glm::vec3(0.0f, 150.0f, 0.0f))) <=
+               1.0e-3f,
+           "parented Player camera did not follow CharacterVirtual world position");
+
+    const glm::vec3 localBeforeParentMovement = player->position;
+    parent->position.x += 50.0f;
+    server.update();
+    const glm::vec3 movedPlayerWorldPosition =
+        glm::vec3(player->worldTransformMatrix()[3]);
+    expect(glm::length(player->position - localBeforeParentMovement) > 1.0f &&
+               glm::length(movedPlayerWorldPosition - expectedWorldPosition) <=
+                   1.0e-3f,
+           "parented Player did not preserve its CharacterVirtual world position after parent movement");
+    expect(glm::length(player->camera->position -
+                       (movedPlayerWorldPosition +
+                        glm::vec3(0.0f, 150.0f, 0.0f))) <= 1.0e-3f,
+           "Player camera was dragged independently of CharacterVirtual");
+
+    server.endRuntimeSession();
+    server.shutdown();
+}
+
 void testRuntimeCharacterFloorWallAndLifecycle() {
     TestScene scene;
 
@@ -1452,6 +1836,7 @@ int main() {
     testAccumulator();
     testPhysicsUnits();
     testPhysicsHierarchyPoseHelpers();
+    testCharacterPhysicsHierarchyHelpers();
     testScaledLocalTriangleMesh();
     testConvexHullInputAndRotation();
     testShapeCenterOfMassTransform();
@@ -1467,6 +1852,9 @@ int main() {
     testPhysicsServerHierarchyStaticFollow();
     testPhysicsServerHierarchyDynamicWritebackAndEdit();
     testPhysicsServerRejectsUnsupportedHierarchy();
+    testPhysicsServerCharacterHierarchy();
+    testPhysicsServerRejectsUnsupportedCharacterHierarchy();
+    testPhysicsServerParentedPlayerCamera();
     testRuntimeCharacterFloorWallAndLifecycle();
     testDynamicPositionAndGravityWorldScale();
     testStaticTransformAndWake();

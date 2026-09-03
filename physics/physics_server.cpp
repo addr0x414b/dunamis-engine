@@ -584,14 +584,24 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
 
     accumulator_.reset();
     try {
-        // Validate every ordinary rigid body before allocating shapes or
+        // Validate every physics participant before allocating shapes or
         // bodies so unsupported hierarchy configurations fail atomically.
         for (const std::unique_ptr<GameObject>& objectOwner :
              runtimeScene.gameObjects()) {
             if (!objectOwner) continue;
             GameObject& object = *objectOwner;
-            if (dynamic_cast<Character*>(&object) != nullptr ||
-                !object.physics.enabled) {
+            if (auto* character = dynamic_cast<Character*>(&object)) {
+                const Result hierarchyResult =
+                    physics::validateCharacterPhysicsHierarchy(*character);
+                if (!hierarchyResult) {
+                    return Result::failure(
+                        "Unsupported character hierarchy for " +
+                        objectDescription(*character) + ": " +
+                        hierarchyResult.error());
+                }
+                continue;
+            }
+            if (!object.physics.enabled) {
                 continue;
             }
             const Result configuration = validateRigidBodyConfiguration(object);
@@ -723,6 +733,18 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                 return Result::failure("Character capsule dimensions must be finite, positive, and taller than its diameter");
             }
 
+            glm::vec3 worldPosition;
+            const Result worldPositionResult =
+                physics::deriveCharacterWorldPosition(*character,
+                                                       worldPosition);
+            if (!worldPositionResult) {
+                endRuntimeSession();
+                return Result::failure(
+                    "Failed to derive character world position for " +
+                    objectDescription(*character) + ": " +
+                    worldPositionResult.error());
+            }
+
             physics::CookedShape cooked;
             Result shapeBuild = physics::buildCharacterShape(*character, cooked);
             if (!shapeBuild) {
@@ -740,7 +762,7 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
             characterSettings.mBackFaceMode = JPH::EBackFaceMode::IgnoreBackFaces;
             JPH::Ref<JPH::CharacterVirtual> virtualCharacter =
                 new JPH::CharacterVirtual(&characterSettings,
-                                          physics::toJoltPosition(character->position),
+                                          physics::toJoltPosition(worldPosition),
                                           JPH::Quat::sIdentity(),
                                           impl_->physicsSystem.get());
             impl_->runtimeCharacters.push_back(
@@ -927,10 +949,29 @@ void PhysicsServer::update() {
         }
         const JPH::RVec3 position =
             runtimeCharacter.virtualCharacter->GetPosition();
-        runtimeCharacter.object->position = physics::metersToDunamis(
-            glm::vec3(static_cast<float>(position.GetX()),
-                      static_cast<float>(position.GetY()),
-                      static_cast<float>(position.GetZ())));
+        const glm::vec3 worldPosition = physics::metersToDunamis(glm::vec3(
+            static_cast<float>(position.GetX()),
+            static_cast<float>(position.GetY()),
+            static_cast<float>(position.GetZ())));
+        if (!transform_math::isFiniteVector(worldPosition)) {
+            spdlog::error(
+                "Character physics produced a non-finite world position for {}",
+                objectDescription(*runtimeCharacter.object));
+            continue;
+        }
+
+        glm::vec3 localPosition;
+        const Result localResult =
+            physics::deriveCharacterLocalPositionFromPhysicsWorld(
+                *runtimeCharacter.object, worldPosition, localPosition);
+        if (!localResult) {
+            spdlog::error(
+                "Character physics world-to-local writeback failed for {}: {}",
+                objectDescription(*runtimeCharacter.object),
+                localResult.error());
+            continue;
+        }
+        runtimeCharacter.object->position = localPosition;
         runtimeCharacter.object->onPhysicsTransformResolved();
     }
 }

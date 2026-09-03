@@ -6,6 +6,7 @@
 #include "../core/result.h"
 
 class GameObject;
+class Character;
 
 namespace physics {
 
@@ -41,6 +42,18 @@ struct PhysicsWorldPose {
 [[nodiscard]] Result deriveLocalPoseFromPhysicsWorld(
     const GameObject& object, const glm::mat4& worldMatrix,
     glm::vec3& localPosition, glm::vec3& localRotation);
+
+// CharacterVirtual is position-driven and operates in world space. Character
+// position remains authored in the local space of its GameObject parent.
+[[nodiscard]] Result validateCharacterPhysicsHierarchy(
+    const Character& character);
+
+[[nodiscard]] Result deriveCharacterWorldPosition(
+    const Character& character, glm::vec3& worldPosition);
+
+[[nodiscard]] Result deriveCharacterLocalPositionFromPhysicsWorld(
+    const Character& character, const glm::vec3& worldPosition,
+    glm::vec3& localPosition);
 
 }  // namespace physics
 

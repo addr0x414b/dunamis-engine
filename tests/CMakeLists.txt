@@ -45,7 +45,7 @@ add_test(NAME time_semantics COMMAND TimeTests)
 
 add_executable(PhysicsTests physics_tests.cpp)
 target_include_directories(PhysicsTests PRIVATE ${CMAKE_SOURCE_DIR})
-target_link_libraries(PhysicsTests PRIVATE Physics Jolt glm spdlog Threads::Threads)
+target_link_libraries(PhysicsTests PRIVATE Physics Player Jolt glm spdlog Threads::Threads)
 add_test(NAME physics_backend COMMAND PhysicsTests)
 
 add_executable(PhysicsDebugRendererTests physics_debug_renderer_tests.cpp)

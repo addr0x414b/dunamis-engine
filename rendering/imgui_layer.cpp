@@ -32,6 +32,7 @@
 #include "../editor/editor_picking.h"
 #include "../editor/editor_transform.h"
 #include "../editor/editor_session.h"
+#include "../physics/physics_transforms.h"
 #include "../scene/character.h"
 #include "../scene/directional_light.h"
 #include "../scene/game_object.h"
@@ -1596,9 +1597,15 @@ void ImGuiLayer::drawCharacterVisualization(
 
     const float height = character.capsuleHeight;
     const float radius = character.capsuleRadius;
-    if (!isFiniteVector(character.position) || !std::isfinite(height) ||
-        !std::isfinite(radius) || radius <= 0.0f ||
+    if (!std::isfinite(height) || !std::isfinite(radius) || radius <= 0.0f ||
         height <= 2.0f * radius) {
+        return;
+    }
+
+    glm::vec3 characterWorldPosition;
+    const Result worldPositionResult =
+        physics::deriveCharacterWorldPosition(character, characterWorldPosition);
+    if (!worldPositionResult || !isFiniteVector(characterWorldPosition)) {
         return;
     }
 
@@ -1607,7 +1614,7 @@ void ImGuiLayer::drawCharacterVisualization(
     const float diagonalRadius =
         radius * characterVisualizationDiagonalRatio;
     const glm::vec3 capsuleCenter =
-        character.position + glm::vec3(0.0f, 0.5f * height, 0.0f);
+        characterWorldPosition + glm::vec3(0.0f, 0.5f * height, 0.0f);
     if (!isFiniteVector(capsuleCenter) ||
         !std::isfinite(lowerHemisphereCenterY) ||
         !std::isfinite(upperHemisphereCenterY) ||
@@ -1641,7 +1648,7 @@ void ImGuiLayer::drawCharacterVisualization(
             firstScreen, secondScreen};
     };
     const auto ringPoint = [&](float y, float ringRadius, float angle) {
-        return character.position + glm::vec3(
+        return characterWorldPosition + glm::vec3(
             std::cos(angle) * ringRadius, y,
             std::sin(angle) * ringRadius);
     };
@@ -1684,7 +1691,7 @@ void ImGuiLayer::drawCharacterVisualization(
         for (std::size_t profileIndex = 0;
              profileIndex < meridianProfile.size(); ++profileIndex) {
             const glm::vec2& profilePoint = meridianProfile[profileIndex];
-            meridianPoints[profileIndex] = character.position + glm::vec3(
+            meridianPoints[profileIndex] = characterWorldPosition + glm::vec3(
                 profilePoint.x * axisX, profilePoint.y,
                 profilePoint.x * axisZ);
         }

@@ -5467,9 +5467,18 @@ Result VulkanContext::preparePhysicsDebugDraws(Scene* scene, SceneRunState runSt
             error);
         if (cooked == nullptr || cooked->shape == nullptr) continue;
 
-        glm::vec3 bodyPosition = object.position;
-        glm::vec3 bodyRotation = object.rotation;
-        if (!character) {
+        glm::vec3 bodyPosition;
+        glm::vec3 bodyRotation{0.0f};
+        if (character) {
+            const Result positionResult = physics::deriveCharacterWorldPosition(
+                static_cast<const Character&>(object), bodyPosition);
+            if (!positionResult) {
+                spdlog::warn(
+                    "Skipping character collider debug draw for {}: {}",
+                    object.name, positionResult.error());
+                continue;
+            }
+        } else {
             physics::PhysicsWorldPose worldPose;
             const Result poseResult =
                 physics::derivePhysicsWorldPose(object, worldPose);

@@ -1,6 +1,7 @@
 #include "physics_transforms.h"
 
 #include "../math/transform_math.h"
+#include "../scene/character.h"
 #include "../scene/game_object.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
@@ -80,7 +81,8 @@ Result validateObjectTransform(const GameObject& object,
 }
 
 Result makeValidatedParentWorld(const GameObject& object,
-                                glm::mat4& parentWorld) {
+                                glm::mat4& parentWorld,
+                                bool rejectCharacterAncestors) {
     parentWorld = glm::mat4(1.0f);
     std::vector<const GameObject*> ancestors;
     std::unordered_set<const GameObject*> visited;
@@ -97,6 +99,12 @@ Result makeValidatedParentWorld(const GameObject& object,
             return Result::failure(
                 "Physics hierarchy ancestor " + objectDescription(*ancestor) +
                 " has non-finite transform data");
+        }
+        if (rejectCharacterAncestors &&
+            dynamic_cast<const Character*>(ancestor) != nullptr) {
+            return Result::failure(
+                "Physics hierarchy ancestor " + objectDescription(*ancestor) +
+                " is a Character; attached Character physics is unsupported");
         }
         if (ancestor->physics.enabled) {
             return Result::failure(
@@ -134,14 +142,16 @@ Result makeValidatedParentWorld(const GameObject& object,
 Result makePhysicsWorldMatrix(const GameObject& object,
                               const glm::vec3& localPosition,
                               const glm::vec3& localRotation,
-                              glm::mat4& worldMatrix) {
+                              glm::mat4& worldMatrix,
+                              bool rejectCharacterAncestors = false) {
     worldMatrix = glm::mat4(1.0f);
     const Result objectResult =
         validateObjectTransform(object, localPosition, localRotation);
     if (!objectResult) return objectResult;
 
     glm::mat4 parentWorld;
-    const Result parentResult = makeValidatedParentWorld(object, parentWorld);
+    const Result parentResult = makeValidatedParentWorld(
+        object, parentWorld, rejectCharacterAncestors);
     if (!parentResult) return parentResult;
 
     worldMatrix = parentWorld * transform_math::makeModelMatrix(
@@ -226,7 +236,8 @@ Result calculateSafeInverse(const glm::mat4& matrix, glm::mat4& inverse) {
 Result deriveLocalPoseFromWorldMatrixImpl(const GameObject& object,
                                           const glm::mat4& worldMatrix,
                                           glm::vec3& localPosition,
-                                          glm::vec3& localRotation) {
+                                          glm::vec3& localRotation,
+                                          bool rejectCharacterAncestors = false) {
     localPosition = {};
     localRotation = {};
     if (!isRigidTransform(worldMatrix)) {
@@ -239,7 +250,8 @@ Result deriveLocalPoseFromWorldMatrixImpl(const GameObject& object,
         object, object.position, object.rotation);
     if (!objectResult) return objectResult;
     glm::mat4 parentWorld;
-    const Result parentResult = makeValidatedParentWorld(object, parentWorld);
+    const Result parentResult = makeValidatedParentWorld(
+        object, parentWorld, rejectCharacterAncestors);
     if (!parentResult) return parentResult;
 
     glm::mat4 inverseParent;
@@ -327,6 +339,66 @@ Result deriveLocalPoseFromPhysicsWorld(const GameObject& object,
                                        glm::vec3& localRotation) {
     return deriveLocalPoseFromWorldMatrixImpl(
         object, worldMatrix, localPosition, localRotation);
+}
+
+Result validateCharacterPhysicsHierarchy(const Character& character) {
+    glm::vec3 worldPosition;
+    return deriveCharacterWorldPosition(character, worldPosition);
+}
+
+Result deriveCharacterWorldPosition(const Character& character,
+                                    glm::vec3& worldPosition) {
+    worldPosition = {};
+    glm::mat4 worldMatrix;
+    const Result result = makePhysicsWorldMatrix(
+        character, character.position, character.rotation, worldMatrix, true);
+    if (!result) return result;
+
+    worldPosition = glm::vec3(worldMatrix[3]);
+    if (!transform_math::isFiniteVector(worldPosition)) {
+        worldPosition = {};
+        return Result::failure(
+            "Character physics world position is not finite");
+    }
+    return Result::success();
+}
+
+Result deriveCharacterLocalPositionFromPhysicsWorld(
+    const Character& character, const glm::vec3& worldPosition,
+    glm::vec3& localPosition) {
+    localPosition = {};
+    if (!transform_math::isFiniteVector(worldPosition)) {
+        return Result::failure(
+            "Character physics world position input must be finite");
+    }
+
+    const Result objectResult = validateObjectTransform(
+        character, character.position, character.rotation);
+    if (!objectResult) return objectResult;
+
+    glm::mat4 parentWorld;
+    const Result parentResult = makeValidatedParentWorld(
+        character, parentWorld, true);
+    if (!parentResult) return parentResult;
+
+    glm::mat4 inverseParent;
+    const Result inverseResult = calculateSafeInverse(parentWorld, inverseParent);
+    if (!inverseResult) return inverseResult;
+
+    glm::vec4 candidateLocal = inverseParent * glm::vec4(worldPosition, 1.0f);
+    if (!std::isfinite(candidateLocal.w) ||
+        std::fabs(candidateLocal.w) <= std::numeric_limits<float>::epsilon()) {
+        return Result::failure(
+            "Character physics world-to-local conversion produced an invalid homogeneous position");
+    }
+    candidateLocal /= candidateLocal.w;
+    localPosition = glm::vec3(candidateLocal);
+    if (!transform_math::isFiniteVector(localPosition)) {
+        localPosition = {};
+        return Result::failure(
+            "Character physics world-to-local conversion produced non-finite local state");
+    }
+    return Result::success();
 }
 
 }  // namespace physics
