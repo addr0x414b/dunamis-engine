@@ -1,19 +1,19 @@
 {
   "activeCamera": {
     "kind": "attached",
-    "ownerId": "1ce6aa20-216e-47e7-899d-b0e8cd239e57"
+    "ownerId": "9e99aa9d-990d-4c3d-b666-6603e509cf22"
   },
   "editor": {
     "camera": {
       "front": [
-        0.001509892288595438,
-        -0.501510739326477,
-        -0.8651500940322876
+        0.025442972779273987,
+        -0.23514211177825928,
+        -0.971627950668335
       ],
       "position": [
-        233.1830596923828,
-        505.8085021972656,
-        456.7598876953125
+        7.891529560089111,
+        145.40797424316406,
+        363.2830810546875
       ],
       "up": [
         0.0,
@@ -23,10 +23,11 @@
     },
     "renderColliders": []
   },
-  "formatVersion": 1,
+  "formatVersion": 2,
   "objects": [
     {
-      "id": "4929b4c4-0a9a-4981-b0fb-a48e04e96d3e",
+      "id": "b9eca107-5cb8-401a-a6d8-6693093791dc",
+      "parentId": null,
       "properties": {
         "modelPath": "game/assets/city-scene/source/city.fbx",
         "name": "City",
@@ -37,9 +38,9 @@
           "sphereRadius": 0.5
         },
         "position": [
-          712.3553466796875,
-          -42.51869201660156,
-          -148.54710388183594
+          245.32705688476563,
+          0.0,
+          -26.541275024414063
         ],
         "rotation": [
           0.0,
@@ -47,16 +48,17 @@
           0.0
         ],
         "scale": [
-          3.5,
-          3.5,
-          3.5
+          1.0,
+          1.0,
+          1.0
         ],
         "texturePath": ""
       },
       "type": "GameObject"
     },
     {
-      "id": "2a1c2d19-10c4-46b0-8302-7bc1c72bdb82",
+      "id": "01cbcbc7-aa2e-4d4c-9751-7d8b512715ff",
+      "parentId": null,
       "properties": {
         "modelPath": "game/assets/models/glTF-Sample-Assets/Models/Fox/glTF/Fox.gltf",
         "name": "Fox",
@@ -86,7 +88,8 @@
       "type": "GameObject"
     },
     {
-      "id": "c2907c4e-916b-44a7-86be-583cace98409",
+      "id": "277e47f2-d629-49d8-bd4f-6ac36a92b95b",
+      "parentId": null,
       "properties": {
         "modelPath": "game/assets/models/glTF-Sample-Assets/Models/PotOfCoals/glTF/PotOfCoals.gltf",
         "name": "Pot",
@@ -116,7 +119,8 @@
       "type": "GameObject"
     },
     {
-      "id": "69228e13-472d-46a0-8a44-c67f944b6332",
+      "id": "8716346c-e710-4d84-baa0-e14891496eb1",
+      "parentId": null,
       "properties": {
         "modelPath": "game/assets/models/glTF-Sample-Assets/Models/BrainStem/glTF/BrainStem.gltf",
         "name": "Brah",
@@ -146,7 +150,8 @@
       "type": "GameObject"
     },
     {
-      "id": "9810e3f2-2557-4d24-a6b4-38a4dc42432a",
+      "id": "c939452a-a762-4cc5-9454-7b1571e2a0ba",
+      "parentId": null,
       "properties": {
         "modelPath": "game/assets/models/Avocado.glb",
         "name": "Physics Test Avocado",
@@ -176,14 +181,15 @@
       "type": "GameObject"
     },
     {
-      "id": "013c715c-0d8d-483f-afe9-d471969b0625",
+      "id": "085657c8-594e-4665-bd82-39ebfd9f41dd",
+      "parentId": null,
       "properties": {
         "color": [
           1.0,
           1.0,
           1.0
         ],
-        "intensity": 1.0,
+        "intensity": 16.0,
         "modelPath": "",
         "name": "Direc Light",
         "physics": {
@@ -198,9 +204,9 @@
           100.0
         ],
         "rotation": [
-          0.0,
-          0.0,
-          0.0
+          30.03217887878418,
+          -73.03482055664063,
+          -7.517698287963867
         ],
         "scale": [
           200.0,
@@ -221,14 +227,15 @@
       "type": "DirectionalLight"
     },
     {
-      "id": "efaddc20-3398-4164-afb3-2077ee5591c4",
+      "id": "f1ba0432-f272-48a8-b928-72f26de8af75",
+      "parentId": null,
       "properties": {
         "color": [
-          0.663672924041748,
-          0.6911764740943909,
-          0.22361592948436737
+          1.0,
+          1.0,
+          1.0
         ],
-        "intensity": 5000.0,
+        "intensity": 100.0,
         "modelPath": "",
         "name": "Point Light",
         "physics": {
@@ -238,9 +245,9 @@
           "sphereRadius": 0.5
         },
         "position": [
-          306.5044860839844,
-          315.4610290527344,
-          -147.75454711914063
+          250.0,
+          20.0,
+          100.0
         ],
         "rotation": [
           0.0,
@@ -265,9 +272,9 @@
           -1.0
         ],
         "position": [
-          0.0,
-          150.0,
-          0.0
+          -68.21878051757813,
+          227.87411499023438,
+          210.87411499023438
         ],
         "up": [
           0.0,
@@ -275,7 +282,8 @@
           0.0
         ]
       },
-      "id": "1ce6aa20-216e-47e7-899d-b0e8cd239e57",
+      "id": "9e99aa9d-990d-4c3d-b666-6603e509cf22",
+      "parentId": null,
       "properties": {
         "capsuleHeight": 180.0,
         "capsuleRadius": 35.0,
@@ -288,9 +296,9 @@
           "sphereRadius": 0.5
         },
         "position": [
-          0.0,
-          0.0,
-          0.0
+          -68.21878051757813,
+          77.87415313720703,
+          210.87411499023438
         ],
         "rotation": [
           0.0,

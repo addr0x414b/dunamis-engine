@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace {
@@ -197,7 +198,16 @@ Result SceneSerializer::serializeObject(const GameObject& object,
         return Result::failure("Object '" + object.persistentId +
                                "' has an unregistered C++ type");
     }
-    output = {{"id", object.persistentId}, {"type", type->name},
+    const GameObject* parent = object.parent();
+    if (parent != nullptr && parent->persistentId.empty()) {
+        return Result::failure("Object '" + object.persistentId +
+                               "' has a parent without a persistent ID");
+    }
+    output = {{"id", object.persistentId},
+              {"parentId", parent == nullptr
+                               ? nlohmann::json(nullptr)
+                               : nlohmann::json(parent->persistentId)},
+              {"type", type->name},
               {"properties", nlohmann::json::object()}};
     for (const PropertyDescriptor* property : registry.persistedProperties(*type)) {
         nlohmann::json value;
@@ -300,7 +310,7 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
             return Result::failure("Scene document requires integer formatVersion");
         }
         const int version = document.at("formatVersion").get<int>();
-        if (version != formatVersion) {
+        if (version != 1 && version != formatVersion) {
             return Result::failure("Unsupported scene formatVersion " + std::to_string(version));
         }
         if (!document.contains("scene") || !document.at("scene").is_object()) {
@@ -332,7 +342,15 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
         if (!document.contains("objects") || !document.at("objects").is_array()) {
             return Result::failure("Scene document requires an objects array");
         }
+        struct PendingHierarchy {
+            GameObject* object = nullptr;
+            std::optional<std::string> parentId;
+        };
+
         std::unordered_set<std::string> savedIds;
+        std::unordered_map<std::string, GameObject*> savedObjects;
+        std::vector<PendingHierarchy> pendingHierarchy;
+        pendingHierarchy.reserve(document.at("objects").size());
         for (const auto& record : document.at("objects")) {
             if (!record.is_object() || !record.contains("id") ||
                 !record.at("id").is_string() ||
@@ -343,6 +361,24 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
             if (!savedIds.insert(id).second) {
                 return Result::failure("Duplicate persistent ID '" + id + "'");
             }
+
+            std::optional<std::string> parentId;
+            if (version == formatVersion) {
+                if (!record.contains("parentId")) {
+                    return Result::failure("Object '" + id +
+                                           "' is missing parentId");
+                }
+                const auto& parent = record.at("parentId");
+                if (!parent.is_null()) {
+                    if (!parent.is_string() || parent.get<std::string>().empty()) {
+                        return Result::failure(
+                            "Object '" + id +
+                            "' parentId must be null or a non-empty string");
+                    }
+                    parentId = parent.get<std::string>();
+                }
+            }
+
             if (!record.contains("type") || !record.at("type").is_string()) {
                 return Result::failure("Object '" + id + "' requires a string type");
             }
@@ -382,6 +418,55 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
                                                       "' has saved attached-camera data but no attached camera");
                 result = decodeAttachedCamera(record.at("attachedCamera"), *attached);
                 if (!result) return Result::failure("Invalid attached camera on object '" + id + "': " + result.error());
+            }
+
+            savedObjects.emplace(id, object);
+            pendingHierarchy.push_back({object, std::move(parentId)});
+        }
+
+        if (version == 1 || version == formatVersion) {
+            for (const PendingHierarchy& pending : pendingHierarchy) {
+                if (pending.object == nullptr || pending.object->parent() == nullptr) {
+                    continue;
+                }
+                result = candidate.reparentGameObject(
+                    *pending.object, nullptr, Scene::ReparentMode::PreserveLocal);
+                if (!result) {
+                    return Result::failure(
+                        "Failed to clear existing hierarchy for object '" +
+                        pending.object->persistentId + "': " + result.error());
+                }
+            }
+
+        }
+
+        if (version == formatVersion) {
+            for (const PendingHierarchy& pending : pendingHierarchy) {
+                if (pending.object == nullptr) {
+                    return Result::failure("Loaded object hierarchy contains a null object");
+                }
+
+                const std::string& childId = pending.object->persistentId;
+                GameObject* parent = nullptr;
+                if (pending.parentId.has_value()) {
+                    const auto parentIt = savedObjects.find(*pending.parentId);
+                    if (parentIt == savedObjects.end()) {
+                        return Result::failure(
+                            "Object '" + childId + "' references missing parent '" +
+                            *pending.parentId + "'");
+                    }
+                    parent = parentIt->second;
+                }
+
+                if (pending.object->parent() != parent) {
+                    result = candidate.reparentGameObject(
+                        *pending.object, parent, Scene::ReparentMode::PreserveLocal);
+                    if (!result) {
+                        return Result::failure(
+                            "Failed to restore hierarchy for object '" + childId +
+                            "': " + result.error());
+                    }
+                }
             }
         }
 

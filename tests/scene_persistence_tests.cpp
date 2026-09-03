@@ -7,12 +7,14 @@
 
 #include <chrono>
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 
 namespace {
 
@@ -136,6 +138,25 @@ bool expect(bool condition, const std::string& message) {
     return condition;
 }
 
+bool sameVector(const glm::vec3& left, const glm::vec3& right,
+                float epsilon = 1.0e-5f) {
+    return std::fabs(left.x - right.x) <= epsilon &&
+           std::fabs(left.y - right.y) <= epsilon &&
+           std::fabs(left.z - right.z) <= epsilon;
+}
+
+bool sameMatrix(const glm::mat4& left, const glm::mat4& right,
+                float epsilon = 1.0e-5f) {
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            if (std::fabs(left[column][row] - right[column][row]) > epsilon) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 nlohmann::json readSceneDocument(const std::filesystem::path& path) {
     std::ifstream stream(path, std::ios::binary);
     nlohmann::json document;
@@ -149,6 +170,13 @@ const nlohmann::json* findObjectRecord(
         if (object.at("id") == persistentId) return &object;
     }
     return nullptr;
+}
+
+GameObject* addPlainObject(Scene& scene, const std::string& persistentId) {
+    auto object = std::make_unique<GameObject>();
+    object->persistentId = persistentId;
+    GameObject* pointer = object.get();
+    return scene.addGameObject(std::move(object)) ? pointer : nullptr;
 }
 
 TypeRegistry makeRegistry(bool& passed) {
@@ -181,6 +209,7 @@ bool registryTests() {
         registry.findProperty(*custom, "runtimeOnly");
     const PropertyDescriptor* transferOnly =
         registry.findProperty(*custom, "transferOnlyValue");
+    const TypeDescriptor* gameObject = registry.find("GameObject");
     passed &= expect(contains(persisted, "position") &&
                          contains(persisted, "spinSpeed") &&
                          !contains(persisted, "runtimeOnly") &&
@@ -199,7 +228,8 @@ bool registryTests() {
                          transferOnly->lifecycle ==
                              PropertyLifecycle::RuntimeTransferOnly &&
                          !transferOnly->read && !transferOnly->write &&
-                         transferOnly->copy,
+                         transferOnly->copy && gameObject &&
+                         registry.findProperty(*gameObject, "parentId") == nullptr,
                      "property lifecycle filtering or inheritance failed");
 
     const TypeDescriptor* cameraType = registry.find("Camera");
@@ -285,6 +315,11 @@ bool serializerTests() {
     auto* sourceCamera = static_cast<Camera*>(source.findGameObject("camera"));
     auto* sourceCustom = static_cast<CustomObject*>(
         source.findGameObject("custom"));
+    const Result sourceParenting = source.reparentGameObject(
+        *sourceCustom, source.findGameObject("base"),
+        Scene::ReparentMode::PreserveLocal);
+    passed &= expect(static_cast<bool>(sourceParenting),
+                     "could not create serializer hierarchy fixture");
     sourceCustom->physics.enabled = true;
     sourceCustom->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
     sourceCustom->physics.colliderType = GameObject::PhysicsColliderType::Sphere;
@@ -297,7 +332,7 @@ bool serializerTests() {
     nlohmann::json document;
     Result result = SceneSerializer::serializeFull(source, registry, editor, document);
     passed &= expect(static_cast<bool>(result), "full scene serialization failed: " + result.error());
-    passed &= expect(document["formatVersion"] == 1 &&
+    passed &= expect(document["formatVersion"] == 2 &&
                          document["editor"].contains("camera"),
                      "version/editor camera were not serialized");
     const auto customRecord = *std::find_if(
@@ -306,7 +341,10 @@ bool serializerTests() {
     const auto cameraRecord = *std::find_if(
         document["objects"].begin(), document["objects"].end(),
         [](const auto& object) { return object["id"] == "camera"; });
-    passed &= expect(customRecord["properties"].contains("position") &&
+    const nlohmann::json* baseRecord = findObjectRecord(document, "base");
+    passed &= expect(customRecord["parentId"] == "base" && baseRecord &&
+                         baseRecord->at("parentId").is_null() &&
+                         customRecord["properties"].contains("position") &&
                          customRecord["properties"].contains("spinSpeed") &&
                          !customRecord["properties"].contains("runtimeOnly") &&
                          !customRecord["properties"].contains("transferOnlyValue") &&
@@ -354,11 +392,29 @@ bool serializerTests() {
             restored->physics.colliderType == GameObject::PhysicsColliderType::Sphere &&
             restored->physics.sphereRadius == 4.25f,
         "authored physics configuration did not survive serialize/load");
+    passed &= expect(restored && restored->parent() == candidate.findGameObject("base"),
+                     "object hierarchy did not survive serialize/load");
     passed &= expect(candidate.findGameObject("base")->authoredTexturePath() ==
                          "textures/override.png",
                      "logical texture override path did not round trip");
     passed &= expect(load.editorCamera && load.editorCamera->position.x == 11.0f,
                      "editor camera did not round trip");
+
+    nlohmann::json v1 = document;
+    v1["formatVersion"] = 1;
+    for (auto& object : v1["objects"]) {
+        object.erase("parentId");
+        if (object.at("id") == "custom") object["parentId"] = "base";
+    }
+    EmptyScene v1Candidate;
+    SceneLoadData v1Load;
+    result = SceneSerializer::applyDocument(v1, v1Candidate, registry, v1Load);
+    const GameObject* v1Custom = v1Candidate.findGameObject("custom");
+    const Camera* v1Camera =
+        dynamic_cast<const Camera*>(v1Candidate.findGameObject("camera"));
+    passed &= expect(result && v1Custom && v1Custom->parent() == nullptr &&
+                         v1Camera && v1Candidate.activeCamera() == v1Camera,
+                     "v1 scene did not load as roots or restore active camera");
 
     nlohmann::json unknownProperty = document;
     unknownProperty["objects"][0]["properties"]["futureProperty"] = 5;
@@ -417,7 +473,7 @@ bool serializerTests() {
                      "wrong property type was accepted");
 
     nlohmann::json unsupported = document;
-    unsupported["formatVersion"] = 2;
+    unsupported["formatVersion"] = 3;
     EmptyScene versionCandidate;
     result = SceneSerializer::applyDocument(unsupported, versionCandidate, registry, ignored);
     passed &= expect(!result, "unsupported format version was accepted");
@@ -473,6 +529,303 @@ bool serializerTests() {
     return passed;
 }
 
+bool hierarchyPersistenceTests() {
+    bool passed = true;
+    TypeRegistry registry = makeRegistry(passed);
+    EmptyScene source;
+    GameObject* root = addPlainObject(source, "root");
+    GameObject* child = addPlainObject(source, "child");
+    GameObject* grandchild = addPlainObject(source, "grandchild");
+    if (!root || !child || !grandchild) {
+        return expect(false, "could not create hierarchy persistence fixture");
+    }
+
+    root->position = {20.0f, -3.0f, 11.0f};
+    root->rotation = {15.0f, 25.0f, -35.0f};
+    root->scale = {2.0f, 1.5f, 0.75f};
+    child->position = {-4.0f, 7.0f, 2.5f};
+    child->rotation = {-10.0f, 35.0f, 12.0f};
+    child->scale = {0.5f, 2.0f, 1.25f};
+    grandchild->position = {3.0f, -6.0f, 1.0f};
+    grandchild->rotation = {5.0f, -15.0f, 22.0f};
+    grandchild->scale = {1.1f, 0.8f, 1.4f};
+    const Result parenting =
+        source.reparentGameObject(*child, root, Scene::ReparentMode::PreserveLocal);
+    const Result grandparenting = source.reparentGameObject(
+        *grandchild, child, Scene::ReparentMode::PreserveLocal);
+    passed &= expect(parenting && grandparenting,
+                     "could not establish multi-level hierarchy fixture");
+
+    const glm::vec3 childLocalPosition = child->position;
+    const glm::vec3 childLocalRotation = child->rotation;
+    const glm::vec3 childLocalScale = child->scale;
+    const glm::vec3 grandchildLocalPosition = grandchild->position;
+    const glm::vec3 grandchildLocalRotation = grandchild->rotation;
+    const glm::vec3 grandchildLocalScale = grandchild->scale;
+    const glm::mat4 childWorld = child->worldTransformMatrix();
+    const glm::mat4 grandchildWorld = grandchild->worldTransformMatrix();
+
+    nlohmann::json document;
+    Result result = SceneSerializer::serializeAuthored(source, registry, document);
+    const nlohmann::json* rootRecord = result
+        ? findObjectRecord(document, "root")
+        : nullptr;
+    const nlohmann::json* childRecord = result
+        ? findObjectRecord(document, "child")
+        : nullptr;
+    const nlohmann::json* grandchildRecord = result
+        ? findObjectRecord(document, "grandchild")
+        : nullptr;
+    passed &= expect(
+        result && document.at("formatVersion") == 2 && rootRecord && childRecord &&
+            grandchildRecord && rootRecord->at("parentId").is_null() &&
+            childRecord->at("parentId") == "root" &&
+            grandchildRecord->at("parentId") == "child",
+        "v2 hierarchy records did not serialize structural parentId values");
+
+    EmptyScene candidate;
+    SceneLoadData load;
+    result = result
+        ? SceneSerializer::applyDocument(document, candidate, registry, load)
+        : Result::failure("hierarchy document could not be serialized");
+    const GameObject* loadedRoot = candidate.findGameObject("root");
+    const GameObject* loadedChild = candidate.findGameObject("child");
+    const GameObject* loadedGrandchild = candidate.findGameObject("grandchild");
+    passed &= expect(
+        result && loadedRoot && loadedChild && loadedGrandchild &&
+            loadedRoot->parent() == nullptr && loadedChild->parent() == loadedRoot &&
+            loadedGrandchild->parent() == loadedChild &&
+            sameVector(loadedChild->position, childLocalPosition) &&
+            sameVector(loadedChild->rotation, childLocalRotation) &&
+            sameVector(loadedChild->scale, childLocalScale) &&
+            sameVector(loadedGrandchild->position, grandchildLocalPosition) &&
+            sameVector(loadedGrandchild->rotation, grandchildLocalRotation) &&
+            sameVector(loadedGrandchild->scale, grandchildLocalScale) &&
+            sameMatrix(loadedChild->worldTransformMatrix(), childWorld) &&
+            sameMatrix(loadedGrandchild->worldTransformMatrix(), grandchildWorld) &&
+            std::find(loadedRoot->children().begin(), loadedRoot->children().end(),
+                      loadedChild) != loadedRoot->children().end() &&
+            std::find(loadedChild->children().begin(), loadedChild->children().end(),
+                      loadedGrandchild) != loadedChild->children().end(),
+        "multi-level hierarchy did not preserve local or world transforms");
+
+    nlohmann::json reordered = document;
+    EmptyScene reorderedCandidate;
+    SceneLoadData reorderedLoad;
+    if (rootRecord && childRecord && grandchildRecord) {
+        reordered["objects"] = nlohmann::json::array();
+        reordered["objects"].push_back(*grandchildRecord);
+        reordered["objects"].push_back(*rootRecord);
+        reordered["objects"].push_back(*childRecord);
+        result = SceneSerializer::applyDocument(
+            reordered, reorderedCandidate, registry, reorderedLoad);
+    } else {
+        result = Result::failure("hierarchy records were not available for ordering test");
+    }
+    const GameObject* reorderedChild =
+        reorderedCandidate.findGameObject("child");
+    const GameObject* reorderedGrandchild =
+        reorderedCandidate.findGameObject("grandchild");
+    passed &= expect(
+        result && reorderedChild && reorderedGrandchild &&
+            reorderedChild->parent() == reorderedCandidate.findGameObject("root") &&
+            reorderedGrandchild->parent() == reorderedChild,
+        "child-before-parent JSON ordering was not supported");
+
+    nlohmann::json legacyDocument = document;
+    legacyDocument["formatVersion"] = 1;
+    for (auto& object : legacyDocument["objects"]) object.erase("parentId");
+    EmptyScene legacyCandidate;
+    GameObject* legacyRoot = addPlainObject(legacyCandidate, "root");
+    GameObject* legacyChild = addPlainObject(legacyCandidate, "child");
+    GameObject* legacyGrandchild = addPlainObject(legacyCandidate, "grandchild");
+    const Result legacyParenting = legacyRoot && legacyChild && legacyGrandchild
+        ? legacyCandidate.reparentGameObject(
+              *legacyChild, legacyRoot, Scene::ReparentMode::PreserveLocal)
+        : Result::failure("legacy candidate hierarchy fixture was incomplete");
+    const Result legacyGrandparenting = legacyParenting
+        ? legacyCandidate.reparentGameObject(
+              *legacyGrandchild, legacyChild, Scene::ReparentMode::PreserveLocal)
+        : Result::failure("legacy candidate hierarchy fixture was incomplete");
+    SceneLoadData legacyLoad;
+    result = legacyGrandparenting
+        ? SceneSerializer::applyDocument(
+              legacyDocument, legacyCandidate, registry, legacyLoad)
+        : legacyGrandparenting;
+    bool legacyObjectsAreRoots = static_cast<bool>(result);
+    if (result) {
+        for (const auto& object : legacyCandidate.gameObjects()) {
+            legacyObjectsAreRoots &= object->parent() == nullptr;
+        }
+    }
+    passed &= expect(result && legacyObjectsAreRoots,
+                     "v1 load did not clear a candidate hierarchy");
+
+    nlohmann::json extensible = document;
+    extensible["futureMetadata"] = {{"example", true}};
+    EmptyScene extensibleCandidate;
+    SceneLoadData extensibleLoad;
+    result = SceneSerializer::applyDocument(
+        extensible, extensibleCandidate, registry, extensibleLoad);
+    passed &= expect(static_cast<bool>(result),
+                     "unknown top-level scene data was rejected");
+
+    const auto setParentId = [](nlohmann::json& value,
+                                const std::string& objectId,
+                                nlohmann::json parentId) {
+        for (auto& object : value["objects"]) {
+            if (object.at("id") == objectId) {
+                object["parentId"] = std::move(parentId);
+                return;
+            }
+        }
+    };
+    const auto expectRejected = [&](const nlohmann::json& malformed,
+                                    const std::string& message) {
+        EmptyScene malformedCandidate;
+        SceneLoadData malformedLoad;
+        const Result malformedResult = SceneSerializer::applyDocument(
+            malformed, malformedCandidate, registry, malformedLoad);
+        return expect(!malformedResult, message);
+    };
+
+    nlohmann::json missingParent = document;
+    for (auto& object : missingParent["objects"]) {
+        if (object.at("id") == "child") object.erase("parentId");
+    }
+    passed &= expectRejected(missingParent,
+                             "v2 object without parentId was accepted");
+
+    const std::vector<nlohmann::json> invalidParentIds = {
+        nlohmann::json(""), 123, nlohmann::json::array(),
+        nlohmann::json::object(), true};
+    for (const nlohmann::json& invalidParentId : invalidParentIds) {
+        nlohmann::json malformed = document;
+        setParentId(malformed, "child", invalidParentId);
+        passed &= expectRejected(malformed,
+                                 "invalid v2 parentId type was accepted");
+    }
+
+    nlohmann::json unknownParent = document;
+    setParentId(unknownParent, "child", "missing-parent");
+    EmptyScene unknownParentCandidate;
+    SceneLoadData unknownParentLoad;
+    result = SceneSerializer::applyDocument(
+        unknownParent, unknownParentCandidate, registry, unknownParentLoad);
+    passed &= expect(!result &&
+                         result.error().find("child") != std::string::npos &&
+                         result.error().find("missing-parent") != std::string::npos,
+                     "unknown v2 parent reference was accepted or lacked context");
+
+    nlohmann::json unsavedParent = document;
+    setParentId(unsavedParent, "child", "candidate-only-parent");
+    EmptyScene unsavedParentCandidate;
+    passed &= expect(addPlainObject(unsavedParentCandidate,
+                                    "candidate-only-parent") != nullptr,
+                     "could not create unsaved candidate parent fixture");
+    SceneLoadData unsavedParentLoad;
+    result = SceneSerializer::applyDocument(
+        unsavedParent, unsavedParentCandidate, registry, unsavedParentLoad);
+    passed &= expect(!result,
+                     "hierarchy reference resolved to an unsaved candidate object");
+
+    nlohmann::json selfParent = document;
+    setParentId(selfParent, "root", "root");
+    passed &= expectRejected(selfParent, "self-parenting v2 document was accepted");
+
+    nlohmann::json cycle = document;
+    setParentId(cycle, "root", "grandchild");
+    setParentId(cycle, "child", "root");
+    setParentId(cycle, "grandchild", "child");
+    passed &= expectRejected(cycle, "cyclic v2 document was accepted");
+
+    return passed;
+}
+
+bool runtimeHierarchyTests() {
+    bool passed = true;
+    TypeRegistry registry = makeRegistry(passed);
+    EmptyScene source;
+    GameObject* root = addPlainObject(source, "runtime-root");
+    auto customObject = std::make_unique<CustomObject>();
+    customObject->persistentId = "runtime-child";
+    customObject->spinSpeed = 240.0f;
+    customObject->runtimeOnly = 91.0f;
+    customObject->transferOnlyValue = 37.0f;
+    CustomObject* child = customObject.get();
+    const Result addChildResult = source.addGameObject(std::move(customObject));
+    GameObject* grandchild = addPlainObject(source, "runtime-grandchild");
+    if (!root || !child || !grandchild || !addChildResult) {
+        return expect(false, "could not create runtime hierarchy fixture");
+    }
+    root->position = {4.0f, 5.0f, 6.0f};
+    root->rotation = {10.0f, 20.0f, 30.0f};
+    root->scale = {2.0f, 1.0f, 3.0f};
+    child->position = {-2.0f, 7.0f, 1.0f};
+    child->rotation = {5.0f, -8.0f, 12.0f};
+    child->scale = {0.75f, 1.25f, 0.5f};
+    grandchild->position = {8.0f, -1.0f, 3.0f};
+    grandchild->rotation = {-4.0f, 6.0f, 9.0f};
+    grandchild->scale = {1.1f, 0.9f, 1.3f};
+    passed &= expect(
+        source.reparentGameObject(*child, root, Scene::ReparentMode::PreserveLocal) &&
+            source.reparentGameObject(*grandchild, child,
+                                       Scene::ReparentMode::PreserveLocal),
+        "could not establish runtime hierarchy fixture");
+
+    const glm::mat4 sourceChildWorld = child->worldTransformMatrix();
+    const glm::mat4 sourceGrandchildWorld = grandchild->worldTransformMatrix();
+    EmptyScene destination;
+    Result result = SceneSerializer::copyAuthoredState(source, destination, registry);
+    const GameObject* runtimeRoot = destination.findGameObject("runtime-root");
+    const auto* runtimeChild = dynamic_cast<const CustomObject*>(
+        destination.findGameObject("runtime-child"));
+    const GameObject* runtimeGrandchild =
+        destination.findGameObject("runtime-grandchild");
+    const std::unordered_set<const GameObject*> sourceObjects = {
+        root, child, grandchild};
+    bool destinationPointersAreIsolated = true;
+    for (const auto& object : destination.gameObjects()) {
+        destinationPointersAreIsolated &=
+            sourceObjects.count(object.get()) == 0 &&
+            (object->parent() == nullptr ||
+             sourceObjects.count(object->parent()) == 0);
+        for (const GameObject* descendant : object->children()) {
+            destinationPointersAreIsolated &= sourceObjects.count(descendant) == 0;
+        }
+    }
+    const TypeDescriptor* sourceChildType = registry.find(*child);
+    const TypeDescriptor* runtimeChildType = runtimeChild
+        ? registry.find(*runtimeChild)
+        : nullptr;
+    passed &= expect(
+        result && runtimeRoot && runtimeChild && runtimeGrandchild &&
+            runtimeRoot != root && runtimeChild != child &&
+            runtimeGrandchild != grandchild && runtimeRoot->parent() == nullptr &&
+            runtimeChild->parent() == runtimeRoot &&
+            runtimeGrandchild->parent() == runtimeChild &&
+            std::find(runtimeRoot->children().begin(), runtimeRoot->children().end(),
+                      runtimeChild) != runtimeRoot->children().end() &&
+            std::find(runtimeChild->children().begin(), runtimeChild->children().end(),
+                      runtimeGrandchild) != runtimeChild->children().end() &&
+            sameVector(runtimeChild->position, child->position) &&
+            sameVector(runtimeChild->rotation, child->rotation) &&
+            sameVector(runtimeChild->scale, child->scale) &&
+            sameVector(runtimeGrandchild->position, grandchild->position) &&
+            sameVector(runtimeGrandchild->rotation, grandchild->rotation) &&
+            sameVector(runtimeGrandchild->scale, grandchild->scale) &&
+            sameMatrix(runtimeChild->worldTransformMatrix(), sourceChildWorld) &&
+            sameMatrix(runtimeGrandchild->worldTransformMatrix(), sourceGrandchildWorld) &&
+            sourceChildType && runtimeChildType &&
+            sourceChildType->type == runtimeChildType->type &&
+            runtimeChild->spinSpeed == 240.0f &&
+            runtimeChild->runtimeOnly == 0.0f &&
+            runtimeChild->transferOnlyValue == 37.0f &&
+            destinationPointersAreIsolated,
+        "runtime authored copy did not isolate or reconstruct hierarchy");
+    return passed;
+}
+
 bool characterPersistenceTests() {
     bool passed = true;
     TypeRegistry registry = makeRegistry(passed);
@@ -491,7 +844,7 @@ bool characterPersistenceTests() {
         ? findObjectRecord(document, "character")
         : nullptr;
     passed &= expect(
-        result && document.at("formatVersion") == 1 && record &&
+        result && document.at("formatVersion") == 2 && record &&
             record->at("properties").contains("capsuleHeight") &&
             record->at("properties").contains("capsuleRadius"),
         "Character capsule dimensions were not persisted");
@@ -513,7 +866,7 @@ bool characterPersistenceTests() {
               candidate.findGameObject("character"))
         : nullptr;
     passed &= expect(
-        result && roundTripResult && roundTrip.at("formatVersion") == 1 &&
+        result && roundTripResult && roundTrip.at("formatVersion") == 2 &&
             roundTripRecord &&
             roundTripRecord->at("properties").contains("capsuleHeight") &&
             roundTripRecord->at("properties").contains("capsuleRadius") &&
@@ -583,7 +936,7 @@ bool managerDirtyTests() {
         findObjectRecord(savedDocument, "custom");
     const nlohmann::json* savedCamera =
         findObjectRecord(savedDocument, "camera");
-    passed &= expect(savedDocument.at("formatVersion") == 1 && savedCustom &&
+    passed &= expect(savedDocument.at("formatVersion") == 2 && savedCustom &&
                          savedCamera &&
                          savedCustom->at("properties").contains("physics") &&
                          !savedCustom->at("properties").contains("transferOnlyValue") &&
@@ -636,6 +989,110 @@ bool managerDirtyTests() {
     passed &= expect(result && manager.editingScene()->findGameObject("custom") == nullptr &&
                          !manager.hasUnsavedChanges(),
                      "JSON topology was not authoritative during scene load");
+
+    manager.shutdown();
+    std::error_code error;
+    std::filesystem::remove_all(directory, error);
+    return passed;
+}
+
+bool managerV1MigrationTests() {
+    bool passed = true;
+    SceneManager manager;
+    Result result = manager.initialize<PersistenceScene>(
+        "Persistence v1 Migration Test", std::make_shared<InputManager>());
+    if (!result) {
+        return expect(false, "v1 migration manager initialization failed");
+    }
+
+    const auto directory = std::filesystem::temp_directory_path() /
+        ("dunamis-v1-migration-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto path = directory / "migration.scene.json";
+    manager.setCurrentScenePath(path);
+    GameObject* base = manager.editingScene()->findGameObject("base");
+    GameObject* custom = manager.editingScene()->findGameObject("custom");
+    passed &= expect(base && custom && manager.editingScene()->reparentGameObject(
+                             *custom, base, Scene::ReparentMode::PreserveLocal),
+                     "could not create v1 migration hierarchy fixture");
+    Camera editor;
+    result = manager.saveEditingScene(editor);
+    nlohmann::json v2Document = result
+        ? readSceneDocument(path)
+        : nlohmann::json{};
+    passed &= expect(result && v2Document.at("formatVersion") == 2,
+                     "migration fixture was not written as v2");
+
+    nlohmann::json v1Document = v2Document;
+    if (v1Document.is_object()) {
+        v1Document["formatVersion"] = 1;
+        for (auto& object : v1Document["objects"]) {
+            object.erase("parentId");
+            if (object.at("id") == "custom") object["parentId"] = "base";
+        }
+        std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+        stream << v1Document.dump(2) << '\n';
+    }
+
+    const Scene* stableScene = manager.editingScene();
+    result = SceneSerializer::formatVersion == 2
+        ? manager.prepareEditingSceneLoad(path)
+        : Result::failure("current scene format is not v2");
+    const Scene* prepared = manager.preparedEditingScene();
+    const GameObject* preparedCustom = prepared
+        ? prepared->findGameObject("custom")
+        : nullptr;
+    const Camera* preparedCamera = prepared
+        ? dynamic_cast<const Camera*>(prepared->findGameObject("camera"))
+        : nullptr;
+    bool preparedObjectsAreRoots = prepared != nullptr;
+    if (prepared) {
+        for (const auto& object : prepared->gameObjects()) {
+            preparedObjectsAreRoots &= object->parent() == nullptr;
+        }
+    }
+    passed &= expect(
+        result && preparedCustom && preparedCustom->parent() == nullptr &&
+            preparedCamera && prepared->activeCamera() == preparedCamera &&
+            preparedObjectsAreRoots,
+        "v1 document did not load all objects as roots or restore its camera");
+
+    result = result ? manager.commitPreparedEditingSceneLoad() : result;
+    manager.finishEditingSceneLoad();
+    const GameObject* loadedCustom = manager.editingScene()
+        ? manager.editingScene()->findGameObject("custom")
+        : nullptr;
+    passed &= expect(
+        result && manager.editingScene() != stableScene && loadedCustom &&
+            loadedCustom->parent() == nullptr && !manager.hasUnsavedChanges(),
+        "v1 load did not commit cleanly with a v2 authored baseline");
+
+    result = manager.saveEditingScene(editor);
+    const nlohmann::json upgraded = result
+        ? readSceneDocument(path)
+        : nlohmann::json{};
+    bool everyObjectHasParentId = result && upgraded.at("formatVersion") == 2;
+    if (result) {
+        for (const auto& object : upgraded.at("objects")) {
+            everyObjectHasParentId &= object.contains("parentId");
+        }
+    }
+    passed &= expect(result && everyObjectHasParentId,
+                     "saving a v1 scene did not upgrade every object to v2");
+
+    nlohmann::json malformed = upgraded;
+    if (malformed.is_object()) {
+        for (auto& object : malformed["objects"]) {
+            if (object.at("id") == "custom") object["parentId"] = "missing";
+        }
+        std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+        stream << malformed.dump(2) << '\n';
+    }
+    const Scene* sceneBeforeMalformedLoad = manager.editingScene();
+    result = manager.prepareEditingSceneLoad(path);
+    passed &= expect(
+        !result && manager.editingScene() == sceneBeforeMalformedLoad,
+        "malformed hierarchy load replaced the editing scene");
 
     manager.shutdown();
     std::error_code error;
@@ -748,8 +1205,11 @@ bool managerSavePathTests() {
 int main() {
     bool passed = registryTests();
     passed &= serializerTests();
+    passed &= hierarchyPersistenceTests();
+    passed &= runtimeHierarchyTests();
     passed &= characterPersistenceTests();
     passed &= managerDirtyTests();
+    passed &= managerV1MigrationTests();
     passed &= managerSavePathTests();
     return passed ? 0 : 1;
 }
