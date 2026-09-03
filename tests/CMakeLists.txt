@@ -120,6 +120,19 @@ target_include_directories(EditorMutationTests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(EditorMutationTests PRIVATE Editor)
 add_test(NAME editor_mutation_semantics COMMAND EditorMutationTests)
 
+add_executable(EditorTransformTests editor_transform_tests.cpp)
+target_include_directories(EditorTransformTests PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(EditorTransformTests PRIVATE
+        Editor
+        EditorPicking
+        GameObject
+        Camera
+        PointLight
+        Scene
+        glm
+        spdlog)
+add_test(NAME editor_transform_semantics COMMAND EditorTransformTests)
+
 add_executable(EditorDuplicationTests editor_duplication_tests.cpp)
 target_include_directories(EditorDuplicationTests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(EditorDuplicationTests PRIVATE

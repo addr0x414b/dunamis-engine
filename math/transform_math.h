@@ -78,6 +78,80 @@ namespace detail {
     return maximum;
 }
 
+[[nodiscard]] inline glm::vec3 perpendicularReference(
+    const glm::vec3& vector) noexcept {
+    const glm::vec3 absolute = glm::abs(vector);
+    if (absolute.x <= absolute.y && absolute.x <= absolute.z) {
+        return glm::vec3(1.0f, 0.0f, 0.0f);
+    }
+    if (absolute.y <= absolute.z) return glm::vec3(0.0f, 1.0f, 0.0f);
+    return glm::vec3(0.0f, 0.0f, 1.0f);
+}
+
+[[nodiscard]] inline Result completeRotationBasis(
+    const glm::mat3& knownBasis, const glm::vec3& magnitudes,
+    glm::mat3& completedBasis) {
+    completedBasis = glm::mat3(1.0f);
+    int nonzeroAxes = 0;
+    for (int axis = 0; axis < 3; ++axis) {
+        if (magnitudes[axis] <= 0.0f) continue;
+        completedBasis[axis] = knownBasis[axis];
+        ++nonzeroAxes;
+    }
+
+    if (nonzeroAxes == 0) {
+        return Result::success();
+    }
+
+    if (nonzeroAxes == 1) {
+        int knownAxis = 0;
+        while (magnitudes[knownAxis] <= 0.0f) ++knownAxis;
+        const glm::vec3 reference = perpendicularReference(
+            completedBasis[knownAxis]);
+        const glm::vec3 perpendicular = glm::normalize(glm::cross(
+            reference, completedBasis[knownAxis]));
+        if (!isFiniteVector(perpendicular) ||
+            glm::dot(perpendicular, perpendicular) <= 0.0f) {
+            return Result::failure(
+                "Transform matrix has an unusable rotation basis");
+        }
+        if (knownAxis == 0) {
+            completedBasis[1] = perpendicular;
+            completedBasis[2] = glm::cross(completedBasis[0],
+                                           completedBasis[1]);
+        } else if (knownAxis == 1) {
+            completedBasis[0] = perpendicular;
+            completedBasis[2] = glm::cross(completedBasis[0],
+                                           completedBasis[1]);
+        } else {
+            completedBasis[0] = perpendicular;
+            completedBasis[1] = glm::cross(completedBasis[2],
+                                           completedBasis[0]);
+        }
+        return Result::success();
+    }
+
+    int missingAxis = 0;
+    while (magnitudes[missingAxis] > 0.0f) ++missingAxis;
+    if (missingAxis == 0) {
+        completedBasis[0] = glm::cross(completedBasis[1],
+                                       completedBasis[2]);
+    } else if (missingAxis == 1) {
+        completedBasis[1] = glm::cross(completedBasis[2],
+                                       completedBasis[0]);
+    } else {
+        completedBasis[2] = glm::cross(completedBasis[0],
+                                       completedBasis[1]);
+    }
+    const float missingLength = glm::length(completedBasis[missingAxis]);
+    if (!std::isfinite(missingLength) || missingLength <= 0.0f) {
+        return Result::failure(
+            "Transform matrix has an unusable rotation basis");
+    }
+    completedBasis[missingAxis] /= missingLength;
+    return Result::success();
+}
+
 [[nodiscard]] inline Result finishDecomposition(
     const glm::mat4& matrix, const glm::mat3& rotationBasis,
     const glm::vec3& scale, DecomposedTransform& output) {
@@ -142,7 +216,7 @@ namespace detail {
 
 [[nodiscard]] inline Result decomposeModelMatrixWithSigns(
     const glm::mat4& matrix, const glm::vec3& scaleSignHint,
-    DecomposedTransform& output) {
+    DecomposedTransform& output, bool allowZeroScale = false) {
     output = {};
     if (!isFiniteMatrix(matrix) || !isFiniteVector(scaleSignHint)) {
         return Result::failure(
@@ -154,9 +228,16 @@ namespace detail {
     for (int axis = 0; axis < 3; ++axis) {
         const glm::vec3 column(matrix[axis]);
         const float lengthSquared = glm::dot(column, column);
-        if (!std::isfinite(lengthSquared) || lengthSquared <= 1.0e-12f) {
+        if (!std::isfinite(lengthSquared) || lengthSquared < 0.0f ||
+            (!allowZeroScale && lengthSquared <= 1.0e-12f)) {
             return Result::failure(
                 "Transform matrix has an unusable scale axis");
+        }
+
+        if (allowZeroScale && lengthSquared == 0.0f) {
+            scale[axis] = 0.0f;
+            rotationBasis[axis] = glm::vec3(0.0f);
+            continue;
         }
 
         const float magnitude = std::sqrt(lengthSquared);
@@ -170,17 +251,16 @@ namespace detail {
         if (scale[axis] < 0.0f) rotationBasis[axis] *= -1.0f;
     }
 
-    return finishDecomposition(matrix, rotationBasis, scale, output);
-}
-
-[[nodiscard]] inline glm::vec3 perpendicularReference(
-    const glm::vec3& vector) noexcept {
-    const glm::vec3 absolute = glm::abs(vector);
-    if (absolute.x <= absolute.y && absolute.x <= absolute.z) {
-        return glm::vec3(1.0f, 0.0f, 0.0f);
+    if (allowZeroScale &&
+        (scale.x == 0.0f || scale.y == 0.0f || scale.z == 0.0f)) {
+        glm::mat3 completedBasis;
+        const Result completion = completeRotationBasis(
+            rotationBasis, glm::abs(scale), completedBasis);
+        if (!completion) return completion;
+        return finishDecomposition(matrix, completedBasis, scale, output);
     }
-    if (absolute.y <= absolute.z) return glm::vec3(0.0f, 1.0f, 0.0f);
-    return glm::vec3(0.0f, 0.0f, 1.0f);
+
+    return finishDecomposition(matrix, rotationBasis, scale, output);
 }
 
 }  // namespace detail
@@ -193,6 +273,16 @@ namespace detail {
     DecomposedTransform& output) {
     return detail::decomposeModelMatrixWithSigns(
         matrix, authoredScale, output);
+}
+
+// The editor may legitimately scale an object onto an axis. Preserve the
+// existing authored sign hint while allowing zero columns whose orientation
+// is reconstructed from the remaining representable basis.
+[[nodiscard]] inline Result decomposeModelMatrixAllowingZeroScale(
+    const glm::mat4& matrix, const glm::vec3& authoredScale,
+    DecomposedTransform& output) {
+    return detail::decomposeModelMatrixWithSigns(
+        matrix, authoredScale, output, true);
 }
 
 // When no sign hint is available, choose a signed scale pattern that gives the
@@ -227,65 +317,12 @@ namespace detail {
     }
 
     if (nonzeroAxes != 3) {
-        glm::mat3 completedBasis(1.0f);
-        glm::vec3 scale = magnitudes;
-        for (int axis = 0; axis < 3; ++axis) {
-            if (magnitudes[axis] > 0.0f) {
-                completedBasis[axis] = normalizedBasis[axis];
-            }
-        }
-
-        if (nonzeroAxes == 0) {
-            completedBasis = glm::mat3(1.0f);
-        } else if (nonzeroAxes == 1) {
-            int knownAxis = 0;
-            while (magnitudes[knownAxis] <= 0.0f) ++knownAxis;
-            const glm::vec3 reference = detail::perpendicularReference(
-                completedBasis[knownAxis]);
-            const glm::vec3 perpendicular = glm::normalize(glm::cross(
-                reference, completedBasis[knownAxis]));
-            if (!isFiniteVector(perpendicular) ||
-                glm::dot(perpendicular, perpendicular) <= 0.0f) {
-                return Result::failure(
-                    "Transform matrix has an unusable rotation basis");
-            }
-            if (knownAxis == 0) {
-                completedBasis[1] = perpendicular;
-                completedBasis[2] = glm::cross(completedBasis[0],
-                                               completedBasis[1]);
-            } else if (knownAxis == 1) {
-                completedBasis[0] = perpendicular;
-                completedBasis[2] = glm::cross(completedBasis[0],
-                                               completedBasis[1]);
-            } else {
-                completedBasis[0] = perpendicular;
-                completedBasis[1] = glm::cross(completedBasis[2],
-                                               completedBasis[0]);
-            }
-        } else {
-            int missingAxis = 0;
-            while (magnitudes[missingAxis] > 0.0f) ++missingAxis;
-            if (missingAxis == 0) {
-                completedBasis[0] = glm::cross(completedBasis[1],
-                                               completedBasis[2]);
-            } else if (missingAxis == 1) {
-                completedBasis[1] = glm::cross(completedBasis[2],
-                                               completedBasis[0]);
-            } else {
-                completedBasis[2] = glm::cross(completedBasis[0],
-                                               completedBasis[1]);
-            }
-            const float missingLength = glm::length(
-                completedBasis[missingAxis]);
-            if (!std::isfinite(missingLength) || missingLength <= 0.0f) {
-                return Result::failure(
-                    "Transform matrix has an unusable rotation basis");
-            }
-            completedBasis[missingAxis] /= missingLength;
-        }
-
+        glm::mat3 completedBasis;
+        const Result completion = detail::completeRotationBasis(
+            normalizedBasis, magnitudes, completedBasis);
+        if (!completion) return completion;
         return detail::finishDecomposition(
-            matrix, completedBasis, scale, output);
+            matrix, completedBasis, magnitudes, output);
     }
 
     const float basisDeterminant = glm::determinant(normalizedBasis);

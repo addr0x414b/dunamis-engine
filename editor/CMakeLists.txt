@@ -3,6 +3,7 @@ add_library(Editor STATIC
         editor_camera_controller.cpp
         editor_picking.cpp
         editor_mutation.cpp
+        editor_transform.cpp
         editor_duplication.cpp
 )
 

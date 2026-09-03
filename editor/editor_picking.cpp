@@ -6,7 +6,6 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
-#include "../math/transform_math.h"
 #include "../scene/game_object.h"
 #include "../scene/model_renderable.h"
 #include "../scene/scene.h"
@@ -239,8 +238,7 @@ GameObject* pickClosestObject(Scene& scene, const Ray& worldRay) noexcept {
         if (object == nullptr) {
             continue;
         }
-        const glm::mat4 model = transform_math::makeModelMatrix(
-            object->position, object->rotation, object->scale);
+        const glm::mat4 model = object->worldTransformMatrix();
         for (const MeshInstance& instance :
              object->modelRenderable().meshInstances()) {
             float distance = 0.0f;

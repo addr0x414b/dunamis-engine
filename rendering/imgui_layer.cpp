@@ -30,7 +30,7 @@
 #include "editor_picking.h"
 #include "../editor/editor_mutation.h"
 #include "../editor/editor_picking.h"
-#include "../math/transform_math.h"
+#include "../editor/editor_transform.h"
 #include "../editor/editor_session.h"
 #include "../scene/character.h"
 #include "../scene/directional_light.h"
@@ -284,15 +284,15 @@ bool normalizeFinite(const glm::vec3& value, glm::vec3& normalized) noexcept {
     return isFiniteVector(normalized);
 }
 
-bool makeCameraBasis(const Camera& camera, glm::vec3& forward,
+bool makeCameraBasis(const glm::vec3& cameraFront,
+                     const glm::vec3& cameraUp, glm::vec3& forward,
                      glm::vec3& right, glm::vec3& up) noexcept {
-    if (!isFiniteVector(camera.position) ||
-        !normalizeFinite(camera.front, forward)) {
+    if (!normalizeFinite(cameraFront, forward)) {
         return false;
     }
 
     glm::vec3 normalizedUp;
-    if (!normalizeFinite(camera.up, normalizedUp)) {
+    if (!normalizeFinite(cameraUp, normalizedUp)) {
         return false;
     }
 
@@ -1128,18 +1128,36 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
     ImGuizmo::SetDrawlist(drawList);
     ImGuizmo::SetRect(viewport->Pos.x, viewport->Pos.y, viewport->Size.x,
                       viewport->Size.y);
-    const glm::mat4 model = transform_math::makeModelMatrix(
-        selected->position, selected->rotation, selected->scale);
-    glm::mat4 gizmoMatrix = model;
-    glm::vec3 originalGizmoCenter;
     const TransformTool transformTool = editorSession_->transformTool();
+    if (runState == SceneRunState::Simulating && selected->physics.enabled &&
+        selected->parent() != nullptr &&
+        (transformTool == TransformTool::Translate ||
+         transformTool == TransformTool::Rotate)) {
+        gizmoDragActive_ = false;
+        runtimeTransformDragActive_ = false;
+        runtimeTransformObject_ = nullptr;
+        inspectorError_ =
+            "Runtime hierarchy transform gizmos are unavailable for physics "
+            "bodies until hierarchy-aware physics support is implemented.";
+        drawList->PopClipRect();
+        return;
+    }
+
+    const glm::mat4 worldTransform = selected->worldTransformMatrix();
+    if (!isFiniteMatrix(worldTransform)) {
+        gizmoDragActive_ = false;
+        runtimeTransformDragActive_ = false;
+        runtimeTransformObject_ = nullptr;
+        inspectorError_ = "Selected GameObject world transform is not finite.";
+        drawList->PopClipRect();
+        return;
+    }
+
+    glm::mat4 gizmoMatrix = worldTransform;
     ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE;
     ImGuizmo::MODE mode = ImGuizmo::WORLD;
     switch (transformTool) {
     case TransformTool::Translate: {
-        gizmoMatrix =
-            transform_math::makeTranslationMatrix(selected->position);
-        originalGizmoCenter = glm::vec3(gizmoMatrix[3]);
         operation = ImGuizmo::TRANSLATE;
         mode = ImGuizmo::WORLD;
         break;
@@ -1167,48 +1185,29 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
     drawList->PopClipRect();
 
     if (manipulated) {
-        switch (transformTool) {
-        case TransformTool::Translate: {
-            const glm::vec3 manipulatedGizmoCenter(gizmoMatrix[3]);
-            const glm::vec3 worldDelta =
-                manipulatedGizmoCenter - originalGizmoCenter;
-            const Result result = editor_mutation::applyPosition(
-                *selected, selected->position + worldDelta);
-            if (result) {
-                inspectorError_.clear();
-            } else {
-                inspectorError_ = result.error();
+        transform_math::DecomposedTransform localTransform;
+        Result result = editor_transform::deriveLocalTransformFromWorld(
+            *selected, gizmoMatrix, localTransform);
+        if (result) {
+            switch (transformTool) {
+            case TransformTool::Translate:
+                result = editor_mutation::applyPosition(
+                    *selected, localTransform.position);
+                break;
+            case TransformTool::Rotate:
+                result = editor_mutation::applyRotation(
+                    *selected, localTransform.rotation);
+                break;
+            case TransformTool::Scale:
+                result = editor_mutation::applyScale(
+                    *selected, localTransform.scale);
+                break;
             }
-            break;
         }
-        case TransformTool::Rotate: {
-            glm::vec3 newRotation;
-            Result result = editor_mutation::extractDunamisRotation(
-                gizmoMatrix, selected->scale, newRotation);
-            if (result) {
-                result = editor_mutation::applyRotation(*selected, newRotation);
-            }
-            if (result) {
-                inspectorError_.clear();
-            } else {
-                inspectorError_ = result.error();
-            }
-            break;
-        }
-        case TransformTool::Scale: {
-            glm::vec3 newScale;
-            Result result = editor_mutation::extractDunamisScale(
-                gizmoMatrix, selected->scale, newScale);
-            if (result) {
-                result = editor_mutation::applyScale(*selected, newScale);
-            }
-            if (result) {
-                inspectorError_.clear();
-            } else {
-                inspectorError_ = result.error();
-            }
-            break;
-        }
+        if (result) {
+            inspectorError_.clear();
+        } else {
+            inspectorError_ = result.error();
         }
     }
     gizmoDragActive_ = ImGuizmo::IsUsing() &&
@@ -1296,10 +1295,16 @@ void ImGuiLayer::drawCameraVisualization(
         return;
     }
 
+    CameraWorldPose pose;
+    if (!editor_picking::calculateCameraVisualizationPose(
+            camera, selectionTarget, pose)) {
+        return;
+    }
+
     glm::vec3 forward;
     glm::vec3 right;
     glm::vec3 up;
-    if (!makeCameraBasis(camera, forward, right, up)) {
+    if (!makeCameraBasis(pose.front, pose.up, forward, right, up)) {
         return;
     }
 
@@ -1321,7 +1326,7 @@ void ImGuiLayer::drawCameraVisualization(
         return;
     }
 
-    const glm::vec3 apex = camera.position;
+    const glm::vec3 apex = pose.position;
     const glm::vec3 planeCenter =
         apex + forward * cameraVisualizationDistance;
     const glm::vec3 topLeft =
@@ -1409,8 +1414,13 @@ void ImGuiLayer::drawPointLightVisualization(
         return;
     }
 
+    glm::vec3 worldPosition;
+    if (!editor_picking::deriveWorldPosition(light, worldPosition)) {
+        return;
+    }
+
     glm::vec2 center;
-    if (!projectWorldToImGui(light.position, editorView, projection, *viewport,
+    if (!projectWorldToImGui(worldPosition, editorView, projection, *viewport,
                              center)) {
         return;
     }
@@ -1420,11 +1430,11 @@ void ImGuiLayer::drawPointLightVisualization(
     geometry.selectionTarget = selectionTarget;
     geometry.point = center;
     geometry.pointValid = true;
-    geometry.viewDepth = viewDepthForWorldPoint(light.position, editorView);
+    geometry.viewDepth = viewDepthForWorldPoint(worldPosition, editorView);
 
     float outerRadius = 0.0f;
     if (!projectWorldRadiusToImGui(
-            light.position, center, editorView, projection, *viewport,
+            worldPosition, center, editorView, projection, *viewport,
             pointLightVisualizationRadius, outerRadius)) {
         return;
     }
@@ -1480,8 +1490,13 @@ void ImGuiLayer::drawDirectionalLightVisualization(
         return;
     }
 
+    glm::vec3 worldPosition;
+    if (!editor_picking::deriveWorldPosition(light, worldPosition)) {
+        return;
+    }
+
     glm::vec2 center;
-    if (!projectWorldToImGui(light.position, editorView, projection, *viewport,
+    if (!projectWorldToImGui(worldPosition, editorView, projection, *viewport,
                              center)) {
         return;
     }
@@ -1491,11 +1506,11 @@ void ImGuiLayer::drawDirectionalLightVisualization(
     geometry.selectionTarget = selectionTarget;
     geometry.point = center;
     geometry.pointValid = true;
-    geometry.viewDepth = viewDepthForWorldPoint(light.position, editorView);
+    geometry.viewDepth = viewDepthForWorldPoint(worldPosition, editorView);
 
     float markerRadius = 0.0f;
     if (!projectWorldRadiusToImGui(
-            light.position, center, editorView, projection, *viewport,
+            worldPosition, center, editorView, projection, *viewport,
             directionalLightVisualizationRadius, markerRadius)) {
         return;
     }
@@ -1514,7 +1529,7 @@ void ImGuiLayer::drawDirectionalLightVisualization(
     glm::vec3 normalizedDirection;
     if (light.calculateWorldDirection(normalizedDirection)) {
         const glm::vec3 arrowEnd =
-            light.position + normalizedDirection * directionalVisualizationDistance;
+            worldPosition + normalizedDirection * directionalVisualizationDistance;
         glm::vec2 arrowEndScreen;
         if (isFiniteVector(arrowEnd) &&
             projectWorldToImGui(arrowEnd, editorView, projection, *viewport,
@@ -1530,11 +1545,11 @@ void ImGuiLayer::drawDirectionalLightVisualization(
                 float arrowheadLength = 0.0f;
                 float arrowheadHalfWidth = 0.0f;
                 if (projectWorldRadiusToImGui(
-                        light.position, center, editorView, projection,
+                        worldPosition, center, editorView, projection,
                         *viewport, directionalLightArrowheadLength,
                         arrowheadLength) &&
                     projectWorldRadiusToImGui(
-                        light.position, center, editorView, projection,
+                        worldPosition, center, editorView, projection,
                         *viewport, directionalLightArrowheadHalfWidth,
                         arrowheadHalfWidth)) {
                     const glm::vec2 arrowBase =
@@ -1576,7 +1591,7 @@ void ImGuiLayer::drawDirectionalLightVisualization(
     }
     float centerRadius = 0.0f;
     if (projectWorldRadiusToImGui(
-            light.position, center, editorView, projection, *viewport,
+            worldPosition, center, editorView, projection, *viewport,
             directionalLightCenterRadius, centerRadius)) {
         drawList->AddCircleFilled(ImVec2(center.x, center.y), centerRadius,
                                    color);

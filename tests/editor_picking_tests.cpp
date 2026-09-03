@@ -387,6 +387,104 @@ bool runClosestObjectAndGizmoTests() {
     return passed;
 }
 
+bool runHierarchyObjectPickingTests() {
+    bool passed = true;
+
+    {
+        TestScene scene;
+        auto parentOwner = std::make_unique<GameObject>();
+        auto childOwner = std::make_unique<GameObject>();
+        GameObject* parent = parentOwner.get();
+        GameObject* child = childOwner.get();
+        parent->position = {100.0f, 0.0f, 0.0f};
+        child->position = {20.0f, 0.0f, 2.0f};
+        MeshInstance instance{};
+        instance.mesh = makeTriangle();
+        passed &= expect(static_cast<bool>(child->modelRenderable().addMeshInstance(
+                             std::move(instance))),
+                         "Could not create hierarchy picking mesh");
+        passed &= expect(static_cast<bool>(scene.addGameObject(
+                             std::move(parentOwner))) &&
+                             static_cast<bool>(scene.addGameObject(
+                                 std::move(childOwner))) &&
+                             static_cast<bool>(scene.reparentGameObject(
+                                 *child, parent,
+                                 TestScene::ReparentMode::PreserveLocal)),
+                         "Could not create hierarchy picking fixture");
+
+        const editor_picking::Ray worldRay{
+            {120.0f, 0.0f, -5.0f}, {0.0f, 0.0f, 1.0f}};
+        passed &= expect(editor_picking::pickClosestObject(scene, worldRay) ==
+                             child,
+                         "Hierarchy mesh was not picked at its world position");
+        passed &= expect(editor_picking::pickClosestObject(
+                             scene, {{20.0f, 0.0f, -5.0f},
+                                     {0.0f, 0.0f, 1.0f}}) == nullptr,
+                         "Hierarchy picking used the stale local position");
+    }
+
+    {
+        TestScene scene;
+        auto parentOwner = std::make_unique<GameObject>();
+        auto childOwner = std::make_unique<GameObject>();
+        GameObject* parent = parentOwner.get();
+        GameObject* child = childOwner.get();
+        parent->position = {100.0f, 50.0f, 0.0f};
+        parent->rotation = {0.0f, 0.0f, 90.0f};
+        parent->scale = {2.0f, 3.0f, 1.0f};
+        child->position = {10.0f, 5.0f, 2.0f};
+        MeshInstance instance{};
+        instance.mesh = makeTriangle();
+        passed &= expect(static_cast<bool>(child->modelRenderable().addMeshInstance(
+                             std::move(instance))),
+                         "Could not create rotated hierarchy picking mesh");
+        passed &= expect(static_cast<bool>(scene.addGameObject(
+                             std::move(parentOwner))) &&
+                             static_cast<bool>(scene.addGameObject(
+                                 std::move(childOwner))) &&
+                             static_cast<bool>(scene.reparentGameObject(
+                                 *child, parent,
+                                 TestScene::ReparentMode::PreserveLocal)),
+                         "Could not create rotated hierarchy picking fixture");
+
+        const glm::vec3 worldOrigin = glm::vec3(
+            child->worldTransformMatrix() * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+        passed &= expect(
+            editor_picking::pickClosestObject(
+                scene, {worldOrigin - glm::vec3(0.0f, 0.0f, 5.0f),
+                        {0.0f, 0.0f, 1.0f}}) == child,
+            "Rotated/scaled hierarchy picking did not follow world matrix");
+    }
+
+    {
+        TestScene scene;
+        auto parentOwner = std::make_unique<GameObject>();
+        auto childOwner = std::make_unique<GameObject>();
+        GameObject* parent = parentOwner.get();
+        GameObject* child = childOwner.get();
+        parent->scale = {0.0f, 1.0f, 1.0f};
+        MeshInstance instance{};
+        instance.mesh = makeTriangle();
+        passed &= expect(static_cast<bool>(child->modelRenderable().addMeshInstance(
+                             std::move(instance))),
+                         "Could not create singular hierarchy picking mesh");
+        passed &= expect(static_cast<bool>(scene.addGameObject(
+                             std::move(parentOwner))) &&
+                             static_cast<bool>(scene.addGameObject(
+                                 std::move(childOwner))) &&
+                             static_cast<bool>(scene.reparentGameObject(
+                                 *child, parent,
+                                 TestScene::ReparentMode::PreserveLocal)),
+                         "Could not create singular hierarchy picking fixture");
+        passed &= expect(editor_picking::pickClosestObject(
+                             scene, {{0.0f, 0.0f, -5.0f},
+                                     {0.0f, 0.0f, 1.0f}}) == nullptr,
+                         "Singular hierarchy transform produced a picking hit");
+    }
+
+    return passed;
+}
+
 bool runTransformMathTests() {
     const glm::vec3 zero(0.0f);
     const glm::vec3 one(1.0f);
@@ -545,6 +643,7 @@ int main() {
                    runTriangleScaleToleranceTests() &&
                    runMeshBoundsTests() &&
                    runClosestObjectAndGizmoTests() &&
+                   runHierarchyObjectPickingTests() &&
                    runTransformMathTests() &&
                    runRotationMatrixTests() &&
                    runCameraDiscoveryTests()

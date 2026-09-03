@@ -120,6 +120,39 @@ std::vector<const Camera*> collectCameraPointers(
     return cameras;
 }
 
+bool deriveWorldPosition(const GameObject& object,
+                         glm::vec3& worldPosition) noexcept {
+    worldPosition = {};
+    const glm::mat4 worldTransform = object.worldTransformMatrix();
+    if (!isFiniteMatrix(worldTransform)) {
+        return false;
+    }
+
+    worldPosition = glm::vec3(worldTransform[3]);
+    return isFiniteVector(worldPosition);
+}
+
+bool calculateCameraVisualizationPose(
+    const Camera& camera, const GameObject* selectionTarget,
+    CameraWorldPose& pose) noexcept {
+    pose = {};
+    const bool isStandaloneCamera =
+        selectionTarget == static_cast<const GameObject*>(&camera) ||
+        (selectionTarget == nullptr && camera.parent() != nullptr);
+    if (isStandaloneCamera) {
+        return camera.calculateWorldPose(pose);
+    }
+
+    if (!isFiniteVector(camera.position) || !isFiniteVector(camera.front) ||
+        !isFiniteVector(camera.up)) {
+        return false;
+    }
+    pose.position = camera.position;
+    pose.front = camera.front;
+    pose.up = camera.up;
+    return true;
+}
+
 bool projectVulkanWorldToImGui(
     const glm::vec3& worldPoint, const glm::mat4& view,
     const glm::mat4& vulkanProjection, const glm::vec2& renderPosition,

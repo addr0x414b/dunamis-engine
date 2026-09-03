@@ -7,6 +7,7 @@
 
 class Camera;
 class GameObject;
+struct CameraWorldPose;
 
 namespace editor_picking {
 
@@ -26,6 +27,11 @@ collectCameraVisualizationEntries(
 [[nodiscard]] std::vector<const Camera*> collectCameraPointers(
     const std::vector<const GameObject*>& objects,
     const Camera* activeCamera);
+[[nodiscard]] bool deriveWorldPosition(const GameObject& object,
+                                       glm::vec3& worldPosition) noexcept;
+[[nodiscard]] bool calculateCameraVisualizationPose(
+    const Camera& camera, const GameObject* selectionTarget,
+    CameraWorldPose& pose) noexcept;
 [[nodiscard]] bool projectVulkanWorldToImGui(
     const glm::vec3& worldPoint, const glm::mat4& view,
     const glm::mat4& vulkanProjection, const glm::vec2& renderPosition,
