@@ -6,6 +6,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "../core/result.h"
 #include "editor_state.h"
 #include "runtime_transform_edit.h"
 
@@ -31,6 +32,9 @@ public:
     void applySelection(Scene* scene, GameObject* object,
                         SelectionOperation operation);
     void clearSelection() noexcept;
+    [[nodiscard]] Result setExactSelection(
+        Scene* scene, const std::vector<GameObject*>& objects,
+        GameObject* active);
     void synchronizeSelection(Scene* scene);
     [[nodiscard]] Scene* selectionScene() const noexcept;
     // The Active Object is always either selected or null.
@@ -76,6 +80,8 @@ public:
         const GameObject& object) const noexcept;
     void setRenderColliderEnabled(const GameObject& object,
                                   bool enabled);
+    void removeRenderColliderIds(
+        const std::vector<std::string>& ids) noexcept;
 
 private:
     [[nodiscard]] static bool ownsGameObject(

@@ -1,6 +1,7 @@
 #include "scene.h"
 
 #include "../math/transform_math.h"
+#include "model_renderable.h"
 #include "persistent_id.h"
 
 #include <algorithm>
@@ -417,6 +418,34 @@ Result Scene::addGameObjectForEditor(
     return addGameObjectInternal(std::move(gameObject), true, inserted);
 }
 
+Result Scene::reserveEditorHierarchyStorage(
+    const std::vector<std::pair<GameObject*, std::size_t>>& requirements) {
+    try {
+        for (const auto& [parent, additionalChildren] : requirements) {
+            if (parent != nullptr && !ownsGameObject(parent)) {
+                return Result::failure(
+                    "Cannot reserve hierarchy storage for a foreign parent");
+            }
+            std::vector<GameObject*>& siblings =
+                parent == nullptr ? rootObjects_ : parent->children_;
+            if (additionalChildren >
+                std::numeric_limits<std::size_t>::max() - siblings.size()) {
+                return Result::failure(
+                    "Required hierarchy storage size is too large");
+            }
+            siblings.reserve(siblings.size() + additionalChildren);
+        }
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "Failed to reserve hierarchy storage: " +
+            std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "Failed to reserve hierarchy storage with an unknown error");
+    }
+    return Result::success();
+}
+
 Result Scene::addGameObjectInternal(
     std::unique_ptr<GameObject> gameObject, bool allowActive,
     GameObject*& inserted) {
@@ -533,47 +562,137 @@ Result Scene::validateGameObjectInsertion(
     return Result::success();
 }
 
+Result Scene::validateEditorGameObjectRemoval(GameObject* gameObject,
+                                              bool requireNoChildren) const {
+    if (!active_) {
+        return Result::failure(
+            "Controlled editor removal requires an active scene");
+    }
+    if (gameObject == nullptr || !ownsGameObject(gameObject)) {
+        return Result::failure(
+            "Controlled editor removal requires an object owned by the scene");
+    }
+    if (!gameObject->modelRenderable().renderTopologyMutable()) {
+        return Result::failure(
+            "Controlled editor removal requires renderer resources to be detached");
+    }
+    if (requireNoChildren && !gameObject->children_.empty()) {
+        return Result::failure(
+            "Controlled editor removal requires a game object without children");
+    }
+
+    const std::size_t objectIndex = static_cast<std::size_t>(
+        std::distance(
+            gameObjects_.begin(),
+            std::find_if(gameObjects_.begin(), gameObjects_.end(),
+                         [gameObject](const auto& object) {
+                             return object.get() == gameObject;
+                         })));
+    if (objectIndex >= gameObjects_.size()) {
+        return Result::failure(
+            "Controlled editor removal could not locate the owned object");
+    }
+
+    if (gameObject->parent_ != nullptr) {
+        if (!ownsGameObject(gameObject->parent_) ||
+            std::count(gameObject->parent_->children_.begin(),
+                       gameObject->parent_->children_.end(), gameObject) != 1) {
+            return Result::failure(
+                "Controlled editor removal found an inconsistent parent relationship");
+        }
+    } else if (std::count(rootObjects_.begin(), rootObjects_.end(), gameObject) !=
+               1) {
+        return Result::failure(
+            "Controlled editor removal found an inconsistent root relationship");
+    }
+
+    if (pointLightCount_ > pointLightIndices_.size()) {
+        return Result::failure(
+            "Controlled editor removal found invalid point-light bookkeeping");
+    }
+    const bool isPointLight =
+        dynamic_cast<PointLight*>(gameObject) != nullptr;
+    if (isPointLight) {
+        const auto pointLight = std::find(
+            pointLightIndices_.begin(),
+            pointLightIndices_.begin() + pointLightCount_, objectIndex);
+        if (pointLight == pointLightIndices_.begin() + pointLightCount_) {
+            return Result::failure(
+                "Controlled editor removal found an unregistered point light");
+        }
+    }
+
+    return Result::success();
+}
+
 Result Scene::removeGameObjectForEditor(
     GameObject* gameObject, std::unique_ptr<GameObject>& removed) noexcept {
     removed.reset();
-    if (!active_) {
+    const Result validation = validateEditorGameObjectRemoval(gameObject);
+    if (!validation) return validation;
+
+    const std::size_t objectIndex = static_cast<std::size_t>(
+        std::distance(
+            gameObjects_.begin(),
+            std::find_if(gameObjects_.begin(), gameObjects_.end(),
+                         [gameObject](const auto& object) {
+                             return object.get() == gameObject;
+                         })));
+    if (objectIndex >= gameObjects_.size()) {
         return Result::failure(
-            "Controlled editor rollback requires an active scene");
-    }
-    if (gameObjects_.empty() || gameObjects_.back().get() != gameObject) {
-        return Result::failure(
-            "Controlled editor rollback can remove only the last inserted object");
-    }
-    if (gameObject->parent_ != nullptr || !gameObject->children_.empty()) {
-        return Result::failure(
-            "Controlled editor rollback cannot remove a related game object");
+            "Controlled editor removal could not locate the owned object");
     }
 
-    if (std::count(rootObjects_.begin(), rootObjects_.end(), gameObject) != 1) {
-        return Result::failure(
-            "Controlled editor rollback found an inconsistent root relationship");
-    }
-
-    const std::size_t objectIndex = gameObjects_.size() - 1;
     const bool isPointLight =
         dynamic_cast<PointLight*>(gameObject) != nullptr;
-    const bool isDirectionalLight =
-        dynamic_cast<DirectionalLight*>(gameObject) != nullptr;
-    const auto rootIterator =
-        std::find(rootObjects_.begin(), rootObjects_.end(), gameObject);
-    rootObjects_.erase(rootIterator);
-    removed = std::move(gameObjects_.back());
-    gameObjects_.pop_back();
     if (isPointLight) {
-        if (pointLightCount_ > 0 &&
-            pointLightIndices_[pointLightCount_ - 1] == objectIndex) {
-            --pointLightCount_;
-            pointLightIndices_[pointLightCount_] = 0;
+        const std::size_t pointLightIndex = static_cast<std::size_t>(
+            std::distance(
+                pointLightIndices_.begin(),
+                std::find(pointLightIndices_.begin(),
+                          pointLightIndices_.begin() + pointLightCount_,
+                          objectIndex)));
+        for (std::size_t index = pointLightIndex + 1;
+             index < pointLightCount_; ++index) {
+            pointLightIndices_[index - 1] = pointLightIndices_[index];
+        }
+        --pointLightCount_;
+        pointLightIndices_[pointLightCount_] = 0;
+    }
+
+    for (std::size_t index = 0; index < pointLightCount_; ++index) {
+        if (pointLightIndices_[index] > objectIndex) {
+            --pointLightIndices_[index];
         }
     }
-    if (isDirectionalLight && directionalLightIndex_ == objectIndex) {
-        directionalLightIndex_.reset();
+    if (directionalLightIndex_.has_value()) {
+        if (*directionalLightIndex_ == objectIndex) {
+            directionalLightIndex_.reset();
+        } else if (*directionalLightIndex_ > objectIndex) {
+            --*directionalLightIndex_;
+        }
     }
+
+    const Camera* activeCamera = activeCamera_.get();
+    const Camera* standaloneCamera = dynamic_cast<const Camera*>(gameObject);
+    const Camera* attachedCamera = gameObject->attachedCamera();
+    if (activeCamera == standaloneCamera ||
+        (attachedCamera != nullptr && activeCamera == attachedCamera)) {
+        activeCamera_.reset();
+    }
+
+    if (gameObject->parent_ != nullptr) {
+        auto& siblings = gameObject->parent_->children_;
+        siblings.erase(std::find(siblings.begin(), siblings.end(), gameObject));
+    } else {
+        rootObjects_.erase(
+            std::find(rootObjects_.begin(), rootObjects_.end(), gameObject));
+    }
+    gameObject->parent_ = nullptr;
+
+    removed = std::move(gameObjects_[objectIndex]);
+    gameObjects_.erase(gameObjects_.begin() +
+                       static_cast<std::ptrdiff_t>(objectIndex));
     return Result::success();
 }
 

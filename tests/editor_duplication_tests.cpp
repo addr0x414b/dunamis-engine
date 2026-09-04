@@ -3,12 +3,14 @@
 #include "scene/camera.h"
 #include "scene/character.h"
 #include "scene/directional_light.h"
+#include "scene/group.h"
 #include "scene/point_light.h"
 #include "scene/scene.h"
 #include "scene/scene_serializer.h"
 #include "scene/scene_limits.h"
 #include "scene/type_registry.h"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <memory>
@@ -434,6 +436,292 @@ bool runPersistenceTest(TypeRegistry& registry) {
     return passed;
 }
 
+GameObject* addBasicObject(TestScene& scene, const char* id,
+                           const char* name) {
+    auto object = std::make_unique<GameObject>();
+    object->persistentId = id;
+    object->name = name;
+    object->position = {1.0f, 2.0f, 3.0f};
+    GameObject* pointer = object.get();
+    if (!scene.addGameObject(std::move(object))) return nullptr;
+    return pointer;
+}
+
+bool runBatchSelectionTests(const TypeRegistry& registry) {
+    bool passed = true;
+
+    {
+        TestScene scene;
+        GameObject* a = addBasicObject(scene, "a", "Pot");
+        GameObject* b = addBasicObject(scene, "b", "Pot");
+        GameObject* c = addBasicObject(scene, "c", "Other");
+        passed &= expect(a != nullptr && b != nullptr && c != nullptr,
+                         "Could not create multi-root duplicate test Scene");
+        if (a == nullptr || b == nullptr || c == nullptr) return false;
+        a->position.x = 4.0f;
+        b->position.x = 8.0f;
+        if (!SceneTestAccess::activate(scene)) return false;
+
+        EditorSession session;
+        passed &= expect(static_cast<bool>(session.setExactSelection(
+                             &scene, {a, b}, b)),
+                         "Could not select the multi-root duplicate sources");
+        session.setTransformTool(TransformTool::Rotate);
+        Result result =
+            editor::EditorObjectCoordinator::duplicateSelectionIntoScene(
+                scene, session, registry,
+                [](Scene&, GameObject&) { return Result::success(); });
+        passed &= expect(static_cast<bool>(result),
+                         "Multi-root batch duplication failed");
+        const auto& roots = scene.rootObjects();
+        passed &= expect(roots.size() == 5 && roots[0] == a && roots[2] == b &&
+                             roots[4] == c,
+                         "Multi-root duplicate order was not deterministic");
+        GameObject* aCopy = roots.size() > 1 ? roots[1] : nullptr;
+        GameObject* bCopy = roots.size() > 3 ? roots[3] : nullptr;
+        passed &= expect(aCopy != nullptr && bCopy != nullptr &&
+                             aCopy->name == "Pot (1)" &&
+                             bCopy->name == "Pot (2)" &&
+                             aCopy->persistentId != a->persistentId &&
+                             bCopy->persistentId != b->persistentId &&
+                             aCopy->position == a->position &&
+                             bCopy->position == b->position,
+                         "Batch duplicates did not copy fresh authored state");
+        passed &= expect(session.isSelected(aCopy) && session.isSelected(bCopy) &&
+                             !session.isSelected(a) && !session.isSelected(b) &&
+                             session.activeGameObject() == bCopy &&
+                             session.transformTool() == TransformTool::Translate,
+                         "Batch duplicate selection/Active policy was incorrect");
+        SceneTestAccess::deactivate(scene);
+    }
+
+    {
+        TestScene scene;
+        GameObject* parent = addBasicObject(scene, "parent", "Parent");
+        GameObject* child = addBasicObject(scene, "child", "Child");
+        GameObject* gap = addBasicObject(scene, "gap", "Gap");
+        passed &= expect(parent != nullptr && child != nullptr && gap != nullptr,
+                         "Could not create selected-parent duplicate test Scene");
+        if (parent == nullptr || child == nullptr || gap == nullptr) return false;
+        child->position = {2.0f, 3.0f, 4.0f};
+        gap->position = {5.0f, 6.0f, 7.0f};
+        if (!scene.reparentGameObject(*child, parent,
+                                      Scene::ReparentMode::PreserveLocal) ||
+            !scene.reparentGameObject(*gap, child,
+                                      Scene::ReparentMode::PreserveLocal) ||
+            !SceneTestAccess::activate(scene)) {
+            return expect(false, "Could not prepare hierarchy-hole duplicate Scene");
+        }
+
+        EditorSession session;
+        passed &= expect(static_cast<bool>(session.setExactSelection(
+                             &scene, {parent, gap}, gap)),
+                         "Could not select hierarchy-hole duplicate sources");
+        Result result =
+            editor::EditorObjectCoordinator::duplicateSelectionIntoScene(
+                scene, session, registry,
+                [](Scene&, GameObject&) { return Result::success(); });
+        passed &= expect(static_cast<bool>(result),
+                         "Hierarchy-hole batch duplication failed");
+        GameObject* parentCopy = nullptr;
+        GameObject* gapCopy = nullptr;
+        for (GameObject* object : session.selectedGameObjects()) {
+            if (object->name == "Parent (1)") parentCopy = object;
+            if (object->name == "Gap (1)") gapCopy = object;
+        }
+        passed &= expect(parentCopy != nullptr && gapCopy != nullptr &&
+                             parentCopy->parent() == nullptr &&
+                             gapCopy->parent() == child &&
+                             gapCopy != parentCopy &&
+                             std::find(child->children().begin(),
+                                       child->children().end(), gapCopy) !=
+                                 child->children().end() &&
+                             std::find(parentCopy->children().begin(),
+                                       parentCopy->children().end(), gapCopy) ==
+                                 parentCopy->children().end(),
+                         "Selected-parent mapping crossed an unselected hierarchy gap");
+        SceneTestAccess::deactivate(scene);
+    }
+
+    {
+        TestScene scene;
+        GameObject* parent = addBasicObject(scene, "hole-parent", "Parent");
+        GameObject* firstGap = addBasicObject(scene, "first-gap", "First");
+        GameObject* firstSelected =
+            addBasicObject(scene, "first-selected", "Selected A");
+        GameObject* secondGap = addBasicObject(scene, "second-gap", "Second");
+        GameObject* secondSelected =
+            addBasicObject(scene, "second-selected", "Selected B");
+        if (parent == nullptr || firstGap == nullptr || firstSelected == nullptr ||
+            secondGap == nullptr || secondSelected == nullptr ||
+            !scene.reparentGameObject(*firstGap, parent,
+                                      Scene::ReparentMode::PreserveLocal) ||
+            !scene.reparentGameObject(*firstSelected, parent,
+                                      Scene::ReparentMode::PreserveLocal) ||
+            !scene.reparentGameObject(*secondGap, parent,
+                                      Scene::ReparentMode::PreserveLocal) ||
+            !scene.reparentGameObject(*secondSelected, parent,
+                                      Scene::ReparentMode::PreserveLocal) ||
+            !SceneTestAccess::activate(scene)) {
+            return expect(false, "Could not prepare duplicate-hole child Scene");
+        }
+        EditorSession session;
+        if (!session.setExactSelection(&scene,
+                                       {parent, firstSelected, secondSelected},
+                                       secondSelected)) {
+            return expect(false, "Could not select duplicate-hole children");
+        }
+        const Result result =
+            editor::EditorObjectCoordinator::duplicateSelectionIntoScene(
+                scene, session, registry,
+                [](Scene&, GameObject&) { return Result::success(); });
+        passed &= expect(static_cast<bool>(result),
+                         "Selected children with gaps could not be duplicated");
+        GameObject* parentCopy = nullptr;
+        for (GameObject* object : session.selectedGameObjects()) {
+            if (object->name == "Parent (1)") parentCopy = object;
+        }
+        passed &= expect(parentCopy != nullptr && parentCopy->children().size() == 2 &&
+                             parentCopy->children()[0]->name == "Selected A (1)" &&
+                             parentCopy->children()[1]->name == "Selected B (1)" &&
+                             parentCopy->children()[0]->parent() == parentCopy &&
+                             parentCopy->children()[1]->parent() == parentCopy,
+                         "Duplicate child order did not close unselected gaps");
+        SceneTestAccess::deactivate(scene);
+    }
+
+    {
+        TestScene scene;
+        auto groupObject = std::make_unique<Group>();
+        groupObject->persistentId = "duplicate-group";
+        groupObject->name = "Group";
+        Group* group = groupObject.get();
+        auto childObject = std::make_unique<GameObject>();
+        childObject->persistentId = "duplicate-group-child";
+        childObject->name = "Child";
+        GameObject* child = childObject.get();
+        if (!scene.addGameObject(std::move(groupObject)) ||
+            !scene.addGameObject(std::move(childObject)) ||
+            !scene.reparentGameObject(*child, group,
+                                      Scene::ReparentMode::PreserveLocal) ||
+            !SceneTestAccess::activate(scene)) {
+            return expect(false, "Could not prepare Group duplicate Scene");
+        }
+        EditorSession session;
+        if (!session.setExactSelection(&scene, {group, child}, child)) return false;
+        const Result result =
+            editor::EditorObjectCoordinator::duplicateSelectionIntoScene(
+                scene, session, registry,
+                [](Scene&, GameObject&) { return Result::success(); });
+        Group* groupCopy = nullptr;
+        GameObject* childCopy = nullptr;
+        for (GameObject* object : session.selectedGameObjects()) {
+            if (object->name == "Group (1)") {
+                groupCopy = dynamic_cast<Group*>(object);
+            } else if (object->name == "Child (1)") {
+                childCopy = object;
+            }
+        }
+        passed &= expect(static_cast<bool>(result) && groupCopy != nullptr &&
+                             childCopy != nullptr && childCopy->parent() == groupCopy,
+                         "Batch duplication did not preserve Group concrete type/topology");
+        SceneTestAccess::deactivate(scene);
+    }
+
+    {
+        TestScene scene;
+        GameObject* first = addBasicObject(scene, "atomic-a", "A");
+        GameObject* second = addBasicObject(scene, "atomic-b", "B");
+        if (first == nullptr || second == nullptr ||
+            !SceneTestAccess::activate(scene)) {
+            return expect(false, "Could not prepare atomic batch duplicate Scene");
+        }
+        EditorSession session;
+        if (!session.setExactSelection(&scene, {first, second}, second)) {
+            return expect(false, "Could not select atomic batch sources");
+        }
+        const std::size_t initialCount = scene.gameObjects().size();
+        const std::vector<GameObject*> initialRoots = scene.rootObjects();
+        std::size_t attachCalls = 0;
+        std::size_t detachCalls = 0;
+        const Result result =
+            editor::EditorObjectCoordinator::duplicateSelectionIntoScene(
+                scene, session, registry,
+                [&attachCalls](Scene&, GameObject&) {
+                    ++attachCalls;
+                    return attachCalls == 1
+                               ? Result::success()
+                               : Result::failure("injected batch failure");
+                },
+                [&detachCalls](Scene&, const std::vector<GameObject*>& objects) {
+                    ++detachCalls;
+                    return objects.size() == 1 ? Result::success()
+                                               : Result::failure("bad rollback set");
+                });
+        passed &= expect(!result && scene.gameObjects().size() == initialCount &&
+                             scene.rootObjects() == initialRoots &&
+                             session.selectedGameObjects().size() == 2 &&
+                             session.isSelected(first) && session.isSelected(second) &&
+                             session.activeGameObject() == second &&
+                             attachCalls == 2 && detachCalls == 1,
+                         "Failed duplicate batch did not roll back atomically");
+        SceneTestAccess::deactivate(scene);
+    }
+
+    {
+        TestScene scene;
+        auto camera = std::make_unique<Camera>();
+        camera->persistentId = "active-camera";
+        camera->name = "Camera";
+        camera->front = {0.0f, 0.0f, -1.0f};
+        (void)camera->setFov(79.0f);
+        Camera* cameraPointer = camera.get();
+        if (!scene.addGameObject(std::move(camera)) ||
+            !scene.setActiveCameraReference(cameraPointer) ||
+            !SceneTestAccess::activate(scene)) {
+            return expect(false, "Could not prepare active-camera duplicate Scene");
+        }
+        EditorSession session;
+        if (!session.setExactSelection(&scene, {cameraPointer}, cameraPointer)) {
+            return expect(false, "Could not select active Camera for duplication");
+        }
+        const Result result =
+            editor::EditorObjectCoordinator::duplicateSelectionIntoScene(
+                scene, session, registry,
+                [](Scene&, GameObject&) { return Result::success(); });
+        Camera* duplicate = nullptr;
+        for (GameObject* object : session.selectedGameObjects()) {
+            duplicate = dynamic_cast<Camera*>(object);
+        }
+        passed &= expect(static_cast<bool>(result) && duplicate != nullptr &&
+                             duplicate != cameraPointer &&
+                             duplicate->fov() == cameraPointer->fov() &&
+                             scene.activeCamera() == cameraPointer,
+                         "Active Camera duplication changed camera bookkeeping");
+        SceneTestAccess::deactivate(scene);
+    }
+
+    {
+        TestScene scene;
+        if (!SceneTestAccess::activate(scene)) return false;
+        EditorSession session;
+        std::size_t attachCalls = 0;
+        const Result result =
+            editor::EditorObjectCoordinator::duplicateSelectionIntoScene(
+                scene, session, registry,
+                [&attachCalls](Scene&, GameObject&) {
+                    ++attachCalls;
+                    return Result::success();
+                });
+        passed &= expect(static_cast<bool>(result) && attachCalls == 0 &&
+                             scene.gameObjects().empty(),
+                         "No-selection Ctrl+D was not a silent no-op");
+        SceneTestAccess::deactivate(scene);
+    }
+
+    return passed;
+}
+
 }  // namespace
 
 int main() {
@@ -450,5 +738,6 @@ int main() {
     passed &= runAttachedTopologyTest(registry);
     passed &= runSceneTransactionTests(registry);
     passed &= runPersistenceTest(registry);
+    passed &= runBatchSelectionTests(registry);
     return passed ? 0 : 1;
 }

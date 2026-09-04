@@ -6,6 +6,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -84,6 +85,10 @@ private:
         std::unique_ptr<GameObject> gameObject, GameObject*& inserted);
     [[nodiscard]] Result removeGameObjectForEditor(
         GameObject* gameObject, std::unique_ptr<GameObject>& removed) noexcept;
+    [[nodiscard]] Result validateEditorGameObjectRemoval(
+        GameObject* gameObject, bool requireNoChildren = true) const;
+    [[nodiscard]] Result reserveEditorHierarchyStorage(
+        const std::vector<std::pair<GameObject*, std::size_t>>& requirements);
     [[nodiscard]] Result validateGameObjectInsertion(
         const GameObject& gameObject) const;
     [[nodiscard]] Result addGameObjectInternal(

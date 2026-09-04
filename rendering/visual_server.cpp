@@ -348,6 +348,33 @@ Result VisualServer::attachGameObject(Scene* scene, GameObject* gameObject) {
     return vulkanContext.attachGameObjectResources(scene, gameObject);
 }
 
+Result VisualServer::detachGameObject(Scene* scene, GameObject* gameObject) {
+    if (!initialized) {
+        return Result::failure("Visual Server is not initialized");
+    }
+    if (!scene || scene != currentScene) {
+        return Result::failure(
+            "Cannot detach an object from a scene that is not being rendered");
+    }
+    return vulkanContext.detachGameObjectResources(scene, gameObject);
+}
+
+Result VisualServer::detachGameObjects(
+    Scene* scene, const std::vector<GameObject*>& gameObjects) {
+    if (!initialized) {
+        return Result::failure("Visual Server is not initialized");
+    }
+    if (!scene || scene != currentScene) {
+        return Result::failure(
+            "Cannot detach objects from a scene that is not being rendered");
+    }
+    return vulkanContext.detachGameObjectsResources(scene, gameObjects);
+}
+
+void VisualServer::cancelStructuralAction() noexcept {
+    vulkanContext.cancelStructuralAction();
+}
+
 bool VisualServer::shutdown() noexcept {
     if (!initialized && !currentScene) {
         return vulkanContext.cleanup();

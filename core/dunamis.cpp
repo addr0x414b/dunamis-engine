@@ -255,11 +255,24 @@ Result Dunamis::run() {
             } else if (command == EditorCommand::Stop) {
                 result = stopRuntimeSession();
             } else if (command == EditorCommand::DuplicateGameObject) {
+                visualServer.cancelStructuralAction();
                 result = duplicateSelectedGameObject();
                 if (result) {
                     visualServer.setEditorError({});
                 } else {
                     spdlog::error("GameObject duplication failed: {}",
+                                  result.error());
+                    visualServer.setEditorError(result.error());
+                    result = Result::success();
+                }
+            } else if (command == EditorCommand::DeleteSelection) {
+                visualServer.cancelStructuralAction();
+                result = deleteSelectedGameObjects();
+                if (result) {
+                    captureColliderVisibility();
+                    visualServer.setEditorError({});
+                } else {
+                    spdlog::error("Selection deletion failed: {}",
                                   result.error());
                     visualServer.setEditorError(result.error());
                     result = Result::success();
@@ -522,6 +535,9 @@ void Dunamis::reportPersistenceResult(const Result& result,
 }
 
 Result Dunamis::duplicateSelectedGameObject() {
+    if (editorSession_.selectedGameObjects().empty()) {
+        return Result::success();
+    }
     if (editorSession_.runState() != SceneRunState::Editing) {
         return Result::failure(
             "GameObject duplication is available only while Editing");
@@ -535,30 +551,41 @@ Result Dunamis::duplicateSelectedGameObject() {
             "The editing Scene is not the active rendered Scene");
     }
 
-    const GameObject* source =
-        editorSession_.selectedGameObjectForScene(editingScene);
-    if (!source) {
-        return Result::failure(
-            "Select a GameObject before using Duplicate");
-    }
-
-    GameObject* duplicate = nullptr;
-    const Result result = editor::EditorObjectCoordinator::duplicateIntoScene(
-        *editingScene, *source, sceneManager_.typeRegistry(),
+    return editor::EditorObjectCoordinator::duplicateSelectionIntoScene(
+        *editingScene, editorSession_, sceneManager_.typeRegistry(),
         [this](Scene& scene, GameObject& gameObject) {
             return visualServer.attachGameObject(&scene, &gameObject);
         },
-        duplicate);
-    if (!result) {
-        return result;
+        [this](Scene& scene, const std::vector<GameObject*>& gameObjects) {
+            return visualServer.detachGameObjects(&scene, gameObjects);
+        });
+}
+
+Result Dunamis::deleteSelectedGameObjects() {
+    if (editorSession_.selectedGameObjects().empty()) {
+        return Result::success();
     }
-    if (!duplicate) {
+    if (editorSession_.runState() != SceneRunState::Editing) {
         return Result::failure(
-            "GameObject duplication succeeded without returning an object");
+            "GameObject deletion is available only while Editing");
     }
 
-    editorSession_.select(editingScene, duplicate);
-    return Result::success();
+    Scene* editingScene = sceneManager_.editingScene();
+    if (!editingScene || sceneManager_.activeScene() != editingScene ||
+        visualServer.renderScene() != editingScene ||
+        !editingScene->isActive()) {
+        return Result::failure(
+            "The editing Scene is not the active rendered Scene");
+    }
+
+    return editor::EditorObjectCoordinator::deleteSelection(
+        *editingScene, editorSession_,
+        [this](Scene& scene, const std::vector<GameObject*>& gameObjects) {
+            return visualServer.detachGameObjects(&scene, gameObjects);
+        },
+        [this](Scene& scene, GameObject& gameObject) {
+            return visualServer.attachGameObject(&scene, &gameObject);
+        });
 }
 
 Result Dunamis::parentSelectedGameObjects() {

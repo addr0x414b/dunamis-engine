@@ -621,6 +621,261 @@ Result VulkanContext::cancelIncrementalGameObjectResourceAttach(
     return Result::success();
 }
 
+bool VulkanContext::resourceTransactionInProgress() const noexcept {
+    return sceneResourceLoadTarget_ != nullptr || sceneUploadBatchActive_ ||
+           sceneUploadCommandBuffer_ != VK_NULL_HANDLE ||
+           !ownedTemporaryBuffers.empty() || !ownedSceneBuffers.empty() ||
+           !ownedSceneImages.empty() || !ownedSceneImageViews.empty() ||
+           !ownedSceneSamplers.empty() || !ownedSceneDescriptorSets.empty() ||
+           !ownedDescriptorPools.empty() || !ownedRenderData.empty() ||
+           !pendingGpuModelKeys_.empty() ||
+           !pendingUncachedGpuModels_.empty() ||
+           incrementalDescriptorPool_ != VK_NULL_HANDLE;
+}
+
+Result VulkanContext::waitForResourceMutation() noexcept {
+    if (device == VK_NULL_HANDLE) {
+        return Result::success();
+    }
+
+    const VkResult result = vkDeviceWaitIdle(device);
+    if (!waitEstablishedCompletion(result)) {
+        return vkFailure("vkDeviceWaitIdle(resource mutation)", result);
+    }
+    hasSubmittedWork = false;
+    singleTimeSubmissionMayBePending = false;
+    return Result::success();
+}
+
+Result VulkanContext::detachGameObjectResources(
+    Scene* scene, GameObject* gameObject) {
+    if (gameObject == nullptr) {
+        return Result::failure(
+            "Cannot detach resources for a null game object");
+    }
+    try {
+        return detachGameObjectsResourcesInternal(scene, {gameObject});
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "GameObject renderer detachment threw: " +
+            std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "GameObject renderer detachment threw an unknown exception");
+    }
+}
+
+Result VulkanContext::detachGameObjectsResources(
+    Scene* scene, const std::vector<GameObject*>& gameObjects) {
+    try {
+        return detachGameObjectsResourcesInternal(scene, gameObjects);
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "GameObject renderer batch detachment threw: " +
+            std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "GameObject renderer batch detachment threw an unknown exception");
+    }
+}
+
+Result VulkanContext::detachGameObjectsResourcesInternal(
+    Scene* scene, const std::vector<GameObject*>& gameObjects) {
+    if (!initialized) {
+        return Result::failure("Vulkan Context is not initialized");
+    }
+    if (scene == nullptr || scene != currentScene) {
+        return Result::failure(
+            "Renderer detachment requires the current render scene");
+    }
+    if (!scene->isActive()) {
+        return Result::failure(
+            "Renderer detachment requires an active scene");
+    }
+    if (gameObjects.empty()) {
+        return Result::success();
+    }
+    if (resourceTransactionInProgress()) {
+        return Result::failure(
+            "Another Vulkan resource transaction is already in progress");
+    }
+
+    const auto ownershipIt = sceneResourceOwnership_.find(scene);
+    if (ownershipIt == sceneResourceOwnership_.end()) {
+        return Result::failure(
+            "Current scene rendering ownership is unavailable");
+    }
+    SceneResourceOwnership& resources = ownershipIt->second;
+
+    std::unordered_set<GameObject*> requested;
+    std::vector<RenderData*> requestedRenderData;
+    std::size_t ownedBufferCount = 0;
+    std::size_t ownedDescriptorSetCount = 0;
+    std::size_t uncachedModelCount = 0;
+    try {
+        requested.reserve(gameObjects.size());
+        requestedRenderData.reserve(gameObjects.size());
+        for (GameObject* object : gameObjects) {
+            const bool ownedByScene = object != nullptr &&
+                std::any_of(scene->gameObjects().begin(),
+                            scene->gameObjects().end(),
+                            [object](const auto& candidate) {
+                                return candidate.get() == object;
+                            });
+            if (!ownedByScene) {
+                return Result::failure(
+                    "Renderer detachment requires objects owned by the scene");
+            }
+            if (!requested.insert(object).second) {
+                return Result::failure(
+                    "Renderer detachment request contains a duplicate object");
+            }
+            if (object->modelRenderable().renderTopologyMutable()) {
+                return Result::failure(
+                    "GameObject renderer resources are not attached");
+            }
+            if (std::count(resources.attachedGameObjects.begin(),
+                           resources.attachedGameObjects.end(), object) != 1) {
+                return Result::failure(
+                    "GameObject renderer attachment registration is inconsistent");
+            }
+            const auto stateIt = resources.meshRenderStates.find(object);
+            if (stateIt == resources.meshRenderStates.end()) {
+                return Result::failure(
+                    "GameObject renderer state is not registered");
+            }
+            for (MeshRenderState& state : stateIt->second) {
+                requestedRenderData.push_back(&state.renderData);
+            }
+        }
+
+        for (RenderData* renderData : requestedRenderData) {
+            if (std::count(resources.renderData.begin(),
+                           resources.renderData.end(), renderData) != 1) {
+                return Result::failure(
+                    "GameObject render-data ownership is inconsistent");
+            }
+        }
+
+        for (const OwnedBufferAllocation& allocation : resources.buffers) {
+            if (requested.count(allocation.owner) != 0) ++ownedBufferCount;
+        }
+        for (const OwnedDescriptorSets& allocation : resources.descriptorSets) {
+            if (requested.count(allocation.owner) != 0) {
+                ++ownedDescriptorSetCount;
+            }
+        }
+        for (const auto& asset : resources.uncachedGpuModels) {
+            if (asset && requested.count(asset->owner) != 0) {
+                ++uncachedModelCount;
+            }
+        }
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "Failed to prepare renderer detachment: " +
+            std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "Failed to prepare renderer detachment with an unknown error");
+    }
+
+    SceneResourceOwnership detached;
+    try {
+        detached.buffers.reserve(ownedBufferCount);
+        detached.descriptorSets.reserve(ownedDescriptorSetCount);
+        detached.uncachedGpuModels.reserve(uncachedModelCount);
+        detached.renderData.reserve(requestedRenderData.size());
+        detached.meshRenderStates.reserve(requested.size());
+        detached.attachedGameObjects.reserve(requested.size());
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "Failed to reserve renderer detachment storage: " +
+            std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "Failed to reserve renderer detachment storage with an unknown error");
+    }
+
+    Result result = waitForResourceMutation();
+    if (!result) return result;
+
+    for (GameObject* object : gameObjects) {
+        auto node = resources.meshRenderStates.extract(object);
+        if (node.empty()) {
+            return Result::failure(
+                "GameObject renderer state disappeared during detachment");
+        }
+        detached.meshRenderStates.insert(std::move(node));
+        detached.attachedGameObjects.push_back(object);
+    }
+
+    auto moveOwnedRecords = [&requested](auto& source, auto& destination) {
+        auto destinationIterator = source.begin();
+        for (auto sourceIterator = source.begin();
+             sourceIterator != source.end(); ++sourceIterator) {
+            if (requested.count(sourceIterator->owner) != 0) {
+                destination.push_back(std::move(*sourceIterator));
+                continue;
+            }
+            if (destinationIterator != sourceIterator) {
+                *destinationIterator = std::move(*sourceIterator);
+            }
+            ++destinationIterator;
+        }
+        source.erase(destinationIterator, source.end());
+    };
+    moveOwnedRecords(resources.buffers, detached.buffers);
+    moveOwnedRecords(resources.descriptorSets, detached.descriptorSets);
+
+    auto renderDataIterator = resources.renderData.begin();
+    for (auto sourceIterator = resources.renderData.begin();
+         sourceIterator != resources.renderData.end(); ++sourceIterator) {
+        const bool belongsToObject =
+            std::find(requestedRenderData.begin(), requestedRenderData.end(),
+                      *sourceIterator) != requestedRenderData.end();
+        if (belongsToObject) {
+            detached.renderData.push_back(*sourceIterator);
+            continue;
+        }
+        if (renderDataIterator != sourceIterator) {
+            *renderDataIterator = *sourceIterator;
+        }
+        ++renderDataIterator;
+    }
+    resources.renderData.erase(renderDataIterator, resources.renderData.end());
+
+    auto uncachedIterator = resources.uncachedGpuModels.begin();
+    for (auto sourceIterator = resources.uncachedGpuModels.begin();
+         sourceIterator != resources.uncachedGpuModels.end(); ++sourceIterator) {
+        if (*sourceIterator && requested.count((*sourceIterator)->owner) != 0) {
+            detached.uncachedGpuModels.push_back(std::move(*sourceIterator));
+            continue;
+        }
+        if (uncachedIterator != sourceIterator) {
+            *uncachedIterator = std::move(*sourceIterator);
+        }
+        ++uncachedIterator;
+    }
+    resources.uncachedGpuModels.erase(uncachedIterator,
+                                      resources.uncachedGpuModels.end());
+
+    auto attachedIterator = resources.attachedGameObjects.begin();
+    for (auto sourceIterator = resources.attachedGameObjects.begin();
+         sourceIterator != resources.attachedGameObjects.end();
+         ++sourceIterator) {
+        if (requested.count(*sourceIterator) != 0) continue;
+        if (attachedIterator != sourceIterator) {
+            *attachedIterator = *sourceIterator;
+        }
+        ++attachedIterator;
+    }
+    resources.attachedGameObjects.erase(attachedIterator,
+                                        resources.attachedGameObjects.end());
+
+    cleanupSceneResources(detached, true);
+    return Result::success();
+}
+
 std::vector<VulkanContext::MeshRenderState>*
 VulkanContext::loadMeshRenderStates(const GameObject* object) noexcept {
     if (!sceneResourceLoadTarget_ || !object) return nullptr;
@@ -3842,6 +4097,7 @@ Result VulkanContext::createTextureImages(
         gpuModelAssetCache_[*cacheKey] = modelAsset;
         pendingGpuModelKeys_.push_back(*cacheKey);
     } else {
+        modelAsset->owner = gameObject.get();
         pendingUncachedGpuModels_.push_back(modelAsset);
     }
     for (std::size_t meshIndex = 0;
@@ -4362,6 +4618,7 @@ Result VulkanContext::createUniformBuffers(
                 {&renderData.uniformBuffers[i],
                  &renderData.uniformBuffersMemory[i],
                  &renderData.uniformBuffersMapped[i]});
+            ownedSceneBuffers.back().owner = gameObject.get();
             Result result = createBuffer(
                 bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
@@ -4500,6 +4757,7 @@ Result VulkanContext::createDescriptorSets(
                 allocatedSets.begin(), allocatedSets.end());
             ownedSceneDescriptorSets.push_back(
                 {&renderData.descriptorSets, allocationPool, allocatedSets});
+            ownedSceneDescriptorSets.back().owner = gameObject.get();
         } catch (const std::exception& exception) {
             renderData.descriptorSets.clear();
             (void)vkFreeDescriptorSets(
@@ -5059,6 +5317,10 @@ void VulkanContext::processEvent(const SDL_Event& event) noexcept {
 
 void VulkanContext::setImGuiInputEnabled(bool enabled) noexcept {
     imguiLayer.setInputEnabled(enabled);
+}
+
+void VulkanContext::cancelStructuralAction() noexcept {
+    imguiLayer.cancelStructuralAction();
 }
 
 void VulkanContext::clearEditorSelection() noexcept {

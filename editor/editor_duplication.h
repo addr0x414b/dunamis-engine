@@ -31,6 +31,9 @@ class EditorObjectCoordinator final {
 public:
     using RendererAttachment =
         std::function<Result(Scene&, GameObject&)>;
+    using RendererBatchDetachment =
+        std::function<Result(Scene&, const std::vector<GameObject*>&)>;
+    using RendererDetachment = RendererBatchDetachment;
 
     // Duplicates source, inserts it through the controlled active-scene path,
     // and asks the renderer to attach the new object. The output is assigned
@@ -39,6 +42,29 @@ public:
         Scene& scene, const GameObject& source, const TypeRegistry& registry,
         const RendererAttachment& attachRenderer,
         GameObject*& duplicate);
+
+    // Duplicates the exact current selection. Selected descendants are
+    // duplicated independently; only an explicitly selected immediate parent
+    // is used as a duplicate parent.
+    [[nodiscard]] static Result duplicateSelectionIntoScene(
+        Scene& scene, EditorSession& editorSession,
+        const TypeRegistry& registry, const RendererAttachment& attachRenderer,
+        const RendererBatchDetachment& detachRenderer);
+    [[nodiscard]] static Result duplicateSelectionIntoScene(
+        Scene& scene, EditorSession& editorSession,
+        const TypeRegistry& registry, const RendererAttachment& attachRenderer);
+
+    // Deletes exactly the selected objects and promotes unselected survivors
+    // through deleted hierarchy nodes while preserving their world poses.
+    [[nodiscard]] static Result deleteSelection(
+        Scene& scene, EditorSession& editorSession,
+        const RendererBatchDetachment& detachRenderer,
+        const RendererAttachment& attachRenderer);
+    [[nodiscard]] static Result deleteSelection(
+        Scene& scene, EditorSession& editorSession,
+        const RendererBatchDetachment& detachRenderer);
+    [[nodiscard]] static Result deleteSelection(
+        Scene& scene, EditorSession& editorSession);
 
     // Reparents every applicable top-level selected root beneath the Active
     // GameObject while preserving world transforms and selection state.

@@ -104,6 +104,10 @@ private:
     [[nodiscard]] Result cancelSceneResourceLoad();
     [[nodiscard]] Result attachGameObjectResources(
         Scene* scene, GameObject* gameObject);
+    [[nodiscard]] Result detachGameObjectResources(
+        Scene* scene, GameObject* gameObject);
+    [[nodiscard]] Result detachGameObjectsResources(
+        Scene* scene, const std::vector<GameObject*>& gameObjects);
     [[nodiscard]] Result unloadSceneResources(Scene* scene);
     [[nodiscard]] Result switchScene(Scene* scene);
     [[nodiscard]] bool hasSceneResources(const Scene* scene) const noexcept;
@@ -112,6 +116,7 @@ private:
                                    SceneRunState runState);
     void processEvent(const SDL_Event& event) noexcept;
     void setImGuiInputEnabled(bool enabled) noexcept;
+    void cancelStructuralAction() noexcept;
     void clearEditorSelection() noexcept;
     [[nodiscard]] bool sceneInteractionAreaHovered() const noexcept;
     void setCurrentScenePath(const std::string& path);
@@ -127,6 +132,7 @@ private:
         VkBuffer buffer = VK_NULL_HANDLE;
         VkDeviceMemory memory = VK_NULL_HANDLE;
         void* mappedAddress = nullptr;
+        GameObject* owner = nullptr;
     };
 
     struct OwnedImageAllocation {
@@ -150,11 +156,13 @@ private:
         std::vector<VkDescriptorSet>* slots = nullptr;
         VkDescriptorPool pool = VK_NULL_HANDLE;
         std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> sets{};
+        GameObject* owner = nullptr;
     };
 
     struct GpuModelAsset {
         std::vector<std::shared_ptr<GpuMeshAsset>> meshes;
         bool complete = false;
+        GameObject* owner = nullptr;
     };
 
     struct MeshRenderState {
@@ -198,6 +206,10 @@ private:
         uint32_t numOfObjects);
     [[nodiscard]] Result cancelIncrementalGameObjectResourceAttach(
         Scene* scene, GameObject* gameObject);
+    [[nodiscard]] bool resourceTransactionInProgress() const noexcept;
+    [[nodiscard]] Result waitForResourceMutation() noexcept;
+    [[nodiscard]] Result detachGameObjectsResourcesInternal(
+        Scene* scene, const std::vector<GameObject*>& gameObjects);
     void cleanupTrackedSceneResources() noexcept;
     void cleanupSceneResources(SceneResourceOwnership& resources,
                                bool freeDescriptorSets) noexcept;

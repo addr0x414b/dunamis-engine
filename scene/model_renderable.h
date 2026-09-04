@@ -38,6 +38,7 @@ public:
     [[nodiscard]] Result setAuthoredTexturePath(std::string path);
 
 private:
+    friend class Scene;
     friend class VulkanContext;
     friend class GameObjectTestAccess;
     friend class GameObjectModelCacheTestAccess;

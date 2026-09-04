@@ -666,6 +666,11 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
         submitEditorAction(EditorCommand::DuplicateGameObject);
     }
     if (editorShortcutAvailable &&
+        ImGui::Shortcut(ImGuiKey_Delete, ImGuiInputFlags_RouteGlobal) &&
+        !editorActionPending()) {
+        submitEditorAction(EditorCommand::DeleteSelection);
+    }
+    if (editorShortcutAvailable &&
         ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_P,
                         ImGuiInputFlags_RouteGlobal) &&
         !editorActionPending()) {
@@ -963,11 +968,11 @@ void ImGuiLayer::submitEditorAction(EditorCommand command) {
 }
 
 void ImGuiLayer::submitEditorAction(EditorAction action) {
-    if (action.command == EditorCommand::ParentSelectionToActive ||
+    if (action.command == EditorCommand::DuplicateGameObject ||
+        action.command == EditorCommand::DeleteSelection ||
+        action.command == EditorCommand::ParentSelectionToActive ||
         action.command == EditorCommand::GroupSelection) {
-        cancelEditorTransformDrag();
-        finishRuntimeTransformDrag();
-        gizmoDragActive_ = false;
+        cancelStructuralAction();
     }
     if (editorSession_ != nullptr) {
         editorSession_->submitEditorAction(std::move(action));
@@ -1017,6 +1022,17 @@ void ImGuiLayer::cancelEditorTransformDrag() noexcept {
             editorTransformSnapshot_);
     }
     clearEditorTransformDrag();
+}
+
+void ImGuiLayer::cancelStructuralAction() noexcept {
+    cancelEditorTransformDrag();
+    finishRuntimeTransformDrag();
+    gizmoDragActive_ = false;
+    runtimeTransformDragActive_ = false;
+    runtimeTransformObject_ = nullptr;
+    if (editorSession_ != nullptr) {
+        (void)editorSession_->consumeRuntimeTransformEdit();
+    }
 }
 
 void ImGuiLayer::clearSelection() noexcept {

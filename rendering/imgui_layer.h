@@ -55,6 +55,7 @@ public:
     void recordDrawData(VkCommandBuffer commandBuffer);
     [[nodiscard]] const GameObject*
     selectedGameObjectForScene(const Scene* scene) const noexcept;
+    void cancelStructuralAction() noexcept;
     void clearSelection() noexcept;
     [[nodiscard]] bool sceneInteractionAreaHovered() const noexcept;
     void setCurrentScenePath(const std::string& path);

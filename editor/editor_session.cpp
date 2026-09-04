@@ -4,6 +4,7 @@
 #include "../scene/scene.h"
 
 #include <algorithm>
+#include <exception>
 #include <unordered_set>
 #include <utility>
 
@@ -132,6 +133,54 @@ void EditorSession::clearSelection() noexcept {
     selectionRecency_.clear();
     activeGameObject_ = nullptr;
     transformTool_ = TransformTool::Translate;
+}
+
+Result EditorSession::setExactSelection(
+    Scene* scene, const std::vector<GameObject*>& objects,
+    GameObject* active) {
+    if (scene == nullptr) {
+        return Result::failure(
+            "Exact editor selection requires a Scene");
+    }
+
+    try {
+        std::unordered_set<const GameObject*> stagedSelection;
+        stagedSelection.reserve(objects.size());
+        std::vector<GameObject*> stagedRecency;
+        stagedRecency.reserve(objects.size());
+        for (GameObject* object : objects) {
+            if (object == nullptr || !ownsGameObject(scene, object)) {
+                return Result::failure(
+                    "Exact editor selection contains an object outside the Scene");
+            }
+            if (!stagedSelection.insert(object).second) {
+                return Result::failure(
+                    "Exact editor selection contains a duplicate object");
+            }
+            stagedRecency.push_back(object);
+        }
+        if (active != nullptr && stagedSelection.count(active) == 0) {
+            return Result::failure(
+                "Exact editor selection Active Object is not selected");
+        }
+
+        const GameObject* previousActive = activeGameObject_;
+        selectionScene_ = scene;
+        selectedGameObjects_.swap(stagedSelection);
+        selectionRecency_.swap(stagedRecency);
+        activeGameObject_ = active;
+        if (activeGameObject_ != previousActive) {
+            transformTool_ = TransformTool::Translate;
+        }
+        return Result::success();
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "Failed to update exact editor selection: " +
+            std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "Failed to update exact editor selection with an unknown error");
+    }
 }
 
 void EditorSession::synchronizeSelection(Scene* scene) {
@@ -451,5 +500,14 @@ void EditorSession::setRenderColliderEnabled(const GameObject& object,
         renderColliderIds_.insert(object.persistentId);
     } else {
         renderColliderIds_.erase(object.persistentId);
+    }
+}
+
+void EditorSession::removeRenderColliderIds(
+    const std::vector<std::string>& ids) noexcept {
+    for (const std::string& id : ids) {
+        if (!id.empty()) {
+            renderColliderIds_.erase(id);
+        }
     }
 }

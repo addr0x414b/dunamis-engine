@@ -34,6 +34,10 @@ public:
     void requestQuitConfirmation();
     [[nodiscard]] Result loadSceneResources(Scene* scene);
     [[nodiscard]] Result attachGameObject(Scene* scene, GameObject* gameObject);
+    [[nodiscard]] Result detachGameObject(Scene* scene, GameObject* gameObject);
+    [[nodiscard]] Result detachGameObjects(
+        Scene* scene, const std::vector<GameObject*>& gameObjects);
+    void cancelStructuralAction() noexcept;
     [[nodiscard]] Result unloadSceneResources(Scene* scene);
     [[nodiscard]] Result switchScene(Scene* scene);
     [[nodiscard]] Scene* renderScene() const noexcept;

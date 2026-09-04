@@ -17,6 +17,7 @@
 #include <exception>
 #include <limits>
 #include <system_error>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -314,6 +315,262 @@ Result copyAttachedCameraIfPresent(const GameObject& source,
         *sourceCamera, *duplicateCamera, registry);
 }
 
+struct DuplicateBatchEntry {
+    GameObject* source = nullptr;
+    std::unique_ptr<GameObject> detached;
+    GameObject* inserted = nullptr;
+    GameObject* targetParent = nullptr;
+};
+
+struct DeleteHierarchyListPlan {
+    GameObject* parent = nullptr;
+    std::vector<GameObject*> objects;
+};
+
+struct DeletePromotionPlan {
+    GameObject* object = nullptr;
+    GameObject* originalParent = nullptr;
+    GameObject* finalParent = nullptr;
+    glm::mat4 originalWorld{1.0f};
+    transform_math::DecomposedTransform finalLocal;
+};
+
+struct DeleteBatchPlan {
+    std::vector<GameObject*> selected;
+    std::unordered_set<GameObject*> selectedSet;
+    std::vector<GameObject*> deletionOrder;
+    std::vector<DeleteHierarchyListPlan> finalLists;
+    std::vector<DeletePromotionPlan> promotions;
+    std::vector<StructuralObjectSnapshot> promotionSnapshots;
+};
+
+void collectHierarchyOrder(
+    GameObject* object, std::vector<GameObject*>& ordered,
+    std::unordered_set<GameObject*>& visited) {
+    if (object == nullptr || !visited.insert(object).second) return;
+    ordered.push_back(object);
+    for (GameObject* child : object->children()) {
+        collectHierarchyOrder(child, ordered, visited);
+    }
+}
+
+std::vector<GameObject*> orderedSelectedObjects(
+    const Scene& scene, const EditorSession& editorSession) {
+    std::vector<GameObject*> ordered;
+    ordered.reserve(editorSession.selectedGameObjects().size());
+    std::unordered_set<GameObject*> selected;
+    selected.reserve(editorSession.selectedGameObjects().size());
+    for (GameObject* object : editorSession.selectedGameObjects()) {
+        if (object != nullptr) selected.insert(object);
+    }
+
+    std::unordered_set<GameObject*> visited;
+    visited.reserve(scene.gameObjects().size());
+    for (GameObject* root : scene.rootObjects()) {
+        std::vector<GameObject*> hierarchy;
+        collectHierarchyOrder(root, hierarchy, visited);
+        for (GameObject* object : hierarchy) {
+            if (selected.count(object) != 0) ordered.push_back(object);
+        }
+    }
+
+    // A valid scene and selection make this fallback unnecessary. It keeps
+    // the operation deterministic and diagnosable if a caller supplies a
+    // malformed selection before context validation can reject it.
+    for (GameObject* object : editorSession.selectedGameObjects()) {
+        if (object != nullptr &&
+            std::find(ordered.begin(), ordered.end(), object) == ordered.end()) {
+            ordered.push_back(object);
+        }
+    }
+    return ordered;
+}
+
+Result validateExactSelection(
+    const Scene& scene, const EditorSession& editorSession,
+    std::vector<GameObject*>& ordered) {
+    ordered.clear();
+    const std::vector<GameObject*>& selected =
+        editorSession.selectedGameObjects();
+    std::unordered_set<GameObject*> seen;
+    try {
+        seen.reserve(selected.size());
+        for (GameObject* object : selected) {
+            if (!ownsObject(scene, object)) {
+                return Result::failure(
+                    "Selection contains a GameObject outside the Scene");
+            }
+            if (!seen.insert(object).second) {
+                return Result::failure(
+                    "Selection contains a duplicate GameObject");
+            }
+        }
+        ordered = orderedSelectedObjects(scene, editorSession);
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "Failed to order the exact selection: " +
+            std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "Failed to order the exact selection with an unknown error");
+    }
+    if (ordered.size() != selected.size()) {
+        return Result::failure(
+            "Selection could not be mapped to the Scene hierarchy");
+    }
+    const GameObject* active = editorSession.activeGameObjectForScene(&scene);
+    if (active == nullptr || seen.count(const_cast<GameObject*>(active)) == 0) {
+        return Result::failure(
+            "Selection requires a selected Active GameObject");
+    }
+    return Result::success();
+}
+
+void appendAfterDeleting(
+    GameObject* object, const std::unordered_set<GameObject*>& selected,
+    std::vector<GameObject*>& output) {
+    if (object == nullptr) return;
+    if (selected.count(object) == 0) {
+        output.push_back(object);
+        return;
+    }
+    for (GameObject* child : object->children()) {
+        appendAfterDeleting(child, selected, output);
+    }
+}
+
+void appendFinalChildren(
+    GameObject* parent, const std::unordered_set<GameObject*>& selected,
+    DeleteHierarchyListPlan& list) {
+    list.parent = parent;
+    list.objects.clear();
+    const std::vector<GameObject*>& children = parent->children();
+    list.objects.reserve(children.size());
+    for (GameObject* child : children) {
+        appendAfterDeleting(child, selected, list.objects);
+    }
+}
+
+void appendFinalRoots(
+    const Scene& scene, const std::unordered_set<GameObject*>& selected,
+    DeleteHierarchyListPlan& list) {
+    list.parent = nullptr;
+    list.objects.clear();
+    list.objects.reserve(scene.rootObjects().size());
+    for (GameObject* root : scene.rootObjects()) {
+        appendAfterDeleting(root, selected, list.objects);
+    }
+}
+
+std::size_t objectDepth(const GameObject* object) {
+    std::size_t depth = 0;
+    std::unordered_set<const GameObject*> visited;
+    for (const GameObject* parent = object == nullptr ? nullptr : object->parent();
+         parent != nullptr && visited.insert(parent).second;
+         parent = parent->parent()) {
+        ++depth;
+    }
+    return depth;
+}
+
+Result capturePromotionSnapshot(
+    const Scene& scene, GameObject* object,
+    StructuralObjectSnapshot& snapshot) {
+    return captureStructuralSnapshot(scene, object, snapshot);
+}
+
+Result makeDeletePlan(
+    Scene& scene, const EditorSession& editorSession,
+    DeleteBatchPlan& plan) {
+    plan = {};
+    Result result = validateExactSelection(scene, editorSession, plan.selected);
+    if (!result) return result;
+
+    try {
+        plan.selectedSet.reserve(plan.selected.size());
+        for (GameObject* object : plan.selected) {
+            plan.selectedSet.insert(object);
+        }
+
+        DeleteHierarchyListPlan roots;
+        appendFinalRoots(scene, plan.selectedSet, roots);
+        plan.finalLists.push_back(std::move(roots));
+
+        std::vector<GameObject*> allObjects;
+        allObjects.reserve(scene.gameObjects().size());
+        std::unordered_set<GameObject*> visited;
+        visited.reserve(scene.gameObjects().size());
+        for (GameObject* root : scene.rootObjects()) {
+            collectHierarchyOrder(root, allObjects, visited);
+        }
+        for (GameObject* object : allObjects) {
+            if (plan.selectedSet.count(object) == 0) {
+                DeleteHierarchyListPlan list;
+                appendFinalChildren(object, plan.selectedSet, list);
+                plan.finalLists.push_back(std::move(list));
+            }
+        }
+
+        std::unordered_set<GameObject*> promotionSet;
+        promotionSet.reserve(scene.gameObjects().size());
+        for (const DeleteHierarchyListPlan& list : plan.finalLists) {
+            for (GameObject* object : list.objects) {
+                if (object == nullptr || object->parent() == list.parent) {
+                    continue;
+                }
+                if (!promotionSet.insert(object).second) {
+                    return Result::failure(
+                        "Delete plan promoted a survivor more than once");
+                }
+                DeletePromotionPlan promotion;
+                promotion.object = object;
+                promotion.originalParent = object->parent();
+                promotion.finalParent = list.parent;
+                promotion.originalWorld = object->worldTransformMatrix();
+                if (!transform_math::isFiniteMatrix(promotion.originalWorld)) {
+                    return Result::failure(
+                        "Delete plan contains a survivor with an invalid world transform");
+                }
+                glm::mat4 parentWorld(1.0f);
+                if (promotion.finalParent != nullptr) {
+                    parentWorld = promotion.finalParent->worldTransformMatrix();
+                }
+                result = deriveStrictLocalTransform(
+                    parentWorld, promotion.originalWorld, promotion.finalLocal);
+                if (!result) {
+                    return Result::failure(
+                        "Delete promotion for '" + object->name +
+                        "' failed strict TRS preflight: " + result.error());
+                }
+                plan.promotions.push_back(std::move(promotion));
+            }
+        }
+
+        plan.promotionSnapshots.reserve(plan.promotions.size());
+        for (GameObject* object : allObjects) {
+            if (promotionSet.count(object) == 0) continue;
+            StructuralObjectSnapshot snapshot;
+            result = capturePromotionSnapshot(scene, object, snapshot);
+            if (!result) return result;
+            plan.promotionSnapshots.push_back(snapshot);
+        }
+
+        plan.deletionOrder = plan.selected;
+        std::stable_sort(
+            plan.deletionOrder.begin(), plan.deletionOrder.end(),
+            [](const GameObject* first, const GameObject* second) {
+                return objectDepth(first) > objectDepth(second);
+            });
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "Failed to build Delete plan: " + std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "Failed to build Delete plan with an unknown error");
+    }
+    return Result::success();
+}
+
 }  // namespace
 
 namespace editor {
@@ -498,6 +755,486 @@ Result EditorObjectCoordinator::duplicateIntoScene(
 
     duplicate = inserted;
     return Result::success();
+}
+
+Result EditorObjectCoordinator::duplicateSelectionIntoScene(
+    Scene& scene, EditorSession& editorSession, const TypeRegistry& registry,
+    const RendererAttachment& attachRenderer,
+    const RendererBatchDetachment& detachRenderer) {
+    if (editorSession.selectedGameObjects().empty()) {
+        return Result::success();
+    }
+    if (!attachRenderer) {
+        return Result::failure(
+            "Cannot duplicate a selection without a renderer attachment path");
+    }
+
+    Result result = validateStructuralContext(scene, editorSession);
+    if (!result) return result;
+
+    std::vector<GameObject*> sources;
+    result = validateExactSelection(scene, editorSession, sources);
+    if (!result) return result;
+    const GameObject* previousActive =
+        editorSession.activeGameObjectForScene(&scene);
+
+    std::size_t selectedPointLights = 0;
+    std::size_t selectedDirectionalLights = 0;
+    for (GameObject* source : sources) {
+        if (dynamic_cast<PointLight*>(source) != nullptr) {
+            ++selectedPointLights;
+        }
+        if (dynamic_cast<DirectionalLight*>(source) != nullptr) {
+            ++selectedDirectionalLights;
+        }
+    }
+    if (selectedPointLights >
+        scene_limits::maxPointLights - scene.pointLightCount()) {
+        return Result::failure(
+            "Duplicating the selection would exceed the point-light limit");
+    }
+    if (selectedDirectionalLights > 0 && scene.directionalLight() != nullptr) {
+        return Result::failure(
+            "Duplicating the selection would create a second directional light");
+    }
+
+    std::vector<std::string> occupiedNames;
+    std::vector<DuplicateBatchEntry> entries;
+    std::unordered_map<GameObject*, GameObject*> sourceToDuplicate;
+    try {
+        occupiedNames.reserve(scene.gameObjects().size() + sources.size());
+        for (const auto& owner : scene.gameObjects()) {
+            if (owner != nullptr) occupiedNames.push_back(owner->name);
+        }
+        entries.reserve(sources.size());
+        sourceToDuplicate.reserve(sources.size());
+        for (GameObject* source : sources) {
+            DuplicateBatchEntry entry;
+            entry.source = source;
+            result = duplicateAuthoredGameObject(
+                *source, registry, entry.detached);
+            if (!result) return result;
+
+            entry.detached->name = makeDuplicateName(
+                source->name, occupiedNames);
+            if (!entry.detached->name.empty() &&
+                std::find(occupiedNames.begin(), occupiedNames.end(),
+                          entry.detached->name) != occupiedNames.end()) {
+                return Result::failure(
+                    "Could not generate a unique duplicate name for '" +
+                    source->name + "'");
+            }
+            occupiedNames.push_back(entry.detached->name);
+
+            result = scene.validateEditorGameObjectInsertion(*entry.detached);
+            if (!result) return result;
+
+            GameObject* detachedPointer = entry.detached.get();
+            entries.push_back(std::move(entry));
+            sourceToDuplicate.emplace(source, detachedPointer);
+        }
+
+        for (DuplicateBatchEntry& entry : entries) {
+            const GameObject* sourceParent = entry.source->parent();
+            const auto duplicateParent = sourceParent == nullptr
+                                             ? sourceToDuplicate.end()
+                                             : sourceToDuplicate.find(
+                                                   const_cast<GameObject*>(
+                                                       sourceParent));
+            entry.targetParent = duplicateParent == sourceToDuplicate.end()
+                                     ? entry.source->parent()
+                                     : duplicateParent->second;
+        }
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "Failed to prepare duplicate batch: " +
+            std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "Failed to prepare duplicate batch with an unknown error");
+    }
+
+    std::vector<GameObject*> inserted;
+    std::vector<GameObject*> attached;
+    std::vector<GameObject*> duplicates;
+    try {
+        inserted.reserve(entries.size());
+        attached.reserve(entries.size());
+        duplicates.reserve(entries.size());
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "Failed to reserve duplicate transaction storage: " +
+            std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "Failed to reserve duplicate transaction storage with an unknown error");
+    }
+
+    auto rollback = [&](const Result& failure) -> Result {
+        Result rollbackResult = Result::success();
+        if (!attached.empty()) {
+            if (!detachRenderer) {
+                rollbackResult = Result::failure(
+                    "No renderer detachment path was supplied for rollback");
+            } else {
+                try {
+                    rollbackResult = detachRenderer(scene, attached);
+                } catch (const std::exception& exception) {
+                    rollbackResult = Result::failure(
+                        "Renderer rollback detachment threw: " +
+                        std::string(exception.what()));
+                } catch (...) {
+                    rollbackResult = Result::failure(
+                        "Renderer rollback detachment threw an unknown exception");
+                }
+            }
+        }
+
+        if (rollbackResult) {
+            std::vector<GameObject*> removalOrder = inserted;
+            std::stable_sort(
+                removalOrder.begin(), removalOrder.end(),
+                [](const GameObject* first, const GameObject* second) {
+                    return objectDepth(first) > objectDepth(second);
+                });
+            for (GameObject* object : removalOrder) {
+                std::unique_ptr<GameObject> removed;
+                const Result removeResult =
+                    scene.removeGameObjectForEditor(object, removed);
+                if (!removeResult) {
+                    rollbackResult = Result::failure(
+                        "Failed to remove duplicate during rollback: " +
+                        removeResult.error());
+                    break;
+                }
+            }
+        }
+        if (rollbackResult) {
+            rollbackResult = scene.validateAuthoredState();
+        }
+        if (!rollbackResult) {
+            return Result::failure(
+                failure.error() + "; duplicate transaction rollback failed: " +
+                rollbackResult.error());
+        }
+        return failure;
+    };
+
+    for (DuplicateBatchEntry& entry : entries) {
+        result = scene.addGameObjectForEditor(std::move(entry.detached),
+                                              entry.inserted);
+        if (!result) return rollback(result);
+        if (entry.inserted == nullptr) {
+            return rollback(Result::failure(
+                "Scene insertion succeeded without returning a duplicate"));
+        }
+        inserted.push_back(entry.inserted);
+    }
+
+    for (DuplicateBatchEntry& entry : entries) {
+        GameObject* duplicate = entry.inserted;
+        const GameObject* sourceParent = entry.source->parent();
+        const bool parentDuplicated =
+            sourceParent != nullptr &&
+            sourceToDuplicate.find(const_cast<GameObject*>(sourceParent)) !=
+                sourceToDuplicate.end();
+        if (parentDuplicated) {
+            result = scene.reparentGameObjectAt(
+                *duplicate, entry.targetParent, Scene::ReparentMode::PreserveLocal,
+                entry.targetParent->children().size());
+        } else if (entry.targetParent == nullptr) {
+            const auto sourceRoot = std::find(
+                scene.rootObjects().begin(), scene.rootObjects().end(),
+                entry.source);
+            if (sourceRoot == scene.rootObjects().end()) {
+                result = Result::failure(
+                    "Could not locate a source root for duplicate placement");
+            } else {
+                const std::size_t sourceIndex = static_cast<std::size_t>(
+                    std::distance(scene.rootObjects().begin(), sourceRoot));
+                result = scene.reorderGameObject(
+                    *duplicate, nullptr, sourceIndex + 1);
+            }
+        } else {
+            const auto sourceSibling = std::find(
+                entry.targetParent->children().begin(),
+                entry.targetParent->children().end(), entry.source);
+            if (sourceSibling == entry.targetParent->children().end()) {
+                result = Result::failure(
+                    "Could not locate a source sibling for duplicate placement");
+            } else {
+                const std::size_t sourceIndex = static_cast<std::size_t>(
+                    std::distance(entry.targetParent->children().begin(),
+                                  sourceSibling));
+                result = scene.reparentGameObjectAt(
+                    *duplicate, entry.targetParent,
+                    Scene::ReparentMode::PreserveLocal, sourceIndex + 1);
+            }
+        }
+        if (!result) return rollback(result);
+    }
+
+    result = scene.validateAuthoredState();
+    if (!result) return rollback(result);
+
+    for (DuplicateBatchEntry& entry : entries) {
+        try {
+            result = attachRenderer(scene, *entry.inserted);
+        } catch (const std::exception& exception) {
+            result = Result::failure(
+                "Renderer attachment threw: " +
+                std::string(exception.what()));
+        } catch (...) {
+            result = Result::failure(
+                "Renderer attachment threw an unknown exception");
+        }
+        if (!result) return rollback(result);
+        attached.push_back(entry.inserted);
+    }
+
+    for (const DuplicateBatchEntry& entry : entries) {
+        duplicates.push_back(entry.inserted);
+    }
+    GameObject* duplicateActive = nullptr;
+    const auto activeMapping = previousActive == nullptr
+                                   ? sourceToDuplicate.end()
+                                   : sourceToDuplicate.find(
+                                         const_cast<GameObject*>(previousActive));
+    if (activeMapping != sourceToDuplicate.end()) {
+        duplicateActive = activeMapping->second;
+    }
+    result = editorSession.setExactSelection(
+        &scene, duplicates, duplicateActive);
+    if (!result) return rollback(result);
+    return Result::success();
+}
+
+Result EditorObjectCoordinator::duplicateSelectionIntoScene(
+    Scene& scene, EditorSession& editorSession, const TypeRegistry& registry,
+    const RendererAttachment& attachRenderer) {
+    return duplicateSelectionIntoScene(
+        scene, editorSession, registry, attachRenderer,
+        [](Scene&, const std::vector<GameObject*>&) {
+            return Result::success();
+        });
+}
+
+Result EditorObjectCoordinator::deleteSelection(
+    Scene& scene, EditorSession& editorSession,
+    const RendererBatchDetachment& detachRenderer,
+    const RendererAttachment& attachRenderer) {
+    if (editorSession.selectedGameObjects().empty()) {
+        return Result::success();
+    }
+
+    Result result = validateStructuralContext(scene, editorSession);
+    if (!result) return result;
+
+    DeleteBatchPlan plan;
+    result = makeDeletePlan(scene, editorSession, plan);
+    if (!result) return result;
+
+    std::vector<std::pair<GameObject*, std::size_t>> requirements;
+    std::vector<std::string> deletedColliderIds;
+    try {
+        requirements.reserve(plan.promotions.size());
+        for (const DeletePromotionPlan& promotion : plan.promotions) {
+            const auto requirement = std::find_if(
+                requirements.begin(), requirements.end(),
+                [&promotion](const auto& candidate) {
+                    return candidate.first == promotion.finalParent;
+                });
+            if (requirement == requirements.end()) {
+                requirements.emplace_back(promotion.finalParent, 1);
+            } else {
+                ++requirement->second;
+            }
+        }
+        deletedColliderIds.reserve(plan.selected.size());
+        for (GameObject* object : plan.selected) {
+            if (!object->persistentId.empty() &&
+                editorSession.renderColliderEnabled(*object)) {
+                deletedColliderIds.push_back(object->persistentId);
+            }
+        }
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "Failed to prepare Delete transaction storage: " +
+            std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "Failed to prepare Delete transaction storage with an unknown error");
+    }
+
+    result = scene.reserveEditorHierarchyStorage(requirements);
+    if (!result) return result;
+
+    std::vector<GameObject*> movedPromotions;
+    movedPromotions.reserve(plan.promotions.size());
+    bool rendererDetached = false;
+
+    auto rollback = [&](const Result& failure) -> Result {
+        Result rollbackResult = Result::success();
+        if (!movedPromotions.empty()) {
+            const auto reparent = [&scene](GameObject& object,
+                                           GameObject* parent,
+                                           Scene::ReparentMode mode,
+                                           std::size_t index) {
+                return scene.reparentGameObjectAt(object, parent, mode, index);
+            };
+            rollbackResult = restoreMovedObjects(
+                plan.promotionSnapshots, movedPromotions, reparent);
+        }
+
+        if (rollbackResult && rendererDetached && !plan.selected.empty()) {
+            if (!attachRenderer) {
+                rollbackResult = Result::failure(
+                    "No renderer attachment path was supplied for Delete rollback");
+            } else {
+                for (GameObject* object : plan.selected) {
+                    try {
+                        const Result attachResult =
+                            attachRenderer(scene, *object);
+                        if (!attachResult && rollbackResult) {
+                            rollbackResult = Result::failure(
+                                "Failed to reattach '" + object->name +
+                                "': " + attachResult.error());
+                        }
+                    } catch (const std::exception& exception) {
+                        if (rollbackResult) {
+                            rollbackResult = Result::failure(
+                                "Renderer rollback attachment for '" +
+                                object->name + "' threw: " +
+                                std::string(exception.what()));
+                        }
+                    } catch (...) {
+                        if (rollbackResult) {
+                            rollbackResult = Result::failure(
+                                "Renderer rollback attachment for '" +
+                                object->name +
+                                "' threw an unknown exception");
+                        }
+                    }
+                }
+            }
+        }
+        if (rollbackResult) {
+            rollbackResult = scene.validateAuthoredState();
+        }
+        if (!rollbackResult) {
+            return Result::failure(
+                failure.error() + "; Delete transaction rollback failed: " +
+                rollbackResult.error());
+        }
+        return failure;
+    };
+
+    if (detachRenderer) {
+        try {
+            result = detachRenderer(scene, plan.selected);
+        } catch (const std::exception& exception) {
+            result = Result::failure(
+                "Renderer detachment threw: " +
+                std::string(exception.what()));
+        } catch (...) {
+            result = Result::failure(
+                "Renderer detachment threw an unknown exception");
+        }
+        if (!result) return result;
+    }
+    rendererDetached = static_cast<bool>(detachRenderer);
+
+    for (const DeleteHierarchyListPlan& list : plan.finalLists) {
+        for (std::size_t index = 0; index < list.objects.size(); ++index) {
+            GameObject* object = list.objects[index];
+            if (object->parent() == list.parent) continue;
+
+            std::size_t destinationIndex =
+                list.parent == nullptr ? scene.rootObjects().size()
+                                       : list.parent->children().size();
+            for (std::size_t later = index + 1; later < list.objects.size();
+                 ++later) {
+                GameObject* next = list.objects[later];
+                if (next->parent() != list.parent) continue;
+                const auto& siblings = list.parent == nullptr
+                                           ? scene.rootObjects()
+                                           : list.parent->children();
+                const auto nextIt =
+                    std::find(siblings.begin(), siblings.end(), next);
+                if (nextIt != siblings.end()) {
+                    destinationIndex = static_cast<std::size_t>(
+                        std::distance(siblings.begin(), nextIt));
+                    break;
+                }
+            }
+
+            result = scene.reparentGameObjectAt(
+                *object, list.parent, Scene::ReparentMode::PreserveWorld,
+                destinationIndex);
+            if (!result) return rollback(result);
+            for (const DeletePromotionPlan& promotion : plan.promotions) {
+                if (promotion.object == object) {
+                    object->position = promotion.finalLocal.position;
+                    object->rotation = promotion.finalLocal.rotation;
+                    object->scale = promotion.finalLocal.scale;
+                    break;
+                }
+            }
+            movedPromotions.push_back(object);
+        }
+    }
+
+    result = scene.validateAuthoredState();
+    if (!result) return rollback(result);
+
+    // Every remaining child of a selected object must itself be selected;
+    // the deepest-first order below then makes each low-level removal
+    // structurally safe without ever destroying an unselected survivor.
+    for (GameObject* object : plan.selected) {
+        for (GameObject* child : object->children()) {
+            if (plan.selectedSet.count(child) == 0) {
+                return rollback(Result::failure(
+                    "Delete plan left an unselected child beneath '" +
+                    object->name + "'"));
+            }
+        }
+    }
+
+    // Validate every ownership erase before the first one. The low-level
+    // removal is intentionally noexcept, so this keeps a later precondition
+    // failure from producing a partially deleted selection.
+    for (GameObject* object : plan.deletionOrder) {
+        result = scene.validateEditorGameObjectRemoval(object, false);
+        if (!result) return rollback(result);
+    }
+
+    for (GameObject* object : plan.deletionOrder) {
+        std::unique_ptr<GameObject> removed;
+        result = scene.removeGameObjectForEditor(object, removed);
+        if (!result) return rollback(result);
+    }
+
+    result = scene.validateAuthoredState();
+    if (!result) {
+        return Result::failure(
+            "Delete committed but final Scene validation failed: " +
+            result.error());
+    }
+
+    editorSession.removeRenderColliderIds(deletedColliderIds);
+    editorSession.clearSelection();
+    return Result::success();
+}
+
+Result EditorObjectCoordinator::deleteSelection(
+    Scene& scene, EditorSession& editorSession,
+    const RendererBatchDetachment& detachRenderer) {
+    return deleteSelection(scene, editorSession, detachRenderer, {});
+}
+
+Result EditorObjectCoordinator::deleteSelection(
+    Scene& scene, EditorSession& editorSession) {
+    return deleteSelection(scene, editorSession, {}, {});
 }
 
 Result EditorObjectCoordinator::parentSelectionToActive(
