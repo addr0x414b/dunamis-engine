@@ -5620,6 +5620,44 @@ VulkanContext::makeCharacterDebugShapeSignature(const Character& character) {
     return signature;
 }
 
+VulkanContext::PhysicsDebugShapeKey
+VulkanContext::makePhysicsDebugShapeKey(const GameObject& object,
+                                        bool character) {
+    const std::string objectId = object.persistentId.empty()
+                                     ? std::to_string(reinterpret_cast<std::uintptr_t>(&object))
+                                     : object.persistentId;
+    return {objectId, character};
+}
+
+const VulkanContext::PhysicsDebugShapeCacheEntry*
+VulkanContext::findMatchingPhysicsDebugShape(
+    const GameObject& object, bool character,
+    const PhysicsDebugShapeSignature& signature) const {
+    const PhysicsDebugShapeKey key =
+        makePhysicsDebugShapeKey(object, character);
+    const auto found = physicsDebugShapes_.find(key);
+    if (found == physicsDebugShapes_.end() ||
+        found->second.signature != signature) {
+        return nullptr;
+    }
+    return &found->second;
+}
+
+const physics::CookedShape* VulkanContext::probePhysicsDebugShape(
+    const GameObject& object, bool character,
+    const PhysicsDebugShapeSignature& signature) const {
+    const PhysicsDebugShapeCacheEntry* cached =
+        findMatchingPhysicsDebugShape(object, character, signature);
+    if (cached == nullptr || !cached->cooked) return nullptr;
+    return &*cached->cooked;
+}
+
+bool VulkanContext::shouldAcquirePhysicsDebugShape(
+    const GameObject& object, bool character,
+    bool renderColliderEnabled) noexcept {
+    return character || (object.physics.enabled && renderColliderEnabled);
+}
+
 void VulkanContext::prepareSelectedPhysicsDiagnostics(Scene* scene,
                                                       SceneRunState runState) {
     imguiLayer.setPhysicsDiagnostics(nullptr, std::nullopt, {});
@@ -5639,6 +5677,19 @@ void VulkanContext::prepareSelectedPhysicsDiagnostics(Scene* scene,
             ? makeCharacterDebugShapeSignature(
                   static_cast<const Character&>(*selected))
             : makePhysicsDebugShapeSignature(*selected);
+    const bool renderColliderEnabled =
+        editorSession_->renderColliderEnabled(*selected);
+    const physics::CookedShape* cached =
+        probePhysicsDebugShape(*selected, character, signature);
+    if (cached != nullptr) {
+        imguiLayer.setPhysicsDiagnostics(selected, cached->diagnostics, {});
+        return;
+    }
+    if (!shouldAcquirePhysicsDebugShape(*selected, character,
+                                        renderColliderEnabled)) {
+        return;
+    }
+
     std::chrono::nanoseconds preparationDuration{};
     bool rebuilt = false;
     std::string error;
@@ -5659,17 +5710,17 @@ const physics::CookedShape* VulkanContext::ensurePhysicsDebugShape(
     std::string& error) {
     error.clear();
     rebuilt = false;
-    const std::string objectId = object.persistentId.empty()
-                                     ? std::to_string(reinterpret_cast<std::uintptr_t>(&object))
-                                     : object.persistentId;
-    const PhysicsDebugShapeKey key{objectId, character};
-    auto found = physicsDebugShapes_.find(key);
-    if (found != physicsDebugShapes_.end() &&
-        found->second.signature == signature) {
-        error = found->second.error;
-        return found->second.cooked ? &*found->second.cooked : nullptr;
+    if (const PhysicsDebugShapeCacheEntry* cached =
+            findMatchingPhysicsDebugShape(object, character, signature);
+        cached != nullptr) {
+        error = cached->error;
+        return cached->cooked ? &*cached->cooked : nullptr;
     }
 
+    const PhysicsDebugShapeKey key =
+        makePhysicsDebugShapeKey(object, character);
+    auto found = physicsDebugShapes_.find(key);
+    const std::string objectId = key.objectId;
     if (found != physicsDebugShapes_.end()) {
         physicsDebugShapes_.erase(found);
         retirePhysicsDebugGpuBatches();

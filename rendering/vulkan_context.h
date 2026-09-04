@@ -429,6 +429,19 @@ private:
         std::string error;
     };
 
+    [[nodiscard]] static PhysicsDebugShapeKey
+    makePhysicsDebugShapeKey(const GameObject& object, bool character);
+    [[nodiscard]] const PhysicsDebugShapeCacheEntry*
+    findMatchingPhysicsDebugShape(
+        const GameObject& object, bool character,
+        const PhysicsDebugShapeSignature& signature) const;
+    [[nodiscard]] const physics::CookedShape* probePhysicsDebugShape(
+        const GameObject& object, bool character,
+        const PhysicsDebugShapeSignature& signature) const;
+    [[nodiscard]] static bool shouldAcquirePhysicsDebugShape(
+        const GameObject& object, bool character,
+        bool renderColliderEnabled) noexcept;
+
     [[nodiscard]] const physics::CookedShape* ensurePhysicsDebugShape(
         Scene* scene, const GameObject& object, bool character,
         const PhysicsDebugShapeSignature& signature,
