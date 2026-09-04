@@ -101,6 +101,23 @@ int main() {
             SelectionOperation::AddSubtree,
         "Ctrl+Shift-click did not map to additive subtree selection");
 
+    passed &= expect(
+        emptyWorldSelectionOperationForModifiers(false, false) ==
+            EmptyWorldSelectionOperation::Clear,
+        "Plain empty-world click did not clear selection");
+    passed &= expect(
+        emptyWorldSelectionOperationForModifiers(true, false) ==
+            EmptyWorldSelectionOperation::Preserve,
+        "Ctrl empty-world click did not preserve selection");
+    passed &= expect(
+        emptyWorldSelectionOperationForModifiers(false, true) ==
+            EmptyWorldSelectionOperation::Clear,
+        "Shift empty-world click did not clear selection");
+    passed &= expect(
+        emptyWorldSelectionOperationForModifiers(true, true) ==
+            EmptyWorldSelectionOperation::Preserve,
+        "Ctrl+Shift empty-world click did not preserve selection");
+
     EditorSession session;
     passed &= expect(session.runState() == SceneRunState::Editing,
                      "EditorSession must default to Editing");
@@ -119,6 +136,18 @@ int main() {
     session.setTransformTool(TransformTool::Scale);
     passed &= expect(session.transformTool() == TransformTool::Scale,
                      "Scale transform tool did not round-trip");
+    passed &= expect(session.transformSpace() == TransformSpace::World,
+                     "EditorSession must default to World transform space");
+    session.setTransformSpace(TransformSpace::Local);
+    passed &= expect(session.transformSpace() == TransformSpace::Local,
+                     "Local transform space did not round-trip");
+    session.setTransformTool(TransformTool::Rotate);
+    passed &= expect(session.transformSpace() == TransformSpace::Local,
+                     "Changing the transform tool reset transform space");
+    session.clearSelection();
+    passed &= expect(session.transformSpace() == TransformSpace::Local,
+                     "Clearing selection reset transform space");
+    session.setTransformSpace(TransformSpace::World);
 
     session.submitEditorAction({EditorCommand::DuplicateGameObject, {}});
     const EditorAction consumedDuplicate = session.consumeEditorAction();
@@ -244,6 +273,12 @@ int main() {
         passed &= expect(hasExactly(session, {second}) &&
                              session.activeGameObject() == second,
                          "Exact replacement retained an old object");
+        session.setTransformSpace(TransformSpace::Local);
+        session.applySelection(&exactScene, first,
+                               SelectionOperation::ReplaceExact);
+        passed &= expect(session.transformSpace() == TransformSpace::Local,
+                         "Changing the selection reset transform space");
+        session.setTransformSpace(TransformSpace::World);
 
         session.applySelection(&exactScene, first,
                                SelectionOperation::ReplaceExact);

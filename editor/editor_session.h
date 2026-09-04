@@ -22,6 +22,9 @@ public:
     [[nodiscard]] TransformTool transformTool() const noexcept;
     void setTransformTool(TransformTool tool) noexcept;
 
+    [[nodiscard]] TransformSpace transformSpace() const noexcept;
+    void setTransformSpace(TransformSpace space) noexcept;
+
     void select(Scene* scene, GameObject* object);
     void select(Scene* scene, GameObject* object,
                 SelectionOperation operation);
@@ -84,6 +87,7 @@ private:
 
     SceneRunState runState_ = SceneRunState::Editing;
     TransformTool transformTool_ = TransformTool::Translate;
+    TransformSpace transformSpace_ = TransformSpace::World;
     Scene* selectionScene_ = nullptr;
     std::unordered_set<const GameObject*> selectedGameObjects_;
     std::vector<GameObject*> selectionRecency_;

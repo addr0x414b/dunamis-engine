@@ -16,6 +16,7 @@
 
 #include "../core/result.h"
 #include "../editor/editor_state.h"
+#include "../editor/editor_transform.h"
 #include "../editor/runtime_transform_edit.h"
 #include "../physics/shape_diagnostics.h"
 
@@ -83,6 +84,8 @@ private:
     void submitRuntimeTransformEdit(
         const RuntimeTransformEdit& edit) noexcept;
     void finishRuntimeTransformDrag() noexcept;
+    void cancelEditorTransformDrag() noexcept;
+    void clearEditorTransformDrag() noexcept;
     void synchronizeSelection(Scene* scene);
     void selectGameObject(Scene* scene, GameObject* object,
                           SelectionOperation operation);
@@ -170,6 +173,9 @@ private:
     bool drawDataReady_ = false;
     bool inputEnabled_ = true;
     bool gizmoDragActive_ = false;
+    bool editorTransformDragActive_ = false;
+    bool editorTransformDragFailed_ = false;
+    editor_transform::TransformDragSnapshot editorTransformSnapshot_;
     bool runtimeTransformDragActive_ = false;
     GameObject* runtimeTransformObject_ = nullptr;
     EditorSession* editorSession_ = nullptr;

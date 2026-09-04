@@ -539,6 +539,7 @@ void ImGuiLayer::processEvent(const SDL_Event& event) noexcept {
 
 void ImGuiLayer::setInputEnabled(bool enabled) noexcept {
     inputEnabled_ = enabled;
+    cancelEditorTransformDrag();
     gizmoDragActive_ = false;
     runtimeTransformDragActive_ = false;
     runtimeTransformObject_ = nullptr;
@@ -978,7 +979,22 @@ void ImGuiLayer::finishRuntimeTransformDrag() noexcept {
     runtimeTransformObject_ = nullptr;
 }
 
+void ImGuiLayer::clearEditorTransformDrag() noexcept {
+    editorTransformDragActive_ = false;
+    editorTransformDragFailed_ = false;
+    editorTransformSnapshot_ = {};
+}
+
+void ImGuiLayer::cancelEditorTransformDrag() noexcept {
+    if (editorTransformDragActive_) {
+        (void)editor_transform::restoreTransformDragSnapshot(
+            editorTransformSnapshot_);
+    }
+    clearEditorTransformDrag();
+}
+
 void ImGuiLayer::clearSelection() noexcept {
+    cancelEditorTransformDrag();
     finishRuntimeTransformDrag();
     if (editorSession_ != nullptr) {
         editorSession_->clearSelection();
@@ -1000,6 +1016,21 @@ void ImGuiLayer::synchronizeSelection(Scene* scene) {
         // runtime edit through a pointer whose owner is no longer known.
         runtimeTransformDragActive_ = false;
         runtimeTransformObject_ = nullptr;
+        if (editorTransformDragActive_) {
+            clearEditorTransformDrag();
+        }
+    } else if (editorTransformDragActive_) {
+        const std::vector<GameObject*>& selected =
+            editorSession_->selectedGameObjects();
+        const bool selectionChanged =
+            editorSession_->activeGameObject() !=
+                editorTransformSnapshot_.active ||
+            selected.size() != editorTransformSnapshot_.selectedObjects.size() ||
+            !std::equal(selected.begin(), selected.end(),
+                        editorTransformSnapshot_.selectedObjects.begin());
+        if (selectionChanged) {
+            cancelEditorTransformDrag();
+        }
     }
     editorSession_->synchronizeSelection(scene);
     if (runtimeTransformObject_ != nullptr &&
@@ -1019,6 +1050,7 @@ void ImGuiLayer::selectGameObject(Scene* scene, GameObject* object,
         return;
     }
 
+    cancelEditorTransformDrag();
     finishRuntimeTransformDrag();
     editorSession_->applySelection(scene, object, operation);
     inspectorError_.clear();
@@ -1053,7 +1085,8 @@ void ImGuiLayer::drawSceneHierarchy(Scene* scene, bool disabled) {
     if (available.x > 0.0f && available.y > 0.0f &&
         ImGui::InvisibleButton("##SceneHierarchyBlankSpace", available)) {
         const ImGuiIO& io = ImGui::GetIO();
-        if (!io.KeyCtrl && !io.KeyShift) {
+        if (emptyWorldSelectionOperationForModifiers(io.KeyCtrl, io.KeyShift) ==
+            EmptyWorldSelectionOperation::Clear) {
             selectGameObject(scene, nullptr,
                              SelectionOperation::ReplaceExact);
         }
@@ -1127,6 +1160,7 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
                                     SceneRunState runState) {
     if (!editorToolsEnabled(runState) ||
         !sceneInteractionRect_.valid) {
+        cancelEditorTransformDrag();
         gizmoDragActive_ = false;
         runtimeTransformDragActive_ = false;
         runtimeTransformObject_ = nullptr;
@@ -1137,6 +1171,7 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     if (selected == nullptr || viewport == nullptr || viewport->Size.x <= 0.0f ||
         viewport->Size.y <= 0.0f) {
+        cancelEditorTransformDrag();
         gizmoDragActive_ = false;
         runtimeTransformDragActive_ = false;
         runtimeTransformObject_ = nullptr;
@@ -1153,6 +1188,125 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
     ImGuizmo::SetRect(viewport->Pos.x, viewport->Pos.y, viewport->Size.x,
                       viewport->Size.y);
     const TransformTool transformTool = editorSession_->transformTool();
+    ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE;
+    const ImGuizmo::MODE mode =
+        editorSession_->transformSpace() == TransformSpace::Local
+            ? ImGuizmo::LOCAL
+            : ImGuizmo::WORLD;
+    switch (transformTool) {
+    case TransformTool::Translate:
+        operation = ImGuizmo::TRANSLATE;
+        break;
+    case TransformTool::Scale:
+        if (runState == SceneRunState::Simulating && selected->physics.enabled) {
+            cancelEditorTransformDrag();
+            gizmoDragActive_ = false;
+            inspectorError_ = "Runtime Scale is unavailable for physics bodies.";
+            drawList->PopClipRect();
+            return;
+        }
+        operation = ImGuizmo::SCALE;
+        break;
+    case TransformTool::Rotate:
+        operation = ImGuizmo::ROTATE;
+        break;
+    }
+
+    if (runState == SceneRunState::Editing) {
+        if (editorTransformDragActive_ &&
+            (editorTransformSnapshot_.scene != scene ||
+             editorTransformSnapshot_.active != selected ||
+             editorTransformSnapshot_.space != editorSession_->transformSpace() ||
+             editorTransformSnapshot_.tool != transformTool)) {
+            cancelEditorTransformDrag();
+        }
+
+        glm::mat4 baseGizmoMatrix;
+        if (editorTransformDragActive_) {
+            baseGizmoMatrix = editorTransformSnapshot_.originalGizmoWorld;
+        } else {
+            const Result frameResult =
+                editor_transform::calculateSelectionGizmoFrame(
+                    *editorSession_, editorSession_->transformSpace(),
+                    baseGizmoMatrix);
+            if (!frameResult) {
+                gizmoDragActive_ = false;
+                inspectorError_ = frameResult.error();
+                drawList->PopClipRect();
+                return;
+            }
+
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Left) ||
+                ImGuizmo::IsUsing()) {
+                const Result snapshotResult =
+                    editor_transform::captureTransformDragSnapshot(
+                        *scene, *editorSession_, editorSession_->transformSpace(),
+                        editorTransformSnapshot_);
+                if (!snapshotResult) {
+                    gizmoDragActive_ = false;
+                    inspectorError_ = snapshotResult.error();
+                    drawList->PopClipRect();
+                    return;
+                }
+                editorTransformDragActive_ = true;
+                editorTransformDragFailed_ = false;
+                baseGizmoMatrix = editorTransformSnapshot_.originalGizmoWorld;
+            }
+        }
+
+        glm::mat4 gizmoMatrix = baseGizmoMatrix;
+        glm::mat4 imguizmoProjection = projection;
+        imguizmoProjection[1][1] *= -1.0f;
+        const bool manipulated = ImGuizmo::Manipulate(
+            glm::value_ptr(view), glm::value_ptr(imguizmoProjection),
+            operation, mode, glm::value_ptr(gizmoMatrix));
+        const bool usingNow = ImGuizmo::IsUsing();
+        drawList->PopClipRect();
+
+        if (manipulated && editorTransformDragActive_ &&
+            !editorTransformDragFailed_) {
+            glm::mat4 currentGizmoWorld = gizmoMatrix;
+            // ImGuizmo's scale and rotation output can carry the frame origin
+            // through its internal matrix convention. The shared transaction
+            // frame is explicitly pivot-centered before deriving D.
+            if (transformTool == TransformTool::Rotate ||
+                transformTool == TransformTool::Scale) {
+                currentGizmoWorld[3] = glm::vec4(
+                    editorTransformSnapshot_.pivot, 1.0f);
+            }
+
+            std::vector<editor_transform::TransformCandidate> candidates;
+            Result result = editor_transform::solveTransformDrag(
+                editorTransformSnapshot_, currentGizmoWorld, candidates);
+            if (result) {
+                result = editor_transform::commitTransformCandidates(
+                    editorTransformSnapshot_, candidates);
+            }
+            if (result) {
+                inspectorError_.clear();
+            } else {
+                const bool restored =
+                    editor_transform::restoreTransformDragSnapshot(
+                        editorTransformSnapshot_);
+                editorTransformDragFailed_ = true;
+                inspectorError_ = result.error();
+                if (!restored) {
+                    inspectorError_ +=
+                        " The original transform snapshot could not be restored.";
+                }
+            }
+        }
+
+        const bool mouseDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        gizmoDragActive_ = (usingNow || editorTransformDragFailed_) &&
+                           mouseDown;
+        if (!usingNow && (!editorTransformDragFailed_ || !mouseDown)) {
+            clearEditorTransformDrag();
+        }
+        return;
+    }
+
+    cancelEditorTransformDrag();
     const glm::mat4 worldTransform = selected->worldTransformMatrix();
     if (!isFiniteMatrix(worldTransform)) {
         gizmoDragActive_ = false;
@@ -1164,29 +1318,6 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
     }
 
     glm::mat4 gizmoMatrix = worldTransform;
-    ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE;
-    ImGuizmo::MODE mode = ImGuizmo::WORLD;
-    switch (transformTool) {
-    case TransformTool::Translate: {
-        operation = ImGuizmo::TRANSLATE;
-        mode = ImGuizmo::WORLD;
-        break;
-    }
-    case TransformTool::Scale:
-        if (runState == SceneRunState::Simulating && selected->physics.enabled) {
-            gizmoDragActive_ = false;
-            inspectorError_ = "Runtime Scale is unavailable for physics bodies.";
-            drawList->PopClipRect();
-            return;
-        }
-        operation = ImGuizmo::SCALE;
-        mode = ImGuizmo::LOCAL;
-        break;
-    case TransformTool::Rotate:
-        operation = ImGuizmo::ROTATE;
-        mode = ImGuizmo::LOCAL;
-        break;
-    }
     glm::mat4 imguizmoProjection = projection;
     imguizmoProjection[1][1] *= -1.0f;
     const bool manipulated = ImGuizmo::Manipulate(
@@ -1852,6 +1983,14 @@ void ImGuiLayer::processWorldSelection(Scene* scene, const glm::mat4& view,
     const editor_picking::Ray ray{origin, direction / directionLength};
     GameObject* closestObject = editor_picking::pickClosestObject(*scene, ray);
     const ImGuiIO& io = ImGui::GetIO();
+    if (closestObject == nullptr) {
+        if (emptyWorldSelectionOperationForModifiers(io.KeyCtrl, io.KeyShift) ==
+            EmptyWorldSelectionOperation::Clear) {
+            selectGameObject(scene, nullptr,
+                             SelectionOperation::ReplaceExact);
+        }
+        return;
+    }
     selectGameObject(scene, closestObject,
                      selectionOperationForModifiers(io.KeyCtrl, io.KeyShift));
 }
@@ -1905,6 +2044,12 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
     ImGui::Text("Type: %s", objectType);
 
     ImGui::SeparatorText("Transform");
+    bool localTransform =
+        editorSession_->transformSpace() == TransformSpace::Local;
+    if (ImGui::Checkbox("Local Transform", &localTransform)) {
+        editorSession_->setTransformSpace(
+            localTransform ? TransformSpace::Local : TransformSpace::World);
+    }
     glm::vec3 position = selectedGameObject->position;
     if (ImGui::DragFloat3("Position", &position.x, 0.1f)) {
         const Result result =
@@ -2188,6 +2333,7 @@ bool ImGuiLayer::initialized() const noexcept {
 
 void ImGuiLayer::shutdown() noexcept {
     stopNativeFileDialog();
+    cancelEditorTransformDrag();
     frameStarted_ = false;
     drawDataReady_ = false;
     physicsDiagnosticsObject_ = nullptr;
@@ -2228,6 +2374,7 @@ void ImGuiLayer::shutdown() noexcept {
 
 void ImGuiLayer::abandon() noexcept {
     stopNativeFileDialog();
+    cancelEditorTransformDrag();
     contextCreated_ = false;
     sdlBackendInitialized_ = false;
     vulkanBackendInitialized_ = false;

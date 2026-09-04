@@ -180,6 +180,182 @@ bool isFiniteNonnegative(float value) noexcept {
 
 namespace editor_mutation {
 
+Result captureCameraTransformState(const GameObject& owner,
+                                   CameraTransformState& state) {
+    state = {};
+    Camera* standaloneCamera = dynamic_cast<Camera*>(
+        const_cast<GameObject*>(&owner));
+    state.camera = standaloneCamera != nullptr
+                       ? standaloneCamera
+                       : const_cast<GameObject&>(owner).attachedCamera();
+    if (state.camera == nullptr) {
+        return Result::success();
+    }
+
+    state.position = state.camera->position;
+    state.front = state.camera->front;
+    state.up = state.camera->up;
+    return Result::success();
+}
+
+Result prepareCameraTransformState(
+    const GameObject& owner, const glm::mat4& originalOwnerWorld,
+    const glm::mat4& candidateOwnerWorld,
+    const glm::mat4& originalParentWorld,
+    const glm::mat4& candidateParentWorld,
+    const glm::vec3& originalLocalRotation,
+    const glm::vec3& candidateLocalRotation,
+    const CameraTransformState& originalState,
+    CameraTransformState& candidateState,
+    bool preserveStandaloneWorldPose) {
+    candidateState = originalState;
+    if (originalState.camera == nullptr) {
+        return Result::success();
+    }
+    if (!transform_math::isFiniteMatrix(originalOwnerWorld) ||
+        !transform_math::isFiniteMatrix(candidateOwnerWorld) ||
+        !transform_math::isFiniteMatrix(originalParentWorld) ||
+        !transform_math::isFiniteMatrix(candidateParentWorld) ||
+        !isFiniteVector(originalLocalRotation) ||
+        !isFiniteVector(candidateLocalRotation) ||
+        !isFiniteVector(originalState.position) ||
+        !isFiniteVector(originalState.front) ||
+        !isFiniteVector(originalState.up)) {
+        return invalidTransform();
+    }
+    if (!hasValidCameraBasis(originalState.front, originalState.up)) {
+        return invalidTransform();
+    }
+
+    Camera* expectedCamera = dynamic_cast<Camera*>(
+        const_cast<GameObject*>(&owner));
+    if (expectedCamera == nullptr) {
+        expectedCamera = const_cast<GameObject&>(owner).attachedCamera();
+    }
+    if (expectedCamera != originalState.camera) {
+        return Result::failure(
+            "Camera association changed during the transform transaction.");
+    }
+
+    if (expectedCamera == dynamic_cast<Camera*>(
+                              const_cast<GameObject*>(&owner))) {
+        if (preserveStandaloneWorldPose) {
+            glm::mat4 inverseCandidateParentWorld;
+            if (!calculateFiniteInverse(candidateParentWorld,
+                                        inverseCandidateParentWorld)) {
+                return Result::failure(
+                    "Standalone Camera parent world transform is not invertible.");
+            }
+
+            const glm::mat3 worldToCandidateParent =
+                glm::mat3(inverseCandidateParentWorld * originalParentWorld);
+            glm::vec3 candidateFront;
+            glm::vec3 candidateUp;
+            if (!normalizeCameraBasis(
+                    worldToCandidateParent * originalState.front,
+                    worldToCandidateParent * originalState.up,
+                    candidateFront, candidateUp)) {
+                return invalidTransform();
+            }
+            candidateState.front = candidateFront;
+            candidateState.up = candidateUp;
+            return Result::success();
+        }
+
+        if (originalLocalRotation == candidateLocalRotation) {
+            return Result::success();
+        }
+
+        const glm::mat4 oldRotation =
+            transform_math::makeRotationMatrix(originalLocalRotation);
+        const glm::mat4 newRotation =
+            transform_math::makeRotationMatrix(candidateLocalRotation);
+        glm::mat4 inverseOldRotation;
+        if (!calculateFiniteInverse(oldRotation, inverseOldRotation)) {
+            return invalidTransform();
+        }
+
+        const glm::mat4 deltaRotation = newRotation * inverseOldRotation;
+        if (!transform_math::isFiniteMatrix(deltaRotation)) {
+            return invalidTransform();
+        }
+
+        glm::vec3 candidateFront;
+        glm::vec3 candidateUp;
+        if (!normalizeCameraBasis(
+                glm::mat3(deltaRotation) * originalState.front,
+                glm::mat3(deltaRotation) * originalState.up,
+                candidateFront, candidateUp)) {
+            return invalidTransform();
+        }
+        candidateState.front = candidateFront;
+        candidateState.up = candidateUp;
+        return Result::success();
+    }
+
+    const glm::mat3 originalLinear(originalOwnerWorld);
+    const glm::mat3 candidateLinear(candidateOwnerWorld);
+    bool linearPartUnchanged = true;
+    for (int column = 0; column < 3 && linearPartUnchanged; ++column) {
+        for (int row = 0; row < 3; ++row) {
+            if (originalLinear[column][row] != candidateLinear[column][row]) {
+                linearPartUnchanged = false;
+                break;
+            }
+        }
+    }
+
+    if (linearPartUnchanged) {
+        candidateState.position = originalState.position +
+                                  (glm::vec3(candidateOwnerWorld[3]) -
+                                   glm::vec3(originalOwnerWorld[3]));
+        return isFiniteVector(candidateState.position)
+                   ? Result::success()
+                   : invalidTransform();
+    }
+
+    glm::mat4 inverseOriginalOwnerWorld;
+    if (!calculateFiniteInverse(originalOwnerWorld,
+                                inverseOriginalOwnerWorld)) {
+        return Result::failure(
+            "Attached Camera owner world transform is not invertible.");
+    }
+
+    const glm::vec4 relativePosition = inverseOriginalOwnerWorld *
+        glm::vec4(originalState.position, 1.0f);
+    const glm::vec4 relativeFront = inverseOriginalOwnerWorld *
+        glm::vec4(originalState.front, 0.0f);
+    const glm::vec4 relativeUp = inverseOriginalOwnerWorld *
+        glm::vec4(originalState.up, 0.0f);
+    if (!isFiniteVector(relativePosition) || !isFiniteVector(relativeFront) ||
+        !isFiniteVector(relativeUp)) {
+        return invalidTransform();
+    }
+
+    const glm::vec4 candidatePosition4 = candidateOwnerWorld *
+        relativePosition;
+    const glm::vec4 candidateFront4 = candidateOwnerWorld * relativeFront;
+    const glm::vec4 candidateUp4 = candidateOwnerWorld * relativeUp;
+    if (!isFiniteVector(candidatePosition4) ||
+        !isFiniteVector(candidateFront4) || !isFiniteVector(candidateUp4)) {
+        return invalidTransform();
+    }
+
+    glm::vec3 candidateFront;
+    glm::vec3 candidateUp;
+    if (!normalizeCameraBasis(glm::vec3(candidateFront4),
+                              glm::vec3(candidateUp4), candidateFront,
+                              candidateUp)) {
+        return invalidTransform();
+    }
+    candidateState.position = glm::vec3(candidatePosition4);
+    candidateState.front = candidateFront;
+    candidateState.up = candidateUp;
+    return isFiniteVector(candidateState.position)
+               ? Result::success()
+               : invalidTransform();
+}
+
 Result applyName(GameObject& object, const std::string& newName) {
     object.name = newName;
     return Result::success();

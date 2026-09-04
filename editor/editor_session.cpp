@@ -23,6 +23,14 @@ void EditorSession::setTransformTool(TransformTool tool) noexcept {
     transformTool_ = tool;
 }
 
+TransformSpace EditorSession::transformSpace() const noexcept {
+    return transformSpace_;
+}
+
+void EditorSession::setTransformSpace(TransformSpace space) noexcept {
+    transformSpace_ = space;
+}
+
 void EditorSession::select(Scene* scene, GameObject* object) {
     applySelection(scene, object, SelectionOperation::ReplaceExact);
 }

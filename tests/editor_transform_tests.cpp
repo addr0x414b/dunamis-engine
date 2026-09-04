@@ -1,4 +1,6 @@
 #include "editor/editor_transform.h"
+#include "editor/editor_session.h"
+#include "editor/editor_state.h"
 #include "rendering/editor_picking.h"
 #include "scene/camera.h"
 #include "scene/directional_light.h"
@@ -64,6 +66,39 @@ bool sameMatrix(const glm::mat4& first, const glm::mat4& second,
         }
     }
     return true;
+}
+
+glm::vec3 worldPosition(const GameObject& object) {
+    return glm::vec3(object.worldTransformMatrix()[3]);
+}
+
+glm::mat4 pivotDelta(const glm::vec3& pivot, const glm::mat4& linearDelta) {
+    return transform_math::makeTranslationMatrix(pivot) * linearDelta *
+           transform_math::makeTranslationMatrix(-pivot);
+}
+
+bool applySharedDelta(
+    TestScene& scene, EditorSession& session, const glm::mat4& sharedDelta,
+    TransformSpace space = TransformSpace::World) {
+    editor_transform::TransformDragSnapshot snapshot;
+    Result result = editor_transform::captureTransformDragSnapshot(
+        scene, session, space, snapshot);
+    if (!result) {
+        std::cerr << result.error() << '\n';
+        return false;
+    }
+    const glm::mat4 currentGizmo = sharedDelta * snapshot.originalGizmoWorld;
+    std::vector<editor_transform::TransformCandidate> candidates;
+    result = editor_transform::solveTransformDrag(
+        snapshot, currentGizmo, candidates);
+    if (result) {
+        result = editor_transform::commitTransformCandidates(snapshot,
+                                                              candidates);
+    }
+    if (!result) {
+        std::cerr << result.error() << '\n';
+    }
+    return static_cast<bool>(result);
 }
 
 bool runRootConversionTests() {
@@ -355,6 +390,719 @@ bool runFailureAndTransactionalTests() {
     return passed;
 }
 
+bool runSelectionPivotAndSpaceTests() {
+    bool passed = true;
+
+    {
+        TestScene scene;
+        GameObject* a = addObject<GameObject>(scene, "pivot-a");
+        GameObject* b = addObject<GameObject>(scene, "pivot-b");
+        GameObject* c = addObject<GameObject>(scene, "pivot-c");
+        GameObject* d = addObject<GameObject>(scene, "pivot-d");
+        GameObject* e = addObject<GameObject>(scene, "pivot-e");
+        passed &= expect(a && b && c && d && e &&
+                             static_cast<bool>(scene.reparentGameObject(
+                                 *b, a, Scene::ReparentMode::PreserveLocal)) &&
+                             static_cast<bool>(scene.reparentGameObject(
+                                 *c, b, Scene::ReparentMode::PreserveLocal)) &&
+                             static_cast<bool>(scene.reparentGameObject(
+                                 *e, d, Scene::ReparentMode::PreserveLocal)),
+                         "Could not create pivot/root fixture");
+        if (!a || !b || !c || !d || !e) return false;
+
+        a->position = {10.0f, 0.0f, 0.0f};
+        b->position = {2.0f, 0.0f, 0.0f};
+        c->position = {3.0f, 0.0f, 0.0f};
+        d->position = {30.0f, 0.0f, 0.0f};
+        e->position = {4.0f, 0.0f, 0.0f};
+
+        glm::vec3 singlePivot;
+        Result result = editor_transform::calculateSharedPivot({e}, singlePivot);
+        passed &= expect(static_cast<bool>(result) &&
+                             sameVector(singlePivot, worldPosition(*e)),
+                         "Single-object pivot did not use the object world position");
+
+        EditorSession session;
+        session.applySelection(&scene, a, SelectionOperation::ReplaceExact);
+        session.applySelection(&scene, c, SelectionOperation::ToggleExact);
+        editor_transform::TransformDragSnapshot holeSnapshot;
+        result = editor_transform::captureTransformDragSnapshot(
+            scene, session, TransformSpace::World, holeSnapshot);
+        passed &= expect(static_cast<bool>(result) &&
+                             holeSnapshot.topLevelSelectedRoots.size() == 1 &&
+                             holeSnapshot.topLevelSelectedRoots[0] == a &&
+                             holeSnapshot.activeTransformRoot == a &&
+                             sameVector(holeSnapshot.pivot, worldPosition(*a)),
+                         "Selection-hole pivot/root resolution was incorrect");
+
+        session.applySelection(&scene, d, SelectionOperation::ToggleExact);
+        session.applySelection(&scene, e, SelectionOperation::ToggleExact);
+        editor_transform::TransformDragSnapshot multiRootSnapshot;
+        result = editor_transform::captureTransformDragSnapshot(
+            scene, session, TransformSpace::World, multiRootSnapshot);
+        passed &= expect(static_cast<bool>(result) &&
+                             multiRootSnapshot.topLevelSelectedRoots.size() == 2 &&
+                             multiRootSnapshot.topLevelSelectedRoots[0] == a &&
+                             multiRootSnapshot.topLevelSelectedRoots[1] == d &&
+                             multiRootSnapshot.activeTransformRoot == d &&
+                             sameVector(multiRootSnapshot.pivot, {20.0f, 0.0f, 0.0f}),
+                         "Multi-root pivot included a descendant or wrong root");
+
+        session.setTransformSpace(TransformSpace::Local);
+        a->rotation = {0.0f, 0.0f, 35.0f};
+        d->rotation = {0.0f, 0.0f, -25.0f};
+        editor_transform::TransformDragSnapshot localSnapshot;
+        result = editor_transform::captureTransformDragSnapshot(
+            scene, session, TransformSpace::Local, localSnapshot);
+        glm::mat4 expectedOrientation;
+        const Result orientationResult = editor_transform::calculateWorldOrientation(
+            d->worldTransformMatrix(), expectedOrientation);
+        passed &= expect(static_cast<bool>(result) &&
+                             localSnapshot.activeTransformRoot == d &&
+                             static_cast<bool>(orientationResult) &&
+                             sameMatrix(localSnapshot.gizmoOrientation,
+                                        expectedOrientation),
+                         "Local gizmo orientation did not use Active's root");
+
+        editor_transform::TransformDragSnapshot worldSnapshot;
+        result = editor_transform::captureTransformDragSnapshot(
+            scene, session, TransformSpace::World, worldSnapshot);
+        passed &= expect(static_cast<bool>(result) &&
+                             sameMatrix(worldSnapshot.gizmoOrientation,
+                                        glm::mat4(1.0f)),
+                         "World gizmo orientation was not world-aligned");
+
+        GameObject* resolvedRoot = nullptr;
+        result = editor_transform::resolveActiveTransformRoot(
+            c, session.selectedGameObjects(), resolvedRoot);
+        passed &= expect(static_cast<bool>(result) && resolvedRoot == a,
+                         "Active selected descendant did not resolve to its root");
+    }
+
+    {
+        TestScene scene;
+        GameObject* a = addObject<GameObject>(scene, "local-hole-a");
+        GameObject* b = addObject<GameObject>(scene, "local-hole-b");
+        GameObject* c = addObject<GameObject>(scene, "local-hole-c");
+        if (!a || !b || !c ||
+            !scene.reparentGameObject(*b, a, Scene::ReparentMode::PreserveLocal) ||
+            !scene.reparentGameObject(*c, b, Scene::ReparentMode::PreserveLocal)) {
+            return expect(false, "Could not create deep local-root fixture");
+        }
+        a->position = {8.0f, 3.0f, 0.0f};
+        a->rotation = {0.0f, 0.0f, 45.0f};
+        EditorSession session;
+        session.applySelection(&scene, a, SelectionOperation::ReplaceExact);
+        session.applySelection(&scene, c, SelectionOperation::ToggleExact);
+        session.setTransformSpace(TransformSpace::Local);
+        editor_transform::TransformDragSnapshot snapshot;
+        const Result result = editor_transform::captureTransformDragSnapshot(
+            scene, session, TransformSpace::Local, snapshot);
+        glm::mat4 expectedOrientation;
+        const Result orientationResult = editor_transform::calculateWorldOrientation(
+            a->worldTransformMatrix(), expectedOrientation);
+        passed &= expect(static_cast<bool>(result) &&
+                             snapshot.activeTransformRoot == a &&
+                             sameVector(snapshot.pivot, worldPosition(*a)) &&
+                             static_cast<bool>(orientationResult) &&
+                             sameMatrix(snapshot.gizmoOrientation,
+                                        expectedOrientation),
+                         "Local selection-hole root did not walk across the gap");
+    }
+
+    return passed;
+}
+
+bool runMultiObjectTransformTests() {
+    bool passed = true;
+
+    {
+        TestScene scene;
+        GameObject* object = addObject<GameObject>(scene, "single-transform-object");
+        if (!object) {
+            return expect(false, "Could not create single-object transform fixture");
+        }
+        object->position = {2.0f, 3.0f, 4.0f};
+        object->rotation = {10.0f, 20.0f, 30.0f};
+        object->scale = {1.5f, 0.75f, 2.0f};
+        EditorSession session;
+        session.select(&scene, object);
+
+        const glm::mat4 translation =
+            transform_math::makeTranslationMatrix({5.0f, 0.0f, 0.0f});
+        const glm::mat4 beforeTranslation = object->worldTransformMatrix();
+        passed &= expect(applySharedDelta(scene, session, translation) &&
+                             sameMatrix(object->worldTransformMatrix(),
+                                        translation * beforeTranslation),
+                         "Single-object translation transaction failed");
+
+        const glm::mat4 rotation = pivotDelta(
+            worldPosition(*object),
+            transform_math::makeRotationMatrix({0.0f, 0.0f, 90.0f}));
+        const glm::mat4 beforeRotation = object->worldTransformMatrix();
+        passed &= expect(applySharedDelta(scene, session, rotation) &&
+                             sameMatrix(object->worldTransformMatrix(),
+                                        rotation * beforeRotation),
+                         "Single-object rotation transaction failed");
+
+        const glm::mat4 scale = pivotDelta(
+            worldPosition(*object), transform_math::makeScaleMatrix(
+                                        {2.0f, 2.0f, 2.0f}));
+        const glm::mat4 beforeScale = object->worldTransformMatrix();
+        passed &= expect(applySharedDelta(scene, session, scale) &&
+                             sameMatrix(object->worldTransformMatrix(),
+                                        scale * beforeScale),
+                         "Single-object scale transaction failed");
+    }
+
+    {
+        TestScene scene;
+        GameObject* parent = addObject<GameObject>(scene, "translate-parent");
+        GameObject* child = addObject<GameObject>(scene, "translate-child");
+        if (!parent || !child ||
+            !scene.reparentGameObject(*child, parent,
+                                      Scene::ReparentMode::PreserveLocal)) {
+            return expect(false, "Could not create translation boundary fixture");
+        }
+        parent->position = {10.0f, 0.0f, 0.0f};
+        child->position = {2.0f, 3.0f, 0.0f};
+        const glm::mat4 parentBefore = parent->worldTransformMatrix();
+        const glm::mat4 childBefore = child->worldTransformMatrix();
+        const glm::vec3 childLocalBefore = child->position;
+        EditorSession session;
+        session.select(&scene, parent);
+        passed &= expect(applySharedDelta(
+                             scene, session,
+                             transform_math::makeTranslationMatrix(
+                                 {5.0f, 0.0f, 0.0f})),
+                         "Selected-parent translation transaction failed");
+        passed &= expect(sameMatrix(parent->worldTransformMatrix(),
+                                    transform_math::makeTranslationMatrix(
+                                        {5.0f, 0.0f, 0.0f}) * parentBefore) &&
+                             sameMatrix(child->worldTransformMatrix(), childBefore) &&
+                             !sameVector(child->position, childLocalBefore),
+                         "Unselected child was not kept world-fixed");
+    }
+
+    {
+        TestScene scene;
+        Camera* camera = addObject<Camera>(scene, "standalone-camera-batch");
+        if (!camera) {
+            return expect(false, "Could not create standalone Camera batch fixture");
+        }
+        camera->position = {2.0f, 3.0f, 4.0f};
+        camera->front = glm::normalize(glm::vec3(0.2f, 0.3f, -0.9f));
+        camera->up = {0.0f, 1.0f, 0.0f};
+        const glm::vec3 frontBefore = camera->front;
+        const glm::vec3 upBefore = camera->up;
+        EditorSession session;
+        session.select(&scene, camera);
+        passed &= expect(applySharedDelta(
+                             scene, session,
+                             transform_math::makeTranslationMatrix(
+                                 {5.0f, 0.0f, 0.0f})),
+                         "Standalone Camera batch translation failed");
+        passed &= expect(camera->position == glm::vec3(7.0f, 3.0f, 4.0f) &&
+                             camera->front == frontBefore &&
+                             camera->up == upBefore,
+                         "Standalone Camera batch translation corrupted auxiliary state");
+    }
+
+    {
+        TestScene scene;
+        GameObject* parent = addObject<GameObject>(
+            scene, "standalone-camera-compensation-parent");
+        Camera* camera = addObject<Camera>(
+            scene, "standalone-camera-compensation-child");
+        if (!parent || !camera ||
+            !scene.reparentGameObject(*camera, parent,
+                                      Scene::ReparentMode::PreserveLocal)) {
+            return expect(false, "Could not create standalone Camera compensation fixture");
+        }
+        camera->position = {2.0f, 3.0f, 4.0f};
+        camera->front = glm::normalize(glm::vec3(0.6f, 0.0f, -0.8f));
+        camera->up = {0.0f, 1.0f, 0.0f};
+        parent->scale = {2.0f, 1.0f, 1.0f};
+        CameraWorldPose poseBefore;
+        const bool poseBeforeResult = camera->calculateWorldPose(poseBefore);
+        EditorSession session;
+        session.select(&scene, parent);
+        const bool transactionResult = applySharedDelta(
+            scene, session, pivotDelta(worldPosition(*parent),
+                                       transform_math::makeScaleMatrix(
+                                           {2.0f, 1.0f, 1.0f})));
+        CameraWorldPose poseAfter;
+        const bool poseAfterResult = camera->calculateWorldPose(poseAfter);
+        passed &= expect(transactionResult && poseBeforeResult && poseAfterResult &&
+                             sameVector(poseAfter.position, poseBefore.position) &&
+                             sameVector(poseAfter.front, poseBefore.front) &&
+                             sameVector(poseAfter.up, poseBefore.up),
+                         "Unselected standalone Camera was not kept world-coherent");
+    }
+
+    {
+        TestScene scene;
+        GameObject* parent = addObject<GameObject>(scene, "branch-parent");
+        GameObject* child = addObject<GameObject>(scene, "branch-child");
+        if (!parent || !child ||
+            !scene.reparentGameObject(*child, parent,
+                                      Scene::ReparentMode::PreserveLocal)) {
+            return expect(false, "Could not create complete-branch fixture");
+        }
+        parent->position = {3.0f, 0.0f, 0.0f};
+        child->position = {2.0f, 1.0f, 0.0f};
+        const glm::mat4 parentBefore = parent->worldTransformMatrix();
+        const glm::mat4 childBefore = child->worldTransformMatrix();
+        const glm::vec3 childLocalBefore = child->position;
+        EditorSession session;
+        session.applySelection(&scene, parent, SelectionOperation::ReplaceExact);
+        session.applySelection(&scene, child, SelectionOperation::ToggleExact);
+        const glm::mat4 delta = transform_math::makeTranslationMatrix(
+            {5.0f, 0.0f, 0.0f});
+        passed &= expect(applySharedDelta(scene, session, delta),
+                         "Complete selected branch translation failed");
+        passed &= expect(sameMatrix(parent->worldTransformMatrix(),
+                                    delta * parentBefore) &&
+                             sameMatrix(child->worldTransformMatrix(),
+                                        delta * childBefore) &&
+                             child->position == childLocalBefore,
+                         "Selected branch translated cumulatively or changed local");
+    }
+
+    {
+        TestScene scene;
+        GameObject* a = addObject<GameObject>(scene, "hole-translate-a");
+        GameObject* b = addObject<GameObject>(scene, "hole-translate-b");
+        GameObject* c = addObject<GameObject>(scene, "hole-translate-c");
+        if (!a || !b || !c ||
+            !scene.reparentGameObject(*b, a, Scene::ReparentMode::PreserveLocal) ||
+            !scene.reparentGameObject(*c, b, Scene::ReparentMode::PreserveLocal)) {
+            return expect(false, "Could not create translation-hole fixture");
+        }
+        a->position = {4.0f, 0.0f, 0.0f};
+        b->position = {2.0f, 0.0f, 0.0f};
+        c->position = {3.0f, 0.0f, 0.0f};
+        const glm::mat4 aBefore = a->worldTransformMatrix();
+        const glm::mat4 bBefore = b->worldTransformMatrix();
+        const glm::mat4 cBefore = c->worldTransformMatrix();
+        EditorSession session;
+        session.select(&scene, a);
+        session.applySelection(&scene, c, SelectionOperation::ToggleExact);
+        const glm::mat4 delta = transform_math::makeTranslationMatrix(
+            {5.0f, 0.0f, 0.0f});
+        passed &= expect(applySharedDelta(scene, session, delta),
+                         "Selection-hole translation failed");
+        passed &= expect(sameMatrix(a->worldTransformMatrix(), delta * aBefore) &&
+                             sameMatrix(b->worldTransformMatrix(), bBefore) &&
+                             sameMatrix(c->worldTransformMatrix(), delta * cBefore),
+                         "Selection-hole translation double-transformed a descendant");
+    }
+
+    {
+        TestScene scene;
+        GameObject* root = addObject<GameObject>(scene, "scale-root");
+        GameObject* child = addObject<GameObject>(scene, "scale-child");
+        GameObject* grandchild = addObject<GameObject>(scene, "scale-grandchild");
+        if (!root || !child || !grandchild ||
+            !scene.reparentGameObject(*child, root,
+                                      Scene::ReparentMode::PreserveLocal) ||
+            !scene.reparentGameObject(*grandchild, child,
+                                      Scene::ReparentMode::PreserveLocal)) {
+            return expect(false, "Could not create deep scale fixture");
+        }
+        root->position = {10.0f, 2.0f, 0.0f};
+        root->rotation = {0.0f, 0.0f, 20.0f};
+        child->position = {3.0f, 1.0f, 0.0f};
+        grandchild->position = {2.0f, -1.0f, 0.0f};
+        const glm::mat4 rootBefore = root->worldTransformMatrix();
+        const glm::mat4 childBefore = child->worldTransformMatrix();
+        const glm::mat4 grandchildBefore = grandchild->worldTransformMatrix();
+        const glm::vec3 childLocalBefore = child->position;
+        const glm::vec3 grandchildLocalBefore = grandchild->position;
+        EditorSession session;
+        session.select(&scene, root);
+        session.applySelection(&scene, child, SelectionOperation::ToggleExact);
+        session.applySelection(&scene, grandchild,
+                               SelectionOperation::ToggleExact);
+        editor_transform::TransformDragSnapshot snapshot;
+        Result result = editor_transform::captureTransformDragSnapshot(
+            scene, session, TransformSpace::World, snapshot);
+        const glm::mat4 scaleTwo = pivotDelta(
+            snapshot.pivot, transform_math::makeScaleMatrix({2.0f, 2.0f, 2.0f}));
+        std::vector<editor_transform::TransformCandidate> candidates;
+        result = result ? editor_transform::solveTransformDrag(
+                              snapshot, scaleTwo * snapshot.originalGizmoWorld,
+                              candidates)
+                        : result;
+        result = result ? editor_transform::commitTransformCandidates(
+                              snapshot, candidates)
+                        : result;
+        passed &= expect(static_cast<bool>(result),
+                         "Deep selected-branch scale transaction failed");
+        passed &= expect(sameMatrix(root->worldTransformMatrix(),
+                                    scaleTwo * rootBefore) &&
+                             sameMatrix(child->worldTransformMatrix(),
+                                        scaleTwo * childBefore) &&
+                             sameMatrix(grandchild->worldTransformMatrix(),
+                                        scaleTwo * grandchildBefore) &&
+                             child->position == childLocalBefore &&
+                             grandchild->position == grandchildLocalBefore,
+                         "Deep selected hierarchy received compounded scale");
+
+        const glm::mat4 scaleThree = pivotDelta(
+            snapshot.pivot, transform_math::makeScaleMatrix({3.0f, 3.0f, 3.0f}));
+        result = editor_transform::solveTransformDrag(
+            snapshot, scaleThree * snapshot.originalGizmoWorld, candidates);
+        result = result ? editor_transform::commitTransformCandidates(
+                              snapshot, candidates)
+                        : result;
+        passed &= expect(static_cast<bool>(result) &&
+                             sameMatrix(root->worldTransformMatrix(),
+                                        scaleThree * rootBefore) &&
+                             sameMatrix(child->worldTransformMatrix(),
+                                        scaleThree * childBefore) &&
+                             sameMatrix(grandchild->worldTransformMatrix(),
+                                        scaleThree * grandchildBefore),
+                         "Drag candidates accumulated the previous scale frame");
+    }
+
+    {
+        TestScene scene;
+        GameObject* parent = addObject<GameObject>(scene, "rotate-parent");
+        GameObject* child = addObject<GameObject>(scene, "rotate-child");
+        if (!parent || !child ||
+            !scene.reparentGameObject(*child, parent,
+                                      Scene::ReparentMode::PreserveLocal)) {
+            return expect(false, "Could not create rotation boundary fixture");
+        }
+        parent->position = {5.0f, 0.0f, 0.0f};
+        child->position = {2.0f, 1.0f, 0.0f};
+        const glm::mat4 parentBefore = parent->worldTransformMatrix();
+        const glm::mat4 childBefore = child->worldTransformMatrix();
+        EditorSession session;
+        session.select(&scene, parent);
+        const glm::mat4 delta = pivotDelta(
+            worldPosition(*parent),
+            transform_math::makeRotationMatrix({0.0f, 0.0f, 90.0f}));
+        passed &= expect(applySharedDelta(scene, session, delta),
+                         "Selected-parent rotation transaction failed");
+        passed &= expect(sameMatrix(parent->worldTransformMatrix(),
+                                    delta * parentBefore) &&
+                             sameMatrix(child->worldTransformMatrix(), childBefore),
+                         "Unselected child moved during parent rotation");
+    }
+
+    {
+        TestScene scene;
+        GameObject* parent = addObject<GameObject>(scene, "rotate-branch-parent");
+        GameObject* child = addObject<GameObject>(scene, "rotate-branch-child");
+        if (!parent || !child ||
+            !scene.reparentGameObject(*child, parent,
+                                      Scene::ReparentMode::PreserveLocal)) {
+            return expect(false, "Could not create selected rotation branch");
+        }
+        parent->position = {2.0f, 4.0f, 0.0f};
+        child->position = {3.0f, 0.0f, 0.0f};
+        const glm::mat4 parentBefore = parent->worldTransformMatrix();
+        const glm::mat4 childBefore = child->worldTransformMatrix();
+        const glm::vec3 childLocalBefore = child->position;
+        EditorSession session;
+        session.select(&scene, parent);
+        session.applySelection(&scene, child, SelectionOperation::ToggleExact);
+        const glm::mat4 delta = pivotDelta(
+            worldPosition(*parent),
+            transform_math::makeRotationMatrix({0.0f, 0.0f, 90.0f}));
+        passed &= expect(applySharedDelta(scene, session, delta),
+                         "Complete selected rotation branch failed");
+        passed &= expect(sameMatrix(parent->worldTransformMatrix(),
+                                    delta * parentBefore) &&
+                             sameMatrix(child->worldTransformMatrix(),
+                                        delta * childBefore) &&
+                             child->position == childLocalBefore,
+                         "Selected rotation branch changed descendant local");
+    }
+
+    {
+        TestScene scene;
+        GameObject* a = addObject<GameObject>(scene, "hole-rotate-a");
+        GameObject* b = addObject<GameObject>(scene, "hole-rotate-b");
+        GameObject* c = addObject<GameObject>(scene, "hole-rotate-c");
+        if (!a || !b || !c ||
+            !scene.reparentGameObject(*b, a, Scene::ReparentMode::PreserveLocal) ||
+            !scene.reparentGameObject(*c, b, Scene::ReparentMode::PreserveLocal)) {
+            return expect(false, "Could not create rotation-hole fixture");
+        }
+        a->position = {4.0f, 0.0f, 0.0f};
+        b->position = {2.0f, 0.0f, 0.0f};
+        c->position = {3.0f, 0.0f, 0.0f};
+        const glm::mat4 aBefore = a->worldTransformMatrix();
+        const glm::mat4 bBefore = b->worldTransformMatrix();
+        const glm::mat4 cBefore = c->worldTransformMatrix();
+        EditorSession session;
+        session.select(&scene, a);
+        session.applySelection(&scene, c, SelectionOperation::ToggleExact);
+        const glm::mat4 delta = pivotDelta(
+            worldPosition(*a),
+            transform_math::makeRotationMatrix({0.0f, 0.0f, 90.0f}));
+        passed &= expect(applySharedDelta(scene, session, delta),
+                         "Selection-hole rotation failed");
+        passed &= expect(sameMatrix(a->worldTransformMatrix(), delta * aBefore) &&
+                             sameMatrix(b->worldTransformMatrix(), bBefore) &&
+                             sameMatrix(c->worldTransformMatrix(), delta * cBefore),
+                         "Selection-hole rotation target was incorrect");
+    }
+
+    {
+        TestScene scene;
+        GameObject* parent = addObject<GameObject>(scene, "scale-boundary-parent");
+        GameObject* child = addObject<GameObject>(scene, "scale-boundary-child");
+        if (!parent || !child ||
+            !scene.reparentGameObject(*child, parent,
+                                      Scene::ReparentMode::PreserveLocal)) {
+            return expect(false, "Could not create scale boundary fixture");
+        }
+        parent->position = {3.0f, 0.0f, 0.0f};
+        child->position = {2.0f, 1.0f, 0.0f};
+        const glm::mat4 parentBefore = parent->worldTransformMatrix();
+        const glm::mat4 childBefore = child->worldTransformMatrix();
+        EditorSession session;
+        session.select(&scene, parent);
+        const glm::mat4 delta = pivotDelta(
+            worldPosition(*parent), transform_math::makeScaleMatrix(
+                                         {2.0f, 2.0f, 2.0f}));
+        passed &= expect(applySharedDelta(scene, session, delta),
+                         "Selected-parent scale transaction failed");
+        passed &= expect(sameMatrix(parent->worldTransformMatrix(), delta * parentBefore) &&
+                             sameMatrix(child->worldTransformMatrix(), childBefore),
+                         "Unselected child moved during parent scale");
+    }
+
+    {
+        TestScene scene;
+        GameObject* a = addObject<GameObject>(scene, "hole-scale-a");
+        GameObject* b = addObject<GameObject>(scene, "hole-scale-b");
+        GameObject* c = addObject<GameObject>(scene, "hole-scale-c");
+        if (!a || !b || !c ||
+            !scene.reparentGameObject(*b, a, Scene::ReparentMode::PreserveLocal) ||
+            !scene.reparentGameObject(*c, b, Scene::ReparentMode::PreserveLocal)) {
+            return expect(false, "Could not create scale-hole fixture");
+        }
+        a->position = {4.0f, 0.0f, 0.0f};
+        b->position = {2.0f, 0.0f, 0.0f};
+        c->position = {3.0f, 0.0f, 0.0f};
+        const glm::mat4 aBefore = a->worldTransformMatrix();
+        const glm::mat4 bBefore = b->worldTransformMatrix();
+        const glm::mat4 cBefore = c->worldTransformMatrix();
+        EditorSession session;
+        session.select(&scene, a);
+        session.applySelection(&scene, c, SelectionOperation::ToggleExact);
+        const glm::mat4 delta = pivotDelta(
+            worldPosition(*a), transform_math::makeScaleMatrix({2.0f, 2.0f, 2.0f}));
+        passed &= expect(applySharedDelta(scene, session, delta),
+                         "Selection-hole scale failed");
+        passed &= expect(sameMatrix(a->worldTransformMatrix(), delta * aBefore) &&
+                             sameMatrix(b->worldTransformMatrix(), bBefore) &&
+                             sameMatrix(c->worldTransformMatrix(), delta * cBefore),
+                         "Selection-hole scale target was incorrect");
+    }
+
+    {
+        TestScene scene;
+        GameObject* a = addObject<GameObject>(scene, "multi-root-a");
+        GameObject* d = addObject<GameObject>(scene, "multi-root-d");
+        GameObject* e = addObject<GameObject>(scene, "multi-root-e");
+        if (!a || !d || !e ||
+            !scene.reparentGameObject(*e, d, Scene::ReparentMode::PreserveLocal)) {
+            return expect(false, "Could not create multi-root transform fixture");
+        }
+        a->position = {10.0f, 0.0f, 0.0f};
+        d->position = {30.0f, 0.0f, 0.0f};
+        e->position = {2.0f, 1.0f, 0.0f};
+        const glm::mat4 aBefore = a->worldTransformMatrix();
+        const glm::mat4 dBefore = d->worldTransformMatrix();
+        const glm::mat4 eBefore = e->worldTransformMatrix();
+        const glm::vec3 eLocalBefore = e->position;
+        EditorSession session;
+        session.select(&scene, a);
+        session.applySelection(&scene, d, SelectionOperation::ToggleExact);
+        session.applySelection(&scene, e, SelectionOperation::ToggleExact);
+        const glm::mat4 delta = pivotDelta(
+            {20.0f, 0.0f, 0.0f}, transform_math::makeScaleMatrix(
+                                     {2.0f, 2.0f, 2.0f}));
+        passed &= expect(applySharedDelta(scene, session, delta),
+                         "Multi-root scale transaction failed");
+        passed &= expect(sameMatrix(a->worldTransformMatrix(), delta * aBefore) &&
+                             sameMatrix(d->worldTransformMatrix(), delta * dBefore) &&
+                             sameMatrix(e->worldTransformMatrix(), delta * eBefore) &&
+                             e->position == eLocalBefore,
+                         "Multi-root transform did not apply one shared scale");
+    }
+
+    {
+        TestScene scene;
+        GameObject* a = addObject<GameObject>(scene, "multi-root-translate-a");
+        GameObject* d = addObject<GameObject>(scene, "multi-root-translate-d");
+        GameObject* e = addObject<GameObject>(scene, "multi-root-translate-e");
+        if (!a || !d || !e ||
+            !scene.reparentGameObject(*e, d, Scene::ReparentMode::PreserveLocal)) {
+            return expect(false, "Could not create multi-root translation fixture");
+        }
+        a->position = {10.0f, 0.0f, 0.0f};
+        d->position = {30.0f, 0.0f, 0.0f};
+        e->position = {2.0f, 1.0f, 0.0f};
+        const glm::vec3 eLocalBefore = e->position;
+        EditorSession session;
+        session.select(&scene, a);
+        session.applySelection(&scene, d, SelectionOperation::ToggleExact);
+        session.applySelection(&scene, e, SelectionOperation::ToggleExact);
+        const glm::mat4 translation =
+            transform_math::makeTranslationMatrix({5.0f, 0.0f, 0.0f});
+        const glm::mat4 aBeforeTranslation = a->worldTransformMatrix();
+        const glm::mat4 dBeforeTranslation = d->worldTransformMatrix();
+        const glm::mat4 eBeforeTranslation = e->worldTransformMatrix();
+        passed &= expect(applySharedDelta(scene, session, translation) &&
+                             sameMatrix(a->worldTransformMatrix(),
+                                        translation * aBeforeTranslation) &&
+                             sameMatrix(d->worldTransformMatrix(),
+                                        translation * dBeforeTranslation) &&
+                             sameMatrix(e->worldTransformMatrix(),
+                                        translation * eBeforeTranslation) &&
+                             e->position == eLocalBefore,
+                         "Multiple selected roots did not share translation");
+
+        const glm::mat4 rotation = pivotDelta(
+            {25.0f, 0.0f, 0.0f},
+            transform_math::makeRotationMatrix({0.0f, 0.0f, 90.0f}));
+        const glm::mat4 aBeforeRotation = a->worldTransformMatrix();
+        const glm::mat4 dBeforeRotation = d->worldTransformMatrix();
+        const glm::mat4 eBeforeRotation = e->worldTransformMatrix();
+        passed &= expect(applySharedDelta(scene, session, rotation) &&
+                             sameMatrix(a->worldTransformMatrix(),
+                                        rotation * aBeforeRotation) &&
+                             sameMatrix(d->worldTransformMatrix(),
+                                        rotation * dBeforeRotation) &&
+                             sameMatrix(e->worldTransformMatrix(),
+                                        rotation * eBeforeRotation) &&
+                             e->position == eLocalBefore,
+                         "Multiple selected roots did not share rotation");
+    }
+
+    return passed;
+}
+
+bool runTransactionalBatchFailureTests() {
+    bool passed = true;
+
+    {
+        TestScene scene;
+        GameObject* validRoot = addObject<GameObject>(scene, "valid-branch");
+        auto invalidOwner = std::make_unique<AttachedCameraObject>();
+        AttachedCameraObject* invalidRoot = invalidOwner.get();
+        invalidRoot->persistentId = "invalid-branch";
+        GameObject* invalidChild = addObject<GameObject>(
+            scene, "invalid-compensated-child");
+        if (!validRoot || !invalidRoot || !invalidChild ||
+            !scene.addGameObject(std::move(invalidOwner)) ||
+            !scene.reparentGameObject(*invalidChild, invalidRoot,
+                                      Scene::ReparentMode::PreserveLocal)) {
+            return expect(false, "Could not create transactional failure fixture");
+        }
+        validRoot->position = {20.0f, 0.0f, 0.0f};
+        invalidRoot->position = {0.0f, 0.0f, 0.0f};
+        invalidChild->position = {2.0f, 3.0f, 0.0f};
+        invalidChild->rotation = {10.0f, 20.0f, 30.0f};
+        invalidChild->scale = {1.0f, 1.5f, 2.0f};
+        invalidRoot->camera.position = {7.0f, 8.0f, 9.0f};
+        invalidRoot->camera.front = {0.0f, 0.0f, -1.0f};
+        invalidRoot->camera.up = {0.0f, 1.0f, 0.0f};
+
+        const glm::vec3 validPositionBefore = validRoot->position;
+        const glm::vec3 invalidPositionBefore = invalidRoot->position;
+        const glm::vec3 childPositionBefore = invalidChild->position;
+        const glm::vec3 childRotationBefore = invalidChild->rotation;
+        const glm::vec3 childScaleBefore = invalidChild->scale;
+        const glm::vec3 cameraPositionBefore = invalidRoot->camera.position;
+        const glm::vec3 cameraFrontBefore = invalidRoot->camera.front;
+        const glm::vec3 cameraUpBefore = invalidRoot->camera.up;
+
+        EditorSession session;
+        session.select(&scene, validRoot);
+        session.applySelection(&scene, invalidRoot,
+                               SelectionOperation::ToggleExact);
+        editor_transform::TransformDragSnapshot snapshot;
+        Result result = editor_transform::captureTransformDragSnapshot(
+            scene, session, TransformSpace::World, snapshot);
+        std::vector<editor_transform::TransformCandidate> candidates;
+        const glm::mat4 validDelta = transform_math::makeTranslationMatrix(
+            {5.0f, 0.0f, 0.0f});
+        result = result ? editor_transform::solveTransformDrag(
+                              snapshot, validDelta * snapshot.originalGizmoWorld,
+                              candidates)
+                        : result;
+        result = result ? editor_transform::commitTransformCandidates(
+                              snapshot, candidates)
+                        : result;
+        passed &= expect(static_cast<bool>(result) &&
+                             !sameVector(invalidRoot->camera.position,
+                                         cameraPositionBefore),
+                         "Valid pre-failure transaction did not update Camera");
+
+        const glm::mat4 invalidDelta = pivotDelta(
+            snapshot.pivot, transform_math::makeScaleMatrix({2.0f, 1.0f, 1.0f}));
+        result = editor_transform::solveTransformDrag(
+            snapshot, invalidDelta * snapshot.originalGizmoWorld, candidates);
+        passed &= expect(!result,
+                         "Meaningful compensation shear was accepted in a batch");
+        passed &= expect(validRoot->position != validPositionBefore &&
+                             invalidRoot->position != invalidPositionBefore,
+                         "Failure fixture did not have a committed valid prefix");
+        passed &= expect(editor_transform::restoreTransformDragSnapshot(snapshot),
+                         "Failed to restore the whole transform transaction");
+        passed &= expect(validRoot->position == validPositionBefore &&
+                             invalidRoot->position == invalidPositionBefore &&
+                             invalidChild->position == childPositionBefore &&
+                             invalidChild->rotation == childRotationBefore &&
+                             invalidChild->scale == childScaleBefore &&
+                             invalidRoot->camera.position == cameraPositionBefore &&
+                             invalidRoot->camera.front == cameraFrontBefore &&
+                             invalidRoot->camera.up == cameraUpBefore,
+                         "Transactional failure left partial GameObject/Camera state");
+    }
+
+    {
+        TestScene scene;
+        GameObject* parent = addObject<GameObject>(scene, "singular-batch-parent");
+        GameObject* child = addObject<GameObject>(scene, "singular-batch-child");
+        if (!parent || !child ||
+            !scene.reparentGameObject(*child, parent,
+                                      Scene::ReparentMode::PreserveLocal)) {
+            return expect(false, "Could not create singular batch fixture");
+        }
+        parent->position = {4.0f, 0.0f, 0.0f};
+        child->position = {2.0f, 1.0f, 0.0f};
+        const glm::vec3 parentPositionBefore = parent->position;
+        const glm::vec3 childPositionBefore = child->position;
+        EditorSession session;
+        session.select(&scene, parent);
+        editor_transform::TransformDragSnapshot snapshot;
+        Result result = editor_transform::captureTransformDragSnapshot(
+            scene, session, TransformSpace::World, snapshot);
+        const glm::mat4 singularDelta = pivotDelta(
+            snapshot.pivot, transform_math::makeScaleMatrix({0.0f, 1.0f, 1.0f}));
+        std::vector<editor_transform::TransformCandidate> candidates;
+        result = result ? editor_transform::solveTransformDrag(
+                              snapshot,
+                              singularDelta * snapshot.originalGizmoWorld,
+                              candidates)
+                        : result;
+        passed &= expect(!result && parent->position == parentPositionBefore &&
+                             child->position == childPositionBefore,
+                         "Singular compensation did not reject atomically");
+    }
+
+    return passed;
+}
+
 bool runEditorWorldDataTests() {
     bool passed = true;
 
@@ -468,6 +1216,9 @@ int main() {
                    runRotatedAndScaledParentTests() &&
                    runRotationAndMultiLevelTests() &&
                    runFailureAndTransactionalTests() &&
+                   runSelectionPivotAndSpaceTests() &&
+                   runMultiObjectTransformTests() &&
+                   runTransactionalBatchFailureTests() &&
                    runEditorWorldDataTests()
                ? 0
                : 1;

@@ -15,6 +15,11 @@ enum class TransformTool {
     Scale,
 };
 
+enum class TransformSpace {
+    World,
+    Local,
+};
+
 enum class SelectionOperation {
     ReplaceExact,
     ToggleExact,
@@ -28,6 +33,17 @@ enum class SelectionOperation {
     if (shift) return SelectionOperation::ReplaceSubtree;
     if (ctrl) return SelectionOperation::ToggleExact;
     return SelectionOperation::ReplaceExact;
+}
+
+enum class EmptyWorldSelectionOperation {
+    Clear,
+    Preserve,
+};
+
+[[nodiscard]] constexpr EmptyWorldSelectionOperation
+emptyWorldSelectionOperationForModifiers(bool ctrl, bool shift) noexcept {
+    return ctrl ? EmptyWorldSelectionOperation::Preserve
+                : EmptyWorldSelectionOperation::Clear;
 }
 
 enum class EditorCommand {
