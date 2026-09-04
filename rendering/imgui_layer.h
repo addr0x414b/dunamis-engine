@@ -176,6 +176,7 @@ private:
     bool editorTransformDragActive_ = false;
     bool editorTransformDragFailed_ = false;
     editor_transform::TransformDragSnapshot editorTransformSnapshot_;
+    glm::mat4 editorTransformGizmoMatrix_{1.0f};
     bool runtimeTransformDragActive_ = false;
     GameObject* runtimeTransformObject_ = nullptr;
     EditorSession* editorSession_ = nullptr;

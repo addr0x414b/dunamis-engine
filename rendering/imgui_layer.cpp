@@ -983,6 +983,7 @@ void ImGuiLayer::clearEditorTransformDrag() noexcept {
     editorTransformDragActive_ = false;
     editorTransformDragFailed_ = false;
     editorTransformSnapshot_ = {};
+    editorTransformGizmoMatrix_ = glm::mat4(1.0f);
 }
 
 void ImGuiLayer::cancelEditorTransformDrag() noexcept {
@@ -1223,7 +1224,7 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
 
         glm::mat4 baseGizmoMatrix;
         if (editorTransformDragActive_) {
-            baseGizmoMatrix = editorTransformSnapshot_.originalGizmoWorld;
+            baseGizmoMatrix = editorTransformGizmoMatrix_;
         } else {
             const Result frameResult =
                 editor_transform::calculateSelectionGizmoFrame(
@@ -1250,7 +1251,9 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
                 }
                 editorTransformDragActive_ = true;
                 editorTransformDragFailed_ = false;
-                baseGizmoMatrix = editorTransformSnapshot_.originalGizmoWorld;
+                editorTransformGizmoMatrix_ =
+                    editorTransformSnapshot_.originalGizmoWorld;
+                baseGizmoMatrix = editorTransformGizmoMatrix_;
             }
         }
 
@@ -1263,9 +1266,16 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
         const bool usingNow = ImGuizmo::IsUsing();
         drawList->PopClipRect();
 
+        if (editorTransformDragActive_ && !editorTransformDragFailed_) {
+            // ImGuizmo's matrix is mutable interaction state. Keep its latest
+            // result for the next frame; the solver still uses the immutable
+            // editorTransformSnapshot_ as its drag origin.
+            editorTransformGizmoMatrix_ = gizmoMatrix;
+        }
+
         if (manipulated && editorTransformDragActive_ &&
             !editorTransformDragFailed_) {
-            glm::mat4 currentGizmoWorld = gizmoMatrix;
+            glm::mat4 currentGizmoWorld = editorTransformGizmoMatrix_;
             // ImGuizmo's scale and rotation output can carry the frame origin
             // through its internal matrix convention. The shared transaction
             // frame is explicitly pivot-centered before deriving D.
@@ -1273,6 +1283,7 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
                 transformTool == TransformTool::Scale) {
                 currentGizmoWorld[3] = glm::vec4(
                     editorTransformSnapshot_.pivot, 1.0f);
+                editorTransformGizmoMatrix_ = currentGizmoWorld;
             }
 
             std::vector<editor_transform::TransformCandidate> candidates;
@@ -1294,6 +1305,8 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
                     inspectorError_ +=
                         " The original transform snapshot could not be restored.";
                 }
+                editorTransformGizmoMatrix_ =
+                    editorTransformSnapshot_.originalGizmoWorld;
             }
         }
 
