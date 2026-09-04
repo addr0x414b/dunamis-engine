@@ -147,6 +147,14 @@ std::uint32_t physicsDebugFloatBits(float value) noexcept {
     return bits;
 }
 
+float physicsDebugFloatFromBits(std::uint32_t bits) noexcept {
+    float value = 0.0f;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+constexpr float physicsDebugPreviewMinScale = 1.0e-6f;
+
 std::string physicsDebugModelIdentity(const GameObject& object) {
     std::string identity = object.authoredModelPath();
     if (!identity.empty()) return identity;
@@ -5658,6 +5666,104 @@ bool VulkanContext::shouldAcquirePhysicsDebugShape(
     return character || (object.physics.enabled && renderColliderEnabled);
 }
 
+bool VulkanContext::shouldDeferPhysicsDebugShapeAcquisition(
+    const GameObject& object, bool character, bool renderColliderEnabled,
+    bool activeScaleEdit) noexcept {
+    if (character || !activeScaleEdit || !renderColliderEnabled ||
+        !object.physics.enabled) {
+        return false;
+    }
+    return object.physics.colliderType ==
+               GameObject::PhysicsColliderType::Mesh ||
+           object.physics.colliderType ==
+               GameObject::PhysicsColliderType::ConvexHull;
+}
+
+bool VulkanContext::makePhysicsDebugPreviewRelativeScale(
+    const glm::vec3& cachedScale, const glm::vec3& currentScale,
+    glm::vec3& relativeScale) noexcept {
+    relativeScale = glm::vec3(1.0f);
+    if (!isFiniteVector(cachedScale) || !isFiniteVector(currentScale)) {
+        return false;
+    }
+
+    for (int axis = 0; axis < 3; ++axis) {
+        if (std::fabs(cachedScale[axis]) < physicsDebugPreviewMinScale) {
+            relativeScale = glm::vec3(1.0f);
+            return false;
+        }
+        const float ratio = currentScale[axis] / cachedScale[axis];
+        if (!std::isfinite(ratio) ||
+            std::fabs(ratio) < physicsDebugPreviewMinScale) {
+            relativeScale = glm::vec3(1.0f);
+            return false;
+        }
+        relativeScale[axis] = ratio;
+    }
+    return isFiniteVector(relativeScale);
+}
+
+const VulkanContext::PhysicsDebugShapeCacheEntry*
+VulkanContext::findPhysicsDebugScalePreview(
+    const GameObject& object, const PhysicsDebugShapeSignature& signature,
+    glm::vec3& relativeScale) const {
+    relativeScale = glm::vec3(1.0f);
+    if (signature.type != PhysicsDebugShapeSignature::Type::Mesh &&
+        signature.type != PhysicsDebugShapeSignature::Type::ConvexHull) {
+        return nullptr;
+    }
+
+    const PhysicsDebugShapeKey key =
+        makePhysicsDebugShapeKey(object, false);
+    const auto found = physicsDebugShapes_.find(key);
+    if (found == physicsDebugShapes_.end()) return nullptr;
+    const PhysicsDebugShapeCacheEntry& cached = found->second;
+
+    // Only a same-model, same-collider entry with a different authored scale
+    // is eligible. This keeps stale geometry from other edits out of the
+    // preview path and leaves the cache entry read-only.
+    if (cached.signature.type != signature.type ||
+        cached.signature.modelIdentity != signature.modelIdentity ||
+        cached.signature.radiusBits != signature.radiusBits ||
+        cached.signature.heightBits != signature.heightBits ||
+        cached.signature.scaleBits == signature.scaleBits ||
+        !cached.cooked || cached.cooked->shape == nullptr) {
+        return nullptr;
+    }
+
+    const JPH::EShapeSubType expectedSubtype =
+        signature.type == PhysicsDebugShapeSignature::Type::Mesh
+            ? JPH::EShapeSubType::Mesh
+            : JPH::EShapeSubType::ConvexHull;
+    if (cached.cooked->shape->GetSubType() != expectedSubtype) {
+        return nullptr;
+    }
+
+    const glm::vec3 cachedScale(
+        physicsDebugFloatFromBits(cached.signature.scaleBits[0]),
+        physicsDebugFloatFromBits(cached.signature.scaleBits[1]),
+        physicsDebugFloatFromBits(cached.signature.scaleBits[2]));
+    const glm::vec3 currentScale(
+        physicsDebugFloatFromBits(signature.scaleBits[0]),
+        physicsDebugFloatFromBits(signature.scaleBits[1]),
+        physicsDebugFloatFromBits(signature.scaleBits[2]));
+    if (!makePhysicsDebugPreviewRelativeScale(
+            cachedScale, currentScale, relativeScale)) {
+        return nullptr;
+    }
+
+    const JPH::Vec3 centerOfMass = cached.cooked->shape->GetCenterOfMass();
+    const glm::vec3 scaledCenterOfMass(
+        relativeScale.x * centerOfMass.GetX(),
+        relativeScale.y * centerOfMass.GetY(),
+        relativeScale.z * centerOfMass.GetZ());
+    if (!isFiniteVector(scaledCenterOfMass)) {
+        relativeScale = glm::vec3(1.0f);
+        return nullptr;
+    }
+    return &cached;
+}
+
 void VulkanContext::prepareSelectedPhysicsDiagnostics(Scene* scene,
                                                       SceneRunState runState) {
     imguiLayer.setPhysicsDiagnostics(nullptr, std::nullopt, {});
@@ -5683,6 +5789,14 @@ void VulkanContext::prepareSelectedPhysicsDiagnostics(Scene* scene,
         probePhysicsDebugShape(*selected, character, signature);
     if (cached != nullptr) {
         imguiLayer.setPhysicsDiagnostics(selected, cached->diagnostics, {});
+        return;
+    }
+    const bool activeScaleEdit =
+        imguiLayer.isPhysicsDebugScalePreviewActive(scene, selected);
+    if (shouldDeferPhysicsDebugShapeAcquisition(
+            *selected, character, renderColliderEnabled, activeScaleEdit)) {
+        // The old cooked shape is visual preview state only. Its diagnostics
+        // do not describe the current authored scale.
         return;
     }
     if (!shouldAcquirePhysicsDebugShape(*selected, character,
@@ -5800,12 +5914,34 @@ Result VulkanContext::preparePhysicsDebugDraws(Scene* scene, SceneRunState runSt
                 ? makeCharacterDebugShapeSignature(
                       static_cast<const Character&>(object))
                 : makePhysicsDebugShapeSignature(object);
-        std::chrono::nanoseconds preparationDuration{};
-        bool rebuilt = false;
-        std::string error;
-        const physics::CookedShape* cooked = ensurePhysicsDebugShape(
-            scene, object, character, signature, preparationDuration, rebuilt,
-            error);
+        const bool renderColliderEnabled =
+            character || editorSession_->renderColliderEnabled(object);
+        const bool activeScaleEdit =
+            imguiLayer.isPhysicsDebugScalePreviewActive(scene, &object);
+        const bool deferAcquisition = shouldDeferPhysicsDebugShapeAcquisition(
+            object, character, renderColliderEnabled, activeScaleEdit);
+        const PhysicsDebugShapeCacheEntry* cached =
+            findMatchingPhysicsDebugShape(object, character, signature);
+        const physics::CookedShape* cooked = nullptr;
+        glm::vec3 debugScale(1.0f);
+        bool usingScalePreview = false;
+        if (cached != nullptr) {
+            cooked = cached->cooked ? &*cached->cooked : nullptr;
+        } else if (deferAcquisition) {
+            const PhysicsDebugShapeCacheEntry* preview =
+                findPhysicsDebugScalePreview(object, signature, debugScale);
+            if (preview != nullptr) {
+                cooked = &*preview->cooked;
+                usingScalePreview = true;
+            }
+        } else {
+            std::chrono::nanoseconds preparationDuration{};
+            bool rebuilt = false;
+            std::string error;
+            cooked = ensurePhysicsDebugShape(
+                scene, object, character, signature, preparationDuration,
+                rebuilt, error);
+        }
         if (cooked == nullptr || cooked->shape == nullptr) continue;
 
         glm::vec3 bodyPosition;
@@ -5832,12 +5968,16 @@ Result VulkanContext::preparePhysicsDebugDraws(Scene* scene, SceneRunState runSt
             bodyPosition = worldPose.position;
             bodyRotation = worldPose.rotation;
         }
+        const JPH::RMat44 centerOfMassTransform =
+            usingScalePreview
+                ? physics::makeShapeCenterOfMassPreviewTransform(
+                      *cooked->shape, bodyPosition, bodyRotation, debugScale)
+                : physics::makeShapeCenterOfMassTransform(
+                      *cooked->shape, bodyPosition, bodyRotation);
         cooked->shape->Draw(
-            physicsDebugRenderer_.get(),
-            physics::makeShapeCenterOfMassTransform(
-                *cooked->shape, bodyPosition, bodyRotation),
-            JPH::Vec3::sReplicate(1.0f), JPH::Color(0, 140, 255, 255), false,
-            true);
+            physicsDebugRenderer_.get(), centerOfMassTransform,
+            JPH::Vec3(debugScale.x, debugScale.y, debugScale.z),
+            JPH::Color(0, 140, 255, 255), false, true);
     }
 
     const PhysicsDebugRenderer::PreparationStats stats =

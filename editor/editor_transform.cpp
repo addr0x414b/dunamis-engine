@@ -764,6 +764,20 @@ Result captureTransformDragSnapshot(
     return Result::success();
 }
 
+bool isScalePreviewParticipant(const TransformDragSnapshot& snapshot,
+                               const Scene* scene,
+                               const GameObject* object) noexcept {
+    if (!snapshot.valid || snapshot.scene != scene ||
+        snapshot.tool != TransformTool::Scale || object == nullptr) {
+        return false;
+    }
+    return std::any_of(
+        snapshot.objects.begin(), snapshot.objects.end(),
+        [object](const TransformObjectSnapshot& candidate) {
+            return candidate.object == object;
+        });
+}
+
 Result solveTransformDrag(const TransformDragSnapshot& snapshot,
                           const glm::mat4& currentGizmoWorld,
                           std::vector<TransformCandidate>& candidates) {

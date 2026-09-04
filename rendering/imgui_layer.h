@@ -55,6 +55,8 @@ public:
     void recordDrawData(VkCommandBuffer commandBuffer);
     [[nodiscard]] const GameObject*
     selectedGameObjectForScene(const Scene* scene) const noexcept;
+    [[nodiscard]] bool isPhysicsDebugScalePreviewActive(
+        const Scene* scene, const GameObject* object) const noexcept;
     void cancelStructuralAction() noexcept;
     void clearSelection() noexcept;
     [[nodiscard]] bool sceneInteractionAreaHovered() const noexcept;
@@ -85,6 +87,7 @@ private:
     void submitRuntimeTransformEdit(
         const RuntimeTransformEdit& edit) noexcept;
     void finishRuntimeTransformDrag() noexcept;
+    void clearInspectorScaleDrag() noexcept;
     void cancelEditorTransformDrag() noexcept;
     void clearEditorTransformDrag() noexcept;
     void synchronizeSelection(Scene* scene);
@@ -185,6 +188,10 @@ private:
     bool editorTransformDragFailed_ = false;
     editor_transform::TransformDragSnapshot editorTransformSnapshot_;
     glm::mat4 editorTransformGizmoMatrix_{1.0f};
+    bool inspectorScaleDragActive_ = false;
+    bool inspectorScaleWidgetSeen_ = false;
+    Scene* inspectorScaleDragScene_ = nullptr;
+    GameObject* inspectorScaleDragObject_ = nullptr;
     bool runtimeTransformDragActive_ = false;
     GameObject* runtimeTransformObject_ = nullptr;
     EditorSession* editorSession_ = nullptr;

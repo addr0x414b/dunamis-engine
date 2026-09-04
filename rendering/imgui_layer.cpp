@@ -547,6 +547,7 @@ void ImGuiLayer::processEvent(const SDL_Event& event) noexcept {
 void ImGuiLayer::setInputEnabled(bool enabled) noexcept {
     inputEnabled_ = enabled;
     cancelEditorTransformDrag();
+    clearInspectorScaleDrag();
     gizmoDragActive_ = false;
     runtimeTransformDragActive_ = false;
     runtimeTransformObject_ = nullptr;
@@ -607,8 +608,10 @@ Result ImGuiLayer::beginFrame(SceneRunState runState) {
 void ImGuiLayer::drawEditor(Scene* scene, const glm::mat4& view,
                             const glm::mat4& projection,
                             SceneRunState runState) {
+    inspectorScaleWidgetSeen_ = false;
     synchronizeSelection(scene);
     if (!frameStarted_) {
+        clearInspectorScaleDrag();
         return;
     }
 
@@ -621,6 +624,9 @@ void ImGuiLayer::drawEditor(Scene* scene, const glm::mat4& view,
         drawTransformGizmo(scene, view, projection, runState);
         processWorldSelection(scene, view, projection, runState);
         drawInspector(scene, disabled);
+    }
+    if (!inspectorScaleWidgetSeen_) {
+        clearInspectorScaleDrag();
     }
 }
 
@@ -993,6 +999,20 @@ const GameObject* ImGuiLayer::selectedGameObjectForScene(
                : editorSession_->selectedGameObjectForScene(scene);
 }
 
+bool ImGuiLayer::isPhysicsDebugScalePreviewActive(
+    const Scene* scene, const GameObject* object) const noexcept {
+    if (scene == nullptr || object == nullptr) {
+        return false;
+    }
+    if (editorTransformDragActive_ && !editorTransformDragFailed_ &&
+        editor_transform::isScalePreviewParticipant(
+            editorTransformSnapshot_, scene, object)) {
+        return true;
+    }
+    return inspectorScaleDragActive_ && inspectorScaleDragScene_ == scene &&
+           inspectorScaleDragObject_ == object;
+}
+
 void ImGuiLayer::finishRuntimeTransformDrag() noexcept {
     if (runtimeTransformDragActive_ && runtimeTransformObject_ != nullptr) {
         const Scene* selectionScene =
@@ -1007,6 +1027,12 @@ void ImGuiLayer::finishRuntimeTransformDrag() noexcept {
     }
     runtimeTransformDragActive_ = false;
     runtimeTransformObject_ = nullptr;
+}
+
+void ImGuiLayer::clearInspectorScaleDrag() noexcept {
+    inspectorScaleDragActive_ = false;
+    inspectorScaleDragScene_ = nullptr;
+    inspectorScaleDragObject_ = nullptr;
 }
 
 void ImGuiLayer::clearEditorTransformDrag() noexcept {
@@ -1027,6 +1053,7 @@ void ImGuiLayer::cancelEditorTransformDrag() noexcept {
 void ImGuiLayer::cancelStructuralAction() noexcept {
     cancelEditorTransformDrag();
     finishRuntimeTransformDrag();
+    clearInspectorScaleDrag();
     gizmoDragActive_ = false;
     runtimeTransformDragActive_ = false;
     runtimeTransformObject_ = nullptr;
@@ -1038,6 +1065,7 @@ void ImGuiLayer::cancelStructuralAction() noexcept {
 void ImGuiLayer::clearSelection() noexcept {
     cancelEditorTransformDrag();
     finishRuntimeTransformDrag();
+    clearInspectorScaleDrag();
     if (editorSession_ != nullptr) {
         editorSession_->clearSelection();
     }
@@ -1058,6 +1086,7 @@ void ImGuiLayer::synchronizeSelection(Scene* scene) {
         // runtime edit through a pointer whose owner is no longer known.
         runtimeTransformDragActive_ = false;
         runtimeTransformObject_ = nullptr;
+        clearInspectorScaleDrag();
         if (editorTransformDragActive_) {
             clearEditorTransformDrag();
         }
@@ -1075,6 +1104,12 @@ void ImGuiLayer::synchronizeSelection(Scene* scene) {
         }
     }
     editorSession_->synchronizeSelection(scene);
+    if (inspectorScaleDragActive_ &&
+        (inspectorScaleDragScene_ != scene ||
+         !editorSession_->isSelectedForScene(scene,
+                                             inspectorScaleDragObject_))) {
+        clearInspectorScaleDrag();
+    }
     if (runtimeTransformObject_ != nullptr &&
         !editorSession_->isSelectedForScene(scene, runtimeTransformObject_)) {
         runtimeTransformDragActive_ = false;
@@ -1094,6 +1129,7 @@ void ImGuiLayer::selectGameObject(Scene* scene, GameObject* object,
 
     cancelEditorTransformDrag();
     finishRuntimeTransformDrag();
+    clearInspectorScaleDrag();
     editorSession_->applySelection(scene, object, operation);
     inspectorError_.clear();
 }
@@ -1412,6 +1448,12 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
                     editorTransformSnapshot_, candidates);
             }
             if (result) {
+                if (transformTool == TransformTool::Scale) {
+                    // The pre-ImGui diagnostics pass described the scale
+                    // before this transaction step. Do not display those
+                    // cooked statistics for the newly authored scale.
+                    setPhysicsDiagnostics(nullptr, std::nullopt, {});
+                }
                 inspectorError_.clear();
             } else {
                 const bool restored =
@@ -2205,10 +2247,23 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
     }
 
     glm::vec3 scale = selectedGameObject->scale;
-    if (ImGui::DragFloat3("Scale", &scale.x, 0.01f)) {
+    const bool scaleChanged = ImGui::DragFloat3("Scale", &scale.x, 0.01f);
+    const bool scaleItemActive = ImGui::IsItemActive();
+    inspectorScaleWidgetSeen_ = true;
+    if (scaleItemActive) {
+        inspectorScaleDragActive_ = true;
+        inspectorScaleDragScene_ = scene;
+        inspectorScaleDragObject_ = selectedGameObject;
+    } else {
+        clearInspectorScaleDrag();
+    }
+    if (scaleChanged) {
         const Result result =
             editor_mutation::applyScale(*selectedGameObject, scale);
         if (result) {
+            // Diagnostics were prepared before this widget was evaluated and
+            // therefore may describe the previous exact scale.
+            setPhysicsDiagnostics(nullptr, std::nullopt, {});
             inspectorError_.clear();
         } else {
             inspectorError_ = result.error();
@@ -2466,6 +2521,7 @@ bool ImGuiLayer::initialized() const noexcept {
 void ImGuiLayer::shutdown() noexcept {
     stopNativeFileDialog();
     cancelEditorTransformDrag();
+    clearInspectorScaleDrag();
     frameStarted_ = false;
     drawDataReady_ = false;
     physicsDiagnosticsObject_ = nullptr;
@@ -2508,6 +2564,7 @@ void ImGuiLayer::shutdown() noexcept {
 void ImGuiLayer::abandon() noexcept {
     stopNativeFileDialog();
     cancelEditorTransformDrag();
+    clearInspectorScaleDrag();
     contextCreated_ = false;
     sdlBackendInitialized_ = false;
     vulkanBackendInitialized_ = false;

@@ -84,6 +84,12 @@ struct TransformDragSnapshot {
     Scene& scene, EditorSession& editorSession, TransformSpace space,
     TransformDragSnapshot& snapshot);
 
+// Returns whether an object belongs to the immutable affected-object set of
+// an active Scale transaction. The caller owns the transaction lifetime.
+[[nodiscard]] bool isScalePreviewParticipant(
+    const TransformDragSnapshot& snapshot, const Scene* scene,
+    const GameObject* object) noexcept;
+
 // Computes all candidate local TRS and auxiliary Camera state from the
 // immutable snapshot and the current manipulated gizmo frame. No mutation is
 // performed until commitTransformCandidates succeeds.

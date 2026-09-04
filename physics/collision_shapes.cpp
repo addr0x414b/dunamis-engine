@@ -257,6 +257,23 @@ JPH::RMat44 makeShapeCenterOfMassTransform(
         .PreTranslated(shape.GetCenterOfMass());
 }
 
+JPH::RMat44 makeShapeCenterOfMassPreviewTransform(
+    const JPH::Shape& shape, const glm::vec3& bodyOriginPosition,
+    const glm::vec3& bodyRotation, const glm::vec3& relativeScale) noexcept {
+    // Shape::Draw scales vertices around the shape COM. The cached Mesh or
+    // ConvexHull geometry was authored around the GameObject origin, so the
+    // cached COM offset must receive the same component-wise scale to keep
+    // the preview anchored at that origin.
+    const JPH::Vec3 cachedCenterOfMass = shape.GetCenterOfMass();
+    const JPH::Vec3 scaledCenterOfMass(
+        relativeScale.x * cachedCenterOfMass.GetX(),
+        relativeScale.y * cachedCenterOfMass.GetY(),
+        relativeScale.z * cachedCenterOfMass.GetZ());
+    return JPH::RMat44::sRotationTranslation(
+               toJoltRotation(bodyRotation), toJoltPosition(bodyOriginPosition))
+        .PreTranslated(scaledCenterOfMass);
+}
+
 glm::mat4 joltTransformToDunamis(const JPH::RMat44& transform) noexcept {
     glm::mat4 result(1.0f);
     for (JPH::uint column = 0; column < 3; ++column) {

@@ -441,6 +441,17 @@ private:
     [[nodiscard]] static bool shouldAcquirePhysicsDebugShape(
         const GameObject& object, bool character,
         bool renderColliderEnabled) noexcept;
+    [[nodiscard]] static bool shouldDeferPhysicsDebugShapeAcquisition(
+        const GameObject& object, bool character, bool renderColliderEnabled,
+        bool activeScaleEdit) noexcept;
+    [[nodiscard]] static bool makePhysicsDebugPreviewRelativeScale(
+        const glm::vec3& cachedScale, const glm::vec3& currentScale,
+        glm::vec3& relativeScale) noexcept;
+    [[nodiscard]] const PhysicsDebugShapeCacheEntry*
+    findPhysicsDebugScalePreview(
+        const GameObject& object,
+        const PhysicsDebugShapeSignature& signature,
+        glm::vec3& relativeScale) const;
 
     [[nodiscard]] const physics::CookedShape* ensurePhysicsDebugShape(
         Scene* scene, const GameObject& object, bool character,

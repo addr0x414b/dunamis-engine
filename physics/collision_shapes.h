@@ -40,6 +40,9 @@ struct CookedShape {
 [[nodiscard]] JPH::RMat44 makeShapeCenterOfMassTransform(
     const JPH::Shape& shape, const glm::vec3& bodyOriginPosition,
     const glm::vec3& bodyRotation) noexcept;
+[[nodiscard]] JPH::RMat44 makeShapeCenterOfMassPreviewTransform(
+    const JPH::Shape& shape, const glm::vec3& bodyOriginPosition,
+    const glm::vec3& bodyRotation, const glm::vec3& relativeScale) noexcept;
 [[nodiscard]] glm::mat4 joltTransformToDunamis(
     const JPH::RMat44& transform) noexcept;
 
