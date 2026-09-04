@@ -2,10 +2,22 @@
 #include "scene/game_object.h"
 #include "scene/scene.h"
 
+#include <algorithm>
 #include <iostream>
 #include <filesystem>
+#include <initializer_list>
 #include <memory>
 #include <vector>
+
+class SceneTestAccess {
+public:
+    static Result activate(Scene& scene) { return scene.activate(); }
+    static void deactivate(Scene& scene) { scene.deactivate(); }
+    static Result remove(Scene& scene, GameObject* object,
+                         std::unique_ptr<GameObject>& removed) {
+        return scene.removeGameObjectForEditor(object, removed);
+    }
+};
 
 namespace {
 
@@ -22,6 +34,28 @@ bool expect(bool condition, const char* message) {
         return false;
     }
     return true;
+}
+
+GameObject* addObject(TestScene& scene, const char* persistentId) {
+    auto object = std::make_unique<GameObject>();
+    object->persistentId = persistentId;
+    GameObject* pointer = object.get();
+    if (!scene.addGameObject(std::move(object))) {
+        return nullptr;
+    }
+    return pointer;
+}
+
+bool hasExactly(const EditorSession& session,
+                std::initializer_list<GameObject*> expected) {
+    const auto& selected = session.selectedGameObjects();
+    if (selected.size() != expected.size()) {
+        return false;
+    }
+    return std::all_of(expected.begin(), expected.end(),
+                       [&session](GameObject* object) {
+                           return session.isSelected(object);
+                       });
 }
 
 }  // namespace
@@ -49,6 +83,23 @@ int main() {
                      "Simulating must not use the gameplay camera");
     passed &= expect(usesGameplayCamera(SceneRunState::Playing),
                      "Playing must use the gameplay camera");
+
+    passed &= expect(
+        selectionOperationForModifiers(false, false) ==
+            SelectionOperation::ReplaceExact,
+        "Plain click did not map to exact replacement");
+    passed &= expect(
+        selectionOperationForModifiers(true, false) ==
+            SelectionOperation::ToggleExact,
+        "Ctrl-click did not map to exact toggle");
+    passed &= expect(
+        selectionOperationForModifiers(false, true) ==
+            SelectionOperation::ReplaceSubtree,
+        "Shift-click did not map to subtree replacement");
+    passed &= expect(
+        selectionOperationForModifiers(true, true) ==
+            SelectionOperation::AddSubtree,
+        "Ctrl+Shift-click did not map to additive subtree selection");
 
     EditorSession session;
     passed &= expect(session.runState() == SceneRunState::Editing,
@@ -175,6 +226,316 @@ int main() {
     session.clearSelection();
     passed &= expect(session.selectedGameObjectForScene(&scene) == nullptr,
                      "clearSelection did not clear selection");
+
+    {
+        TestScene exactScene;
+        GameObject* first = addObject(exactScene, "exact-first");
+        GameObject* second = addObject(exactScene, "exact-second");
+        passed &= expect(first != nullptr && second != nullptr,
+                         "Could not create exact-selection fixture");
+
+        session.applySelection(&exactScene, first,
+                               SelectionOperation::ReplaceExact);
+        passed &= expect(hasExactly(session, {first}) &&
+                             session.activeGameObject() == first,
+                         "Exact selection did not select its object");
+        session.applySelection(&exactScene, second,
+                               SelectionOperation::ReplaceExact);
+        passed &= expect(hasExactly(session, {second}) &&
+                             session.activeGameObject() == second,
+                         "Exact replacement retained an old object");
+
+        session.applySelection(&exactScene, first,
+                               SelectionOperation::ReplaceExact);
+        session.applySelection(&exactScene, second,
+                               SelectionOperation::ToggleExact);
+        passed &= expect(hasExactly(session, {first, second}) &&
+                             session.activeGameObject() == second,
+                         "Exact toggle did not add and activate its object");
+        session.applySelection(&exactScene, first,
+                               SelectionOperation::ToggleExact);
+        passed &= expect(hasExactly(session, {second}) &&
+                             session.activeGameObject() == second,
+                         "Removing a non-active object changed Active");
+        session.applySelection(&exactScene, second,
+                               SelectionOperation::ToggleExact);
+        passed &= expect(session.selectedGameObjects().empty() &&
+                             session.activeGameObject() == nullptr,
+                         "Removing the final object did not clear selection");
+
+        session.applySelection(&exactScene, first,
+                               SelectionOperation::ReplaceExact);
+        session.applySelection(&exactScene, nullptr,
+                               SelectionOperation::ToggleExact);
+        passed &= expect(hasExactly(session, {first}),
+                         "Modified empty-space selection changed membership");
+        session.applySelection(&exactScene, nullptr,
+                               SelectionOperation::ReplaceExact);
+        passed &= expect(session.selectedGameObjects().empty(),
+                         "Exact empty-space selection did not clear");
+    }
+
+    {
+        TestScene subtreeScene;
+        GameObject* root = addObject(subtreeScene, "subtree-root");
+        GameObject* branch = addObject(subtreeScene, "subtree-branch");
+        GameObject* child = addObject(subtreeScene, "subtree-child");
+        GameObject* sibling = addObject(subtreeScene, "subtree-sibling");
+        passed &= expect(root != nullptr && branch != nullptr &&
+                             child != nullptr && sibling != nullptr &&
+                             static_cast<bool>(subtreeScene.reparentGameObject(
+                                 *branch, root, ReparentMode::PreserveLocal)) &&
+                             static_cast<bool>(subtreeScene.reparentGameObject(
+                                 *child, branch, ReparentMode::PreserveLocal)) &&
+                             static_cast<bool>(subtreeScene.reparentGameObject(
+                                 *sibling, branch, ReparentMode::PreserveLocal)),
+                         "Could not create subtree-selection fixture");
+
+        session.applySelection(&subtreeScene, root,
+                               SelectionOperation::ReplaceExact);
+        session.applySelection(&subtreeScene, branch,
+                               SelectionOperation::ReplaceSubtree);
+        passed &= expect(hasExactly(session, {branch, child, sibling}) &&
+                             session.activeGameObject() == branch &&
+                             !session.isSelected(root),
+                         "Subtree replacement did not select exactly the subtree");
+
+        TestScene deepScene;
+        GameObject* deepA = addObject(deepScene, "deep-a");
+        GameObject* deepB = addObject(deepScene, "deep-b");
+        GameObject* deepC = addObject(deepScene, "deep-c");
+        GameObject* deepD = addObject(deepScene, "deep-d");
+        GameObject* deepE = addObject(deepScene, "deep-e");
+        passed &= expect(deepA != nullptr && deepB != nullptr &&
+                             deepC != nullptr && deepD != nullptr &&
+                             deepE != nullptr &&
+                             static_cast<bool>(deepScene.reparentGameObject(
+                                 *deepB, deepA, ReparentMode::PreserveLocal)) &&
+                             static_cast<bool>(deepScene.reparentGameObject(
+                                 *deepC, deepB, ReparentMode::PreserveLocal)) &&
+                             static_cast<bool>(deepScene.reparentGameObject(
+                                 *deepD, deepC, ReparentMode::PreserveLocal)) &&
+                             static_cast<bool>(deepScene.reparentGameObject(
+                                 *deepE, deepD, ReparentMode::PreserveLocal)),
+                         "Could not create deep subtree fixture");
+        session.applySelection(&deepScene, deepB,
+                               SelectionOperation::ReplaceSubtree);
+        passed &= expect(hasExactly(session, {deepB, deepC, deepD, deepE}) &&
+                             !session.isSelected(deepA) &&
+                             session.activeGameObject() == deepB,
+                         "Deep subtree traversal stopped before the leaf");
+
+        TestScene additiveScene;
+        GameObject* additiveA = addObject(additiveScene, "additive-a");
+        GameObject* additiveB = addObject(additiveScene, "additive-b");
+        GameObject* additiveC = addObject(additiveScene, "additive-c");
+        GameObject* additiveD = addObject(additiveScene, "additive-d");
+        passed &= expect(additiveA != nullptr && additiveB != nullptr &&
+                             additiveC != nullptr && additiveD != nullptr &&
+                             static_cast<bool>(additiveScene.reparentGameObject(
+                                 *additiveC, additiveB,
+                                 ReparentMode::PreserveLocal)) &&
+                             static_cast<bool>(additiveScene.reparentGameObject(
+                                 *additiveD, additiveC,
+                                 ReparentMode::PreserveLocal)),
+                         "Could not create additive-subtree fixture");
+        session.applySelection(&additiveScene, additiveA,
+                               SelectionOperation::ReplaceExact);
+        session.applySelection(&additiveScene, additiveB,
+                               SelectionOperation::AddSubtree);
+        passed &= expect(hasExactly(session, {additiveA, additiveB,
+                                              additiveC, additiveD}) &&
+                             session.activeGameObject() == additiveB,
+                         "Additive subtree selection was not strictly additive");
+    }
+
+    {
+        TestScene holeScene;
+        GameObject* holeA = addObject(holeScene, "hole-a");
+        GameObject* holeB = addObject(holeScene, "hole-b");
+        GameObject* holeC = addObject(holeScene, "hole-c");
+        GameObject* holeD = addObject(holeScene, "hole-d");
+        passed &= expect(holeA != nullptr && holeB != nullptr &&
+                             holeC != nullptr && holeD != nullptr &&
+                             static_cast<bool>(holeScene.reparentGameObject(
+                                 *holeB, holeA, ReparentMode::PreserveLocal)) &&
+                             static_cast<bool>(holeScene.reparentGameObject(
+                                 *holeC, holeB, ReparentMode::PreserveLocal)),
+                         "Could not create selection-hole fixture");
+
+        session.applySelection(&holeScene, holeA,
+                               SelectionOperation::ReplaceExact);
+        session.applySelection(&holeScene, holeC,
+                               SelectionOperation::ToggleExact);
+        session.applySelection(&holeScene, holeD,
+                               SelectionOperation::ToggleExact);
+        passed &= expect(hasExactly(session, {holeA, holeC, holeD}) &&
+                             !session.isSelected(holeB),
+                         "Selection-hole membership was normalized incorrectly");
+        const std::vector<GameObject*> firstRoots =
+            session.topLevelSelectedRoots();
+        passed &= expect(firstRoots.size() == 2 && firstRoots[0] == holeA &&
+                             firstRoots[1] == holeD,
+                         "Top-level selected roots were not hierarchy ordered");
+
+        session.applySelection(&holeScene, holeB,
+                               SelectionOperation::ReplaceExact);
+        session.applySelection(&holeScene, holeC,
+                               SelectionOperation::ToggleExact);
+        const std::vector<GameObject*> secondRoots =
+            session.topLevelSelectedRoots();
+        passed &= expect(hasExactly(session, {holeB, holeC}) &&
+                             secondRoots.size() == 1 && secondRoots[0] == holeB,
+                         "Top-level roots did not collapse through a selected ancestor");
+    }
+
+    {
+        TestScene recencyScene;
+        GameObject* recencyA = addObject(recencyScene, "recency-a");
+        GameObject* recencyB = addObject(recencyScene, "recency-b");
+        GameObject* recencyC = addObject(recencyScene, "recency-c");
+        passed &= expect(recencyA != nullptr && recencyB != nullptr &&
+                             recencyC != nullptr,
+                         "Could not create Active fallback fixture");
+        session.applySelection(&recencyScene, recencyA,
+                               SelectionOperation::ReplaceExact);
+        session.applySelection(&recencyScene, recencyB,
+                               SelectionOperation::ToggleExact);
+        session.applySelection(&recencyScene, recencyC,
+                               SelectionOperation::ToggleExact);
+        passed &= expect(session.activeGameObject() == recencyC,
+                         "Positive selection did not update Active");
+        session.applySelection(&recencyScene, recencyC,
+                               SelectionOperation::ToggleExact);
+        passed &= expect(hasExactly(session, {recencyA, recencyB}) &&
+                             session.activeGameObject() == recencyB,
+                         "Active removal did not fall back by recency");
+        session.applySelection(&recencyScene, recencyA,
+                               SelectionOperation::ToggleExact);
+        passed &= expect(hasExactly(session, {recencyB}) &&
+                             session.activeGameObject() == recencyB,
+                         "Removing a non-active object changed fallback Active");
+        session.applySelection(&recencyScene, recencyB,
+                               SelectionOperation::ToggleExact);
+        passed &= expect(session.selectedGameObjects().empty() &&
+                             session.activeGameObject() == nullptr,
+                         "Active fallback did not clear the final selection");
+    }
+
+    {
+        TestScene transformScene;
+        GameObject* transformA = addObject(transformScene, "transform-a");
+        GameObject* transformB = addObject(transformScene, "transform-b");
+        passed &= expect(transformA != nullptr && transformB != nullptr,
+                         "Could not create transform-tool fixture");
+        session.applySelection(&transformScene, transformA,
+                               SelectionOperation::ReplaceExact);
+        session.setTransformTool(TransformTool::Rotate);
+        session.applySelection(&transformScene, transformB,
+                               SelectionOperation::ToggleExact);
+        passed &= expect(session.transformTool() == TransformTool::Translate,
+                         "Active change did not reset the transform tool");
+        session.setTransformTool(TransformTool::Rotate);
+        session.applySelection(&transformScene, transformA,
+                               SelectionOperation::ToggleExact);
+        passed &= expect(session.activeGameObject() == transformB &&
+                             session.transformTool() == TransformTool::Rotate,
+                         "Non-active removal did not preserve the transform tool");
+        session.applySelection(&transformScene, transformA,
+                               SelectionOperation::ToggleExact);
+        session.setTransformTool(TransformTool::Rotate);
+        session.applySelection(&transformScene, transformA,
+                               SelectionOperation::ToggleExact);
+        passed &= expect(session.activeGameObject() == transformB &&
+                             session.transformTool() == TransformTool::Translate,
+                         "Active fallback did not reset the transform tool");
+        session.setTransformTool(TransformTool::Rotate);
+        session.clearSelection();
+        passed &= expect(session.transformTool() == TransformTool::Translate,
+                         "Clearing selection did not reset the transform tool");
+    }
+
+    {
+        TestScene sceneOne;
+        TestScene sceneTwo;
+        GameObject* sceneOneObject = addObject(sceneOne, "scene-one-object");
+        GameObject* sceneTwoObject = addObject(sceneTwo, "scene-two-object");
+        passed &= expect(sceneOneObject != nullptr && sceneTwoObject != nullptr,
+                         "Could not create foreign-scene fixture");
+        session.applySelection(&sceneOne, sceneOneObject,
+                               SelectionOperation::ReplaceExact);
+        session.applySelection(&sceneOne, sceneTwoObject,
+                               SelectionOperation::ToggleExact);
+        passed &= expect(session.selectionScene() == &sceneOne &&
+                             session.selectedGameObjects().empty(),
+                         "Foreign object was accepted into selection");
+        session.applySelection(&sceneOne, sceneOneObject,
+                               SelectionOperation::ReplaceExact);
+        session.applySelection(&sceneTwo, sceneTwoObject,
+                               SelectionOperation::ReplaceExact);
+        passed &= expect(session.selectionScene() == &sceneTwo &&
+                             hasExactly(session, {sceneTwoObject}) &&
+                             !session.isSelected(sceneOneObject),
+                         "Scene switch retained a cross-scene selection");
+        session.synchronizeSelection(&sceneTwo);
+        passed &= expect(hasExactly(session, {sceneTwoObject}),
+                         "Same-scene synchronization cleared valid selection");
+        session.synchronizeSelection(nullptr);
+        passed &= expect(session.selectionScene() == nullptr &&
+                             session.selectedGameObjects().empty() &&
+                             session.activeGameObject() == nullptr,
+                         "Null-scene synchronization was not safe");
+    }
+
+    {
+        TestScene staleScene;
+        GameObject* staleSurvivor = addObject(staleScene, "stale-survivor");
+        GameObject* staleRemoved = addObject(staleScene, "stale-removed");
+        passed &= expect(staleSurvivor != nullptr && staleRemoved != nullptr &&
+                             static_cast<bool>(SceneTestAccess::activate(
+                                 staleScene)),
+                         "Could not activate stale-selection fixture");
+        session.applySelection(&staleScene, staleSurvivor,
+                               SelectionOperation::ReplaceExact);
+        session.applySelection(&staleScene, staleRemoved,
+                               SelectionOperation::ToggleExact);
+        std::unique_ptr<GameObject> removedObject;
+        passed &= expect(static_cast<bool>(SceneTestAccess::remove(
+                                 staleScene, staleRemoved, removedObject)),
+                         "Could not remove stale-selection fixture object");
+        session.synchronizeSelection(&staleScene);
+        passed &= expect(hasExactly(session, {staleSurvivor}) &&
+                             session.activeGameObject() == staleSurvivor &&
+                             session.transformTool() == TransformTool::Translate,
+                         "Synchronization did not remove stale Active safely");
+        std::unique_ptr<GameObject> removedSurvivor;
+        passed &= expect(static_cast<bool>(SceneTestAccess::remove(
+                                 staleScene, staleSurvivor, removedSurvivor)),
+                         "Could not remove final stale-selection object");
+        session.synchronizeSelection(&staleScene);
+        passed &= expect(session.selectedGameObjects().empty() &&
+                             session.activeGameObject() == nullptr,
+                         "Synchronization retained a stale selected pointer");
+        SceneTestAccess::deactivate(staleScene);
+    }
+
+    {
+        TestScene compatibilityScene;
+        GameObject* compatibilityA =
+            addObject(compatibilityScene, "compatibility-a");
+        GameObject* compatibilityB =
+            addObject(compatibilityScene, "compatibility-b");
+        passed &= expect(compatibilityA != nullptr && compatibilityB != nullptr,
+                         "Could not create compatibility getter fixture");
+        session.applySelection(&compatibilityScene, compatibilityA,
+                               SelectionOperation::ReplaceExact);
+        session.applySelection(&compatibilityScene, compatibilityB,
+                               SelectionOperation::ToggleExact);
+        passed &= expect(session.selectedGameObject() == compatibilityB &&
+                             session.selectedGameObjectForScene(
+                                 &compatibilityScene) == compatibilityB,
+                         "Legacy selection getter did not return Active");
+    }
 
     return passed ? 0 : 1;
 }

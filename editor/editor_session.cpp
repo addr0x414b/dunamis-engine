@@ -3,6 +3,8 @@
 #include "../scene/game_object.h"
 #include "../scene/scene.h"
 
+#include <algorithm>
+#include <unordered_set>
 #include <utility>
 
 SceneRunState EditorSession::runState() const noexcept {
@@ -21,37 +23,110 @@ void EditorSession::setTransformTool(TransformTool tool) noexcept {
     transformTool_ = tool;
 }
 
-void EditorSession::select(Scene* scene, GameObject* object) noexcept {
+void EditorSession::select(Scene* scene, GameObject* object) {
+    applySelection(scene, object, SelectionOperation::ReplaceExact);
+}
+
+void EditorSession::select(Scene* scene, GameObject* object,
+                           SelectionOperation operation) {
+    applySelection(scene, object, operation);
+}
+
+void EditorSession::applySelection(Scene* scene, GameObject* object,
+                                   SelectionOperation operation) {
     if (scene == nullptr) {
         selectionScene_ = nullptr;
         clearSelection();
         return;
     }
 
-    selectionScene_ = scene;
+    if (scene != selectionScene_) {
+        selectionScene_ = scene;
+        clearSelection();
+    }
+
+    // A null target represents an empty-space click. Only an unmodified
+    // click replaces the selection; modified empty-space clicks are no-ops.
     if (object == nullptr) {
+        if (operation == SelectionOperation::ReplaceExact) {
+            clearSelection();
+        }
+        return;
+    }
+
+    if (!ownsGameObject(scene, object)) {
         clearSelection();
         return;
     }
 
-    for (const auto& owner : scene->gameObjects()) {
-        if (owner.get() == object) {
-            if (selectedGameObject_ != object) {
-                transformTool_ = TransformTool::Translate;
+    const GameObject* previousActive = activeGameObject_;
+    switch (operation) {
+    case SelectionOperation::ReplaceExact:
+        selectedGameObjects_.reserve(1);
+        selectionRecency_.reserve(1);
+        selectedGameObjects_.clear();
+        selectionRecency_.clear();
+        addSelectedGameObject(object);
+        activeGameObject_ = object;
+        break;
+    case SelectionOperation::ToggleExact:
+        if (selectedGameObjects_.count(object) != 0) {
+            removeSelectedGameObject(object);
+            if (activeGameObject_ == object) {
+                activeGameObject_ = mostRecentlySelected();
             }
-            selectedGameObject_ = object;
-            return;
+        } else {
+            selectedGameObjects_.reserve(selectedGameObjects_.size() + 1);
+            selectionRecency_.reserve(selectionRecency_.size() + 1);
+            addSelectedGameObject(object);
+            activeGameObject_ = object;
         }
+        break;
+    case SelectionOperation::ReplaceSubtree: {
+        const std::vector<GameObject*> subtree = collectSubtree(object);
+        selectedGameObjects_.reserve(subtree.size());
+        selectionRecency_.reserve(subtree.size());
+        selectedGameObjects_.clear();
+        selectionRecency_.clear();
+        for (GameObject* descendant : subtree) {
+            addSelectedGameObject(descendant);
+        }
+        // The clicked node is the positive selection that establishes the
+        // Active Object, even when the operation selected its descendants.
+        makeMostRecentlySelected(object);
+        activeGameObject_ = object;
+        break;
     }
-    clearSelection();
+    case SelectionOperation::AddSubtree: {
+        const std::vector<GameObject*> subtree = collectSubtree(object);
+        selectedGameObjects_.reserve(selectedGameObjects_.size() +
+                                     subtree.size());
+        selectionRecency_.reserve(selectionRecency_.size() + subtree.size());
+        for (GameObject* descendant : subtree) {
+            addSelectedGameObject(descendant);
+        }
+        makeMostRecentlySelected(object);
+        activeGameObject_ = object;
+        break;
+    }
+    }
+
+    if (selectedGameObjects_.empty()) {
+        activeGameObject_ = nullptr;
+    }
+    if (activeGameObject_ != previousActive) {
+        transformTool_ = TransformTool::Translate;
+    }
 }
 
 void EditorSession::clearSelection() noexcept {
-    selectedGameObject_ = nullptr;
+    selectedGameObjects_.clear();
+    selectionRecency_.clear();
+    activeGameObject_ = nullptr;
     transformTool_ = TransformTool::Translate;
 }
 
-void EditorSession::synchronizeSelection(Scene* scene) noexcept {
+void EditorSession::synchronizeSelection(Scene* scene) {
     if (scene != selectionScene_) {
         selectionScene_ = scene;
         clearSelection();
@@ -63,16 +138,52 @@ void EditorSession::synchronizeSelection(Scene* scene) noexcept {
         return;
     }
 
-    if (selectedGameObject_ == nullptr) {
+    if (selectedGameObjects_.empty()) {
+        selectionRecency_.clear();
+        if (activeGameObject_ != nullptr) {
+            activeGameObject_ = nullptr;
+            transformTool_ = TransformTool::Translate;
+        }
         return;
     }
 
+    std::unordered_set<const GameObject*> ownedObjects;
+    ownedObjects.reserve(scene->gameObjects().size());
     for (const auto& object : scene->gameObjects()) {
-        if (object.get() == selectedGameObject_) {
-            return;
+        if (object != nullptr) {
+            ownedObjects.insert(object.get());
         }
     }
-    clearSelection();
+
+    for (auto iterator = selectedGameObjects_.begin();
+         iterator != selectedGameObjects_.end();) {
+        if (ownedObjects.count(*iterator) == 0) {
+            iterator = selectedGameObjects_.erase(iterator);
+        } else {
+            ++iterator;
+        }
+    }
+
+    selectionRecency_.erase(
+        std::remove_if(
+            selectionRecency_.begin(), selectionRecency_.end(),
+            [this, &ownedObjects](GameObject* object) {
+                return ownedObjects.count(object) == 0 ||
+                       selectedGameObjects_.count(object) == 0;
+            }),
+        selectionRecency_.end());
+
+    const GameObject* previousActive = activeGameObject_;
+    if (activeGameObject_ == nullptr ||
+        selectedGameObjects_.count(activeGameObject_) == 0) {
+        activeGameObject_ = mostRecentlySelected();
+    }
+    if (selectedGameObjects_.empty()) {
+        activeGameObject_ = nullptr;
+    }
+    if (activeGameObject_ != previousActive) {
+        transformTool_ = TransformTool::Translate;
+    }
 }
 
 Scene* EditorSession::selectionScene() const noexcept {
@@ -80,19 +191,165 @@ Scene* EditorSession::selectionScene() const noexcept {
 }
 
 GameObject* EditorSession::selectedGameObject() const noexcept {
-    return selectedGameObject_;
+    return activeGameObject_;
+}
+
+GameObject* EditorSession::activeGameObject() const noexcept {
+    return activeGameObject_;
+}
+
+const GameObject* EditorSession::activeGameObjectForScene(
+    const Scene* scene) const noexcept {
+    if (scene == nullptr || scene != selectionScene_ ||
+        activeGameObject_ == nullptr ||
+        !ownsGameObject(scene, activeGameObject_)) {
+        return nullptr;
+    }
+    return activeGameObject_;
+}
+
+const std::vector<GameObject*>&
+EditorSession::selectedGameObjects() const noexcept {
+    return selectionRecency_;
+}
+
+bool EditorSession::isSelected(const GameObject* object) const noexcept {
+    return object != nullptr && selectedGameObjects_.count(object) != 0;
+}
+
+bool EditorSession::isSelectedForScene(
+    const Scene* scene, const GameObject* object) const noexcept {
+    return scene != nullptr && scene == selectionScene_ &&
+           isSelected(object);
+}
+
+std::vector<GameObject*> EditorSession::topLevelSelectedRoots() const {
+    std::vector<GameObject*> roots;
+    if (selectionScene_ == nullptr || selectedGameObjects_.empty()) {
+        return roots;
+    }
+
+    std::unordered_set<const GameObject*> ownedObjects;
+    ownedObjects.reserve(selectionScene_->gameObjects().size());
+    for (const auto& object : selectionScene_->gameObjects()) {
+        if (object != nullptr) {
+            ownedObjects.insert(object.get());
+        }
+    }
+
+    for (const auto& owner : selectionScene_->gameObjects()) {
+        GameObject* object = owner.get();
+        if (object == nullptr || selectedGameObjects_.count(object) == 0) {
+            continue;
+        }
+
+        bool hasSelectedAncestor = false;
+        std::unordered_set<GameObject*> visitedAncestors;
+        for (GameObject* ancestor = object->parent(); ancestor != nullptr;) {
+            if (ownedObjects.count(ancestor) == 0 ||
+                !visitedAncestors.insert(ancestor).second) {
+                break;
+            }
+            if (selectedGameObjects_.count(ancestor) != 0) {
+                hasSelectedAncestor = true;
+                break;
+            }
+            ancestor = ancestor->parent();
+        }
+        if (!hasSelectedAncestor) {
+            roots.push_back(object);
+        }
+    }
+    return roots;
+}
+
+std::vector<GameObject*> EditorSession::collectSubtree(GameObject* root) {
+    std::vector<GameObject*> subtree;
+    if (root == nullptr) {
+        return subtree;
+    }
+
+    std::vector<GameObject*> pending{root};
+    std::unordered_set<GameObject*> visited;
+    visited.reserve(1);
+    while (!pending.empty()) {
+        GameObject* object = pending.back();
+        pending.pop_back();
+        if (object == nullptr || !visited.insert(object).second) {
+            continue;
+        }
+
+        subtree.push_back(object);
+        const std::vector<GameObject*>& children = object->children();
+        for (auto iterator = children.rbegin(); iterator != children.rend();
+             ++iterator) {
+            pending.push_back(*iterator);
+        }
+    }
+    return subtree;
 }
 
 const GameObject* EditorSession::selectedGameObjectForScene(
     const Scene* scene) const noexcept {
-    if (scene == nullptr || scene != selectionScene_ ||
-        selectedGameObject_ == nullptr) {
-        return nullptr;
-    }
+    return activeGameObjectForScene(scene);
+}
 
-    for (const auto& object : scene->gameObjects()) {
-        if (object.get() == selectedGameObject_) {
-            return selectedGameObject_;
+bool EditorSession::ownsGameObject(const Scene* scene,
+                                   const GameObject* object) noexcept {
+    if (scene == nullptr || object == nullptr) {
+        return false;
+    }
+    for (const auto& owner : scene->gameObjects()) {
+        if (owner.get() == object) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void EditorSession::addSelectedGameObject(GameObject* object) {
+    if (object == nullptr) {
+        return;
+    }
+    const auto [iterator, inserted] = selectedGameObjects_.insert(object);
+    if (!inserted) {
+        return;
+    }
+    try {
+        selectionRecency_.push_back(object);
+    } catch (...) {
+        selectedGameObjects_.erase(iterator);
+        throw;
+    }
+}
+
+void EditorSession::removeSelectedGameObject(GameObject* object) noexcept {
+    if (object == nullptr) {
+        return;
+    }
+    selectedGameObjects_.erase(object);
+    selectionRecency_.erase(
+        std::remove(selectionRecency_.begin(), selectionRecency_.end(), object),
+        selectionRecency_.end());
+}
+
+void EditorSession::makeMostRecentlySelected(GameObject* object) noexcept {
+    if (object == nullptr || selectedGameObjects_.count(object) == 0) {
+        return;
+    }
+    const auto iterator = std::find(selectionRecency_.begin(),
+                                     selectionRecency_.end(), object);
+    if (iterator != selectionRecency_.end() &&
+        iterator + 1 != selectionRecency_.end()) {
+        std::rotate(iterator, iterator + 1, selectionRecency_.end());
+    }
+}
+
+GameObject* EditorSession::mostRecentlySelected() const noexcept {
+    for (auto iterator = selectionRecency_.rbegin();
+         iterator != selectionRecency_.rend(); ++iterator) {
+        if (*iterator != nullptr && selectedGameObjects_.count(*iterator) != 0) {
+            return *iterator;
         }
     }
     return nullptr;

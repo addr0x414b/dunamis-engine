@@ -5881,51 +5881,72 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
 
     }
 
-    const GameObject* selectedObject =
-        editorSession_->selectedGameObjectForScene(scene);
-    if (editorToolsEnabled(runState) && selectedObject != nullptr &&
-        !selectedObject->modelRenderable().meshInstances_.empty() &&
-        swapchainExtent.width > 0 && swapchainExtent.height > 0) {
-        const OutlinePushConstants outlinePushConstants{
-            glm::vec4(1.0f, 0.55f, 0.05f, 1.0f),
-            glm::vec4(3.0f, static_cast<float>(swapchainExtent.width),
-                      static_cast<float>(swapchainExtent.height), 0.0f)};
-
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          selectionOutlinePipeline);
-        vkCmdPushConstants(commandBuffer, selectionOutlinePipelineLayout,
-                           VK_SHADER_STAGE_VERTEX_BIT |
-                               VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, sizeof(OutlinePushConstants),
-                           &outlinePushConstants);
-
-        const auto states = meshRenderStates.find(
-            const_cast<GameObject*>(selectedObject));
-        if (states == meshRenderStates.end() || states->second.size() !=
-                selectedObject->modelRenderable().meshInstances_.size()) {
-            return Result::failure("Selection-outline mesh renderer-state topology is invalid");
-        }
-        for (std::size_t meshIndex = 0;
-             meshIndex < selectedObject->modelRenderable().meshInstances_.size();
-             ++meshIndex) {
-            const auto& instance = selectedObject->modelRenderable().meshInstances_[meshIndex];
-            const MeshRenderState& renderState = states->second[meshIndex];
-            if (!renderState.gpuAsset) {
-                return Result::failure("Selection-outline GPU mesh asset is unavailable");
+    if (editorToolsEnabled(runState) && swapchainExtent.width > 0 &&
+        swapchainExtent.height > 0) {
+        bool hasSelectedRenderable = false;
+        for (const auto& object : scene->gameObjects()) {
+            if (object != nullptr &&
+                editorSession_->isSelectedForScene(scene, object.get()) &&
+                !object->modelRenderable().meshInstances_.empty()) {
+                hasSelectedRenderable = true;
+                break;
             }
-            VkBuffer vertexBuffers[] = {renderState.gpuAsset->vertexBuffer};
-            VkDeviceSize offsets[] = {0};
-            vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers,
-                                   offsets);
-            vkCmdBindIndexBuffer(commandBuffer, renderState.gpuAsset->indexBuffer, 0,
-                                 VK_INDEX_TYPE_UINT32);
-            vkCmdBindDescriptorSets(
-                commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                selectionOutlinePipelineLayout, 0, 1,
-                &renderState.renderData.descriptorSets[currentFrame], 0, nullptr);
-            vkCmdDrawIndexed(commandBuffer,
-                             static_cast<uint32_t>(instance.mesh.indices.size()),
-                             1, 0, 0, 0);
+        }
+        if (hasSelectedRenderable) {
+            const OutlinePushConstants outlinePushConstants{
+                glm::vec4(1.0f, 0.55f, 0.05f, 1.0f),
+                glm::vec4(3.0f, static_cast<float>(swapchainExtent.width),
+                          static_cast<float>(swapchainExtent.height), 0.0f)};
+
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              selectionOutlinePipeline);
+            vkCmdPushConstants(commandBuffer, selectionOutlinePipelineLayout,
+                               VK_SHADER_STAGE_VERTEX_BIT |
+                                   VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(OutlinePushConstants),
+                               &outlinePushConstants);
+
+            for (const auto& object : scene->gameObjects()) {
+                if (object == nullptr ||
+                    !editorSession_->isSelectedForScene(scene, object.get()) ||
+                    object->modelRenderable().meshInstances_.empty()) {
+                    continue;
+                }
+
+                const auto states = meshRenderStates.find(object.get());
+                if (states == meshRenderStates.end() || states->second.size() !=
+                        object->modelRenderable().meshInstances_.size()) {
+                    return Result::failure(
+                        "Selection-outline mesh renderer-state topology is invalid");
+                }
+                for (std::size_t meshIndex = 0;
+                     meshIndex < object->modelRenderable().meshInstances_.size();
+                     ++meshIndex) {
+                    const auto& instance =
+                        object->modelRenderable().meshInstances_[meshIndex];
+                    const MeshRenderState& renderState = states->second[meshIndex];
+                    if (!renderState.gpuAsset) {
+                        return Result::failure(
+                            "Selection-outline GPU mesh asset is unavailable");
+                    }
+                    VkBuffer vertexBuffers[] = {renderState.gpuAsset->vertexBuffer};
+                    VkDeviceSize offsets[] = {0};
+                    vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers,
+                                           offsets);
+                    vkCmdBindIndexBuffer(
+                        commandBuffer, renderState.gpuAsset->indexBuffer, 0,
+                        VK_INDEX_TYPE_UINT32);
+                    vkCmdBindDescriptorSets(
+                        commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        selectionOutlinePipelineLayout, 0, 1,
+                        &renderState.renderData.descriptorSets[currentFrame], 0,
+                        nullptr);
+                    vkCmdDrawIndexed(
+                        commandBuffer,
+                        static_cast<uint32_t>(instance.mesh.indices.size()), 1,
+                        0, 0, 0);
+                }
+            }
         }
     }
 

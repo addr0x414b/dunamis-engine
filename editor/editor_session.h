@@ -22,10 +22,28 @@ public:
     [[nodiscard]] TransformTool transformTool() const noexcept;
     void setTransformTool(TransformTool tool) noexcept;
 
-    void select(Scene* scene, GameObject* object) noexcept;
+    void select(Scene* scene, GameObject* object);
+    void select(Scene* scene, GameObject* object,
+                SelectionOperation operation);
+    void applySelection(Scene* scene, GameObject* object,
+                        SelectionOperation operation);
     void clearSelection() noexcept;
-    void synchronizeSelection(Scene* scene) noexcept;
+    void synchronizeSelection(Scene* scene);
     [[nodiscard]] Scene* selectionScene() const noexcept;
+    // The Active Object is always either selected or null.
+    [[nodiscard]] GameObject* activeGameObject() const noexcept;
+    [[nodiscard]] const GameObject* activeGameObjectForScene(
+        const Scene* scene) const noexcept;
+    [[nodiscard]] const std::vector<GameObject*>&
+    selectedGameObjects() const noexcept;
+    [[nodiscard]] bool isSelected(const GameObject* object) const noexcept;
+    [[nodiscard]] bool isSelectedForScene(
+        const Scene* scene, const GameObject* object) const noexcept;
+    [[nodiscard]] std::vector<GameObject*> topLevelSelectedRoots() const;
+    [[nodiscard]] static std::vector<GameObject*> collectSubtree(
+        GameObject* root);
+    // Compatibility accessors for single-target editor consumers. They return
+    // the Active Object, never an arbitrary selected object.
     [[nodiscard]] GameObject* selectedGameObject() const noexcept;
     [[nodiscard]] const GameObject* selectedGameObjectForScene(
         const Scene* scene) const noexcept;
@@ -57,10 +75,19 @@ public:
                                   bool enabled);
 
 private:
+    [[nodiscard]] static bool ownsGameObject(
+        const Scene* scene, const GameObject* object) noexcept;
+    void addSelectedGameObject(GameObject* object);
+    void removeSelectedGameObject(GameObject* object) noexcept;
+    void makeMostRecentlySelected(GameObject* object) noexcept;
+    [[nodiscard]] GameObject* mostRecentlySelected() const noexcept;
+
     SceneRunState runState_ = SceneRunState::Editing;
     TransformTool transformTool_ = TransformTool::Translate;
     Scene* selectionScene_ = nullptr;
-    GameObject* selectedGameObject_ = nullptr;
+    std::unordered_set<const GameObject*> selectedGameObjects_;
+    std::vector<GameObject*> selectionRecency_;
+    GameObject* activeGameObject_ = nullptr;
     EditorAction pendingEditorAction_;
     std::filesystem::path pendingLoadPath_;
     std::filesystem::path pendingSaveAsPath_;

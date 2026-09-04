@@ -83,8 +83,9 @@ private:
     void submitRuntimeTransformEdit(
         const RuntimeTransformEdit& edit) noexcept;
     void finishRuntimeTransformDrag() noexcept;
-    void synchronizeSelection(Scene* scene) noexcept;
-    void selectGameObject(Scene* scene, GameObject* object) noexcept;
+    void synchronizeSelection(Scene* scene);
+    void selectGameObject(Scene* scene, GameObject* object,
+                          SelectionOperation operation);
     void drawToolbar(SceneRunState runState);
     void drawPersistenceDialogs();
     [[nodiscard]] bool requestNativeFileDialog(bool saveAs);
@@ -92,6 +93,7 @@ private:
     [[nodiscard]] bool nativeFileDialogBusy() const;
     void stopNativeFileDialog() noexcept;
     void drawSceneHierarchy(Scene* scene, bool disabled);
+    void drawSceneHierarchyNode(Scene* scene, GameObject* object);
     void drawInspector(Scene* scene, bool disabled);
     void updateSceneInteractionAreaHovered() noexcept;
     void processGizmoShortcuts(Scene* scene,

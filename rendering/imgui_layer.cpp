@@ -964,9 +964,15 @@ const GameObject* ImGuiLayer::selectedGameObjectForScene(
 
 void ImGuiLayer::finishRuntimeTransformDrag() noexcept {
     if (runtimeTransformDragActive_ && runtimeTransformObject_ != nullptr) {
-        submitRuntimeTransformEdit(RuntimeTransformEdit{
-            runtimeTransformObject_, runtimeTransformObject_->position,
-            runtimeTransformObject_->rotation, false});
+        const Scene* selectionScene =
+            editorSession_ == nullptr ? nullptr : editorSession_->selectionScene();
+        if (editorSession_ != nullptr &&
+            editorSession_->isSelectedForScene(selectionScene,
+                                               runtimeTransformObject_)) {
+            submitRuntimeTransformEdit(RuntimeTransformEdit{
+                runtimeTransformObject_, runtimeTransformObject_->position,
+                runtimeTransformObject_->rotation, false});
+        }
     }
     runtimeTransformDragActive_ = false;
     runtimeTransformObject_ = nullptr;
@@ -984,57 +990,38 @@ bool ImGuiLayer::sceneInteractionAreaHovered() const noexcept {
     return sceneInteractionAreaHovered_;
 }
 
-void ImGuiLayer::synchronizeSelection(Scene* scene) noexcept {
+void ImGuiLayer::synchronizeSelection(Scene* scene) {
     if (editorSession_ == nullptr) {
         return;
     }
 
     if (scene != editorSession_->selectionScene()) {
-        clearSelection();
-    } else if (scene == nullptr) {
-        clearSelection();
-    } else if (editorSession_->selectedGameObject() != nullptr) {
-        bool selectedObjectIsPresent = false;
-        for (const auto& object : scene->gameObjects()) {
-            if (object.get() == editorSession_->selectedGameObject()) {
-                selectedObjectIsPresent = true;
-                break;
-            }
-        }
-        if (!selectedObjectIsPresent) {
-            clearSelection();
-        }
+        // The old scene may already have been retired. Do not submit a final
+        // runtime edit through a pointer whose owner is no longer known.
+        runtimeTransformDragActive_ = false;
+        runtimeTransformObject_ = nullptr;
     }
     editorSession_->synchronizeSelection(scene);
+    if (runtimeTransformObject_ != nullptr &&
+        !editorSession_->isSelectedForScene(scene, runtimeTransformObject_)) {
+        runtimeTransformDragActive_ = false;
+        runtimeTransformObject_ = nullptr;
+    }
 }
 
-void ImGuiLayer::selectGameObject(Scene* scene, GameObject* object) noexcept {
+void ImGuiLayer::selectGameObject(Scene* scene, GameObject* object,
+                                  SelectionOperation operation) {
     if (editorSession_ == nullptr) {
         return;
     }
-    if (scene == nullptr) {
-        clearSelection();
-        editorSession_->select(nullptr, nullptr);
+
+    if (object == nullptr && operation != SelectionOperation::ReplaceExact) {
         return;
     }
 
-    if (object == nullptr) {
-        clearSelection();
-        editorSession_->select(scene, nullptr);
-        return;
-    }
-
-    for (const auto& owner : scene->gameObjects()) {
-        if (owner.get() == object) {
-            if (editorSession_->selectedGameObject() != object) {
-                finishRuntimeTransformDrag();
-            }
-            editorSession_->select(scene, object);
-            inspectorError_.clear();
-            return;
-        }
-    }
-    clearSelection();
+    finishRuntimeTransformDrag();
+    editorSession_->applySelection(scene, object, operation);
+    inspectorError_.clear();
 }
 
 void ImGuiLayer::drawSceneHierarchy(Scene* scene, bool disabled) {
@@ -1050,21 +1037,12 @@ void ImGuiLayer::drawSceneHierarchy(Scene* scene, bool disabled) {
     bool hasObject = false;
     for (const auto& objectOwner : scene->gameObjects()) {
         GameObject* object = objectOwner.get();
-        if (object == nullptr) {
+        if (object == nullptr || object->parent() != nullptr) {
             continue;
         }
 
         hasObject = true;
-        ImGui::PushID(static_cast<const void*>(object));
-        const char* label = object->name.empty()
-                                ? "<Unnamed GameObject>"
-                                : object->name.c_str();
-        const bool selected =
-            selectedGameObjectForScene(scene) == object;
-        if (ImGui::Selectable(label, selected)) {
-            selectGameObject(scene, object);
-        }
-        ImGui::PopID();
+        drawSceneHierarchyNode(scene, object);
     }
 
     if (!hasObject) {
@@ -1074,11 +1052,56 @@ void ImGuiLayer::drawSceneHierarchy(Scene* scene, bool disabled) {
     const ImVec2 available = ImGui::GetContentRegionAvail();
     if (available.x > 0.0f && available.y > 0.0f &&
         ImGui::InvisibleButton("##SceneHierarchyBlankSpace", available)) {
-        clearSelection();
+        const ImGuiIO& io = ImGui::GetIO();
+        if (!io.KeyCtrl && !io.KeyShift) {
+            selectGameObject(scene, nullptr,
+                             SelectionOperation::ReplaceExact);
+        }
     }
 
     ImGui::EndDisabled();
     ImGui::End();
+}
+
+void ImGuiLayer::drawSceneHierarchyNode(Scene* scene, GameObject* object) {
+    if (scene == nullptr || object == nullptr) {
+        return;
+    }
+
+    ImGui::PushID(static_cast<const void*>(object));
+    const char* label = object->name.empty() ? "<Unnamed GameObject>"
+                                             : object->name.c_str();
+    const bool hasChildren = !object->children().empty();
+    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth;
+    if (hasChildren) {
+        flags |= ImGuiTreeNodeFlags_OpenOnArrow |
+                 ImGuiTreeNodeFlags_DefaultOpen;
+    } else {
+        flags |= ImGuiTreeNodeFlags_Leaf |
+                 ImGuiTreeNodeFlags_NoTreePushOnOpen;
+    }
+    if (editorSession_ != nullptr &&
+        editorSession_->isSelectedForScene(scene, object)) {
+        flags |= ImGuiTreeNodeFlags_Selected;
+    }
+
+    const bool open = ImGui::TreeNodeEx(label, flags);
+    const bool clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+    const bool toggledOpen = ImGui::IsItemToggledOpen();
+    if (clicked && !toggledOpen) {
+        const ImGuiIO& io = ImGui::GetIO();
+        selectGameObject(
+            scene, object,
+            selectionOperationForModifiers(io.KeyCtrl, io.KeyShift));
+    }
+
+    if (open && hasChildren) {
+        for (GameObject* child : object->children()) {
+            drawSceneHierarchyNode(scene, child);
+        }
+        ImGui::TreePop();
+    }
+    ImGui::PopID();
 }
 
 void ImGuiLayer::processGizmoShortcuts(Scene* scene,
@@ -1371,13 +1394,16 @@ void ImGuiLayer::drawCameraVisualization(
     const ImVec2 clipMax(
         sceneInteractionRect_.x + sceneInteractionRect_.width,
         sceneInteractionRect_.y + sceneInteractionRect_.height);
-    const ImGuiCol accent = active ? ImGuiCol_ButtonActive
-                                   : ImGuiCol_ButtonHovered;
+    const bool selected = editorSession_ != nullptr &&
+                          editorSession_->isSelected(selectionTarget);
+    const bool highlighted = active || selected;
+    const ImGuiCol accent = highlighted ? ImGuiCol_ButtonActive
+                                        : ImGuiCol_ButtonHovered;
     const ImU32 color = ImGui::ColorConvertFloat4ToU32(
         ImGui::GetStyle().Colors[accent]);
     drawList->PushClipRect(clipMin, clipMax, true);
 
-    const float lineThickness = active ? 2.5f : 2.0f;
+    const float lineThickness = highlighted ? 2.5f : 2.0f;
     for (std::size_t index = 0; index < geometry.segmentCount; ++index) {
         const EditorHelperSegment& segment = geometry.segments[index];
         drawList->AddLine(ImVec2(segment.start.x, segment.start.y),
@@ -1449,7 +1475,8 @@ void ImGuiLayer::drawPointLightVisualization(
     const ImVec2 clipMax(
         sceneInteractionRect_.x + sceneInteractionRect_.width,
         sceneInteractionRect_.y + sceneInteractionRect_.height);
-    const bool selected = editorSession_->selectedGameObject() == selectionTarget;
+    const bool selected = editorSession_ != nullptr &&
+                          editorSession_->isSelected(selectionTarget);
     const ImGuiCol accent = selected ? ImGuiCol_ButtonActive
                                      : ImGuiCol_ButtonHovered;
     const ImU32 color = ImGui::ColorConvertFloat4ToU32(
@@ -1563,7 +1590,8 @@ void ImGuiLayer::drawDirectionalLightVisualization(
     const ImVec2 clipMax(
         sceneInteractionRect_.x + sceneInteractionRect_.width,
         sceneInteractionRect_.y + sceneInteractionRect_.height);
-    const bool selected = editorSession_->selectedGameObject() == selectionTarget;
+    const bool selected = editorSession_ != nullptr &&
+                          editorSession_->isSelected(selectionTarget);
     const ImGuiCol accent = selected ? ImGuiCol_ButtonActive
                                      : ImGuiCol_ButtonHovered;
     const ImU32 color = ImGui::ColorConvertFloat4ToU32(
@@ -1793,7 +1821,10 @@ void ImGuiLayer::processWorldSelection(Scene* scene, const glm::mat4& view,
     }
 
     if (closestHelperTarget != nullptr) {
-        selectGameObject(scene, const_cast<GameObject*>(closestHelperTarget));
+        const ImGuiIO& io = ImGui::GetIO();
+        selectGameObject(
+            scene, const_cast<GameObject*>(closestHelperTarget),
+            selectionOperationForModifiers(io.KeyCtrl, io.KeyShift));
         return;
     }
 
@@ -1820,7 +1851,9 @@ void ImGuiLayer::processWorldSelection(Scene* scene, const glm::mat4& view,
     }
     const editor_picking::Ray ray{origin, direction / directionLength};
     GameObject* closestObject = editor_picking::pickClosestObject(*scene, ray);
-    selectGameObject(scene, closestObject);
+    const ImGuiIO& io = ImGui::GetIO();
+    selectGameObject(scene, closestObject,
+                     selectionOperationForModifiers(io.KeyCtrl, io.KeyShift));
 }
 
 void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {

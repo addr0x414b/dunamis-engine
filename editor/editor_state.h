@@ -15,6 +15,21 @@ enum class TransformTool {
     Scale,
 };
 
+enum class SelectionOperation {
+    ReplaceExact,
+    ToggleExact,
+    ReplaceSubtree,
+    AddSubtree,
+};
+
+[[nodiscard]] constexpr SelectionOperation selectionOperationForModifiers(
+    bool ctrl, bool shift) noexcept {
+    if (ctrl && shift) return SelectionOperation::AddSubtree;
+    if (shift) return SelectionOperation::ReplaceSubtree;
+    if (ctrl) return SelectionOperation::ToggleExact;
+    return SelectionOperation::ReplaceExact;
+}
+
 enum class EditorCommand {
     None,
     DuplicateGameObject,
