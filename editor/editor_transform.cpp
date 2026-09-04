@@ -41,6 +41,41 @@ constexpr float affineTolerance = 1.0e-4f;
     return true;
 }
 
+[[nodiscard]] bool matricesEquivalentWithinTransformTolerance(
+    const glm::mat4& first, const glm::mat4& second) noexcept {
+    if (!transform_math::isFiniteMatrix(first) ||
+        !transform_math::isFiniteMatrix(second)) {
+        return false;
+    }
+
+    float maximumLinearMagnitude = 0.0f;
+    for (const glm::mat4* matrix : {&first, &second}) {
+        for (int column = 0; column < 3; ++column) {
+            for (int row = 0; row < 3; ++row) {
+                maximumLinearMagnitude = std::max(
+                    maximumLinearMagnitude, std::fabs((*matrix)[column][row]));
+            }
+        }
+    }
+    const float linearComparisonScale =
+        maximumLinearMagnitude > 0.0f ? maximumLinearMagnitude : 1.0f;
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            const float difference =
+                std::fabs(first[column][row] - second[column][row]);
+            const float comparisonScale =
+                column < 3 && row < 3
+                    ? linearComparisonScale
+                    : std::max({1.0f, std::fabs(first[column][row]),
+                                std::fabs(second[column][row])});
+            if (difference > affineTolerance * comparisonScale) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 [[nodiscard]] bool calculateSafeInverse(const glm::mat4& matrix,
                                         glm::mat4& inverse) noexcept {
     inverse = glm::mat4(1.0f);
@@ -817,6 +852,23 @@ Result solveTransformDrag(const TransformDragSnapshot& snapshot,
                 candidate.desiredWorld, candidate.local);
             if (!localResult) {
                 return localResult;
+            }
+
+            if (snapshot.tool == TransformTool::Rotate) {
+                const glm::vec3 decomposedScale = candidate.local.scale;
+                candidate.local.scale = objectSnapshot.originalLocal.scale;
+                const glm::mat4 stabilizedLocal =
+                    transform_math::makeModelMatrix(
+                        candidate.local.position, candidate.local.rotation,
+                        candidate.local.scale);
+                const glm::mat4 stabilizedWorld =
+                    candidateParentWorld * stabilizedLocal;
+                if (!isAffineMatrix(stabilizedLocal) ||
+                    !isAffineMatrix(stabilizedWorld) ||
+                    !matricesEquivalentWithinTransformTolerance(
+                        stabilizedWorld, candidate.desiredWorld)) {
+                    candidate.local.scale = decomposedScale;
+                }
             }
         }
 

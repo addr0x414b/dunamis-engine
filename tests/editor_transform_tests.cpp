@@ -9,6 +9,7 @@
 #include "scene/scene.h"
 
 #include <cmath>
+#include <cstring>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -55,6 +56,12 @@ bool sameVector(const glm::vec3& first, const glm::vec3& second,
     return glm::length(first - second) <= tolerance;
 }
 
+bool sameVectorBits(const glm::vec3& first, const glm::vec3& second) {
+    return std::memcmp(&first.x, &second.x, sizeof(float)) == 0 &&
+           std::memcmp(&first.y, &second.y, sizeof(float)) == 0 &&
+           std::memcmp(&first.z, &second.z, sizeof(float)) == 0;
+}
+
 bool sameMatrix(const glm::mat4& first, const glm::mat4& second,
                 float tolerance = 2.0e-4f) {
     for (int column = 0; column < 4; ++column) {
@@ -99,6 +106,13 @@ bool applySharedDelta(
         std::cerr << result.error() << '\n';
     }
     return static_cast<bool>(result);
+}
+
+bool applyRotateDelta(TestScene& scene, EditorSession& session,
+                      const glm::mat4& sharedDelta, TransformSpace space) {
+    session.setTransformTool(TransformTool::Rotate);
+    session.setTransformSpace(space);
+    return applySharedDelta(scene, session, sharedDelta, space);
 }
 
 bool runRootConversionTests() {
@@ -990,6 +1004,161 @@ bool runMultiObjectTransformTests() {
     return passed;
 }
 
+bool runRotateScaleStabilizationTests() {
+    bool passed = true;
+
+    {
+        TestScene scene;
+        GameObject* object = addObject<GameObject>(scene, "rotate-scale-root-world");
+        if (!object) {
+            return expect(false, "Could not create world-rotate scale fixture");
+        }
+        object->position = {2.0f, -3.0f, 4.0f};
+        object->rotation = {11.0f, -23.0f, 37.0f};
+        object->scale = {1.0f, 1.0f, 1.0f};
+        const glm::vec3 originalScale = object->scale;
+        const glm::mat4 beforeWorld = object->worldTransformMatrix();
+        EditorSession session;
+        session.select(&scene, object);
+        const glm::mat4 delta = pivotDelta(
+            worldPosition(*object),
+            transform_math::makeRotationMatrix({17.0f, -29.0f, 41.0f}));
+        passed &= expect(
+            applyRotateDelta(scene, session, delta, TransformSpace::World) &&
+                sameMatrix(object->worldTransformMatrix(), delta * beforeWorld) &&
+                sameVectorBits(object->scale, originalScale),
+            "World Rotate changed a root object's authored unit scale");
+    }
+
+    {
+        TestScene scene;
+        GameObject* object = addObject<GameObject>(scene, "rotate-scale-root-local");
+        if (!object) {
+            return expect(false, "Could not create local-rotate scale fixture");
+        }
+        object->position = {-5.0f, 2.0f, 7.0f};
+        object->rotation = {-14.0f, 19.0f, 28.0f};
+        object->scale = {1.0f, 1.0f, 1.0f};
+        const glm::vec3 originalScale = object->scale;
+        const glm::mat4 beforeWorld = object->worldTransformMatrix();
+        EditorSession session;
+        session.select(&scene, object);
+        const glm::mat4 delta = pivotDelta(
+            worldPosition(*object),
+            transform_math::makeRotationMatrix({-31.0f, 13.0f, 23.0f}));
+        passed &= expect(
+            applyRotateDelta(scene, session, delta, TransformSpace::Local) &&
+                sameMatrix(object->worldTransformMatrix(), delta * beforeWorld) &&
+                sameVectorBits(object->scale, originalScale),
+            "Local Rotate changed a root object's authored unit scale");
+    }
+
+    {
+        TestScene scene;
+        GameObject* object = addObject<GameObject>(scene, "rotate-scale-nonuniform");
+        if (!object) {
+            return expect(false, "Could not create non-uniform rotate fixture");
+        }
+        object->rotation = {8.0f, 27.0f, -16.0f};
+        object->scale = {2.0f, 3.0f, 4.0f};
+        const glm::vec3 originalScale = object->scale;
+        const glm::mat4 beforeWorld = object->worldTransformMatrix();
+        EditorSession session;
+        session.select(&scene, object);
+        const glm::mat4 delta = pivotDelta(
+            worldPosition(*object),
+            transform_math::makeRotationMatrix({23.0f, 11.0f, -37.0f}));
+        passed &= expect(
+            applyRotateDelta(scene, session, delta, TransformSpace::World) &&
+                sameMatrix(object->worldTransformMatrix(), delta * beforeWorld) &&
+                sameVectorBits(object->scale, originalScale),
+            "Rotate changed a root object's non-uniform authored scale");
+    }
+
+    {
+        TestScene scene;
+        GameObject* object = addObject<GameObject>(scene, "rotate-scale-reflected");
+        if (!object) {
+            return expect(false, "Could not create reflected rotate fixture");
+        }
+        object->rotation = {-12.0f, 21.0f, 34.0f};
+        object->scale = {-2.0f, 3.0f, -4.0f};
+        const glm::vec3 originalScale = object->scale;
+        const glm::mat4 beforeWorld = object->worldTransformMatrix();
+        EditorSession session;
+        session.select(&scene, object);
+        const glm::mat4 delta = pivotDelta(
+            worldPosition(*object),
+            transform_math::makeRotationMatrix({-19.0f, 33.0f, 7.0f}));
+        passed &= expect(
+            applyRotateDelta(scene, session, delta, TransformSpace::World) &&
+                sameMatrix(object->worldTransformMatrix(), delta * beforeWorld) &&
+                sameVectorBits(object->scale, originalScale),
+            "Rotate changed a root object's reflected authored scale");
+    }
+
+    {
+        TestScene scene;
+        GameObject* first = addObject<GameObject>(scene, "rotate-scale-shared-a");
+        GameObject* second = addObject<GameObject>(scene, "rotate-scale-shared-b");
+        if (!first || !second) {
+            return expect(false, "Could not create shared-pivot rotate fixture");
+        }
+        first->position = {10.0f, 0.0f, 0.0f};
+        first->rotation = {7.0f, -11.0f, 19.0f};
+        first->scale = {2.0f, 3.0f, 4.0f};
+        second->position = {30.0f, 0.0f, 0.0f};
+        second->rotation = {-13.0f, 17.0f, -23.0f};
+        second->scale = {-2.0f, 3.0f, -4.0f};
+        const glm::vec3 firstScale = first->scale;
+        const glm::vec3 secondScale = second->scale;
+        const glm::mat4 firstBefore = first->worldTransformMatrix();
+        const glm::mat4 secondBefore = second->worldTransformMatrix();
+        EditorSession session;
+        session.select(&scene, first);
+        session.applySelection(&scene, second, SelectionOperation::ToggleExact);
+        const glm::mat4 delta = pivotDelta(
+            {20.0f, 0.0f, 0.0f},
+            transform_math::makeRotationMatrix({0.0f, 0.0f, 90.0f}));
+        passed &= expect(
+            applyRotateDelta(scene, session, delta, TransformSpace::World) &&
+                sameMatrix(first->worldTransformMatrix(), delta * firstBefore) &&
+                sameMatrix(second->worldTransformMatrix(), delta * secondBefore) &&
+                sameVectorBits(first->scale, firstScale) &&
+                sameVectorBits(second->scale, secondScale),
+            "Shared-pivot Rotate changed a selected root's authored scale");
+    }
+
+    {
+        TestScene scene;
+        GameObject* parent = addObject<GameObject>(scene, "rotate-scale-hierarchy-parent");
+        GameObject* child = addObject<GameObject>(scene, "rotate-scale-hierarchy-child");
+        if (!parent || !child ||
+            !scene.reparentGameObject(*child, parent,
+                                      Scene::ReparentMode::PreserveLocal)) {
+            return expect(false, "Could not create hierarchy rotate fixture");
+        }
+        parent->scale = {2.0f, 1.0f, 1.0f};
+        child->position = {3.0f, 0.0f, 0.0f};
+        child->scale = {1.0f, 1.0f, 1.0f};
+        const glm::vec3 originalScale = child->scale;
+        const glm::mat4 beforeWorld = child->worldTransformMatrix();
+        EditorSession session;
+        session.select(&scene, child);
+        const glm::mat4 delta = pivotDelta(
+            worldPosition(*child),
+            transform_math::makeRotationMatrix({0.0f, 0.0f, 90.0f}));
+        passed &= expect(
+            applyRotateDelta(scene, session, delta, TransformSpace::World) &&
+                sameMatrix(child->worldTransformMatrix(), delta * beforeWorld) &&
+                !sameVectorBits(child->scale, originalScale) &&
+                sameVector(child->scale, {2.0f, 0.5f, 1.0f}),
+            "Rotate incorrectly forced authored scale through a scaled parent");
+    }
+
+    return passed;
+}
+
 bool runTransactionalBatchFailureTests() {
     bool passed = true;
 
@@ -1218,6 +1387,7 @@ int main() {
                    runFailureAndTransactionalTests() &&
                    runSelectionPivotAndSpaceTests() &&
                    runMultiObjectTransformTests() &&
+                   runRotateScaleStabilizationTests() &&
                    runTransactionalBatchFailureTests() &&
                    runEditorWorldDataTests()
                ? 0
