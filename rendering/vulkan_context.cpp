@@ -709,12 +709,14 @@ Result VulkanContext::detachGameObjectsResourcesInternal(
 
     std::unordered_set<GameObject*> requested;
     std::vector<RenderData*> requestedRenderData;
+    std::vector<VkDescriptorPool> candidateDescriptorPools;
     std::size_t ownedBufferCount = 0;
     std::size_t ownedDescriptorSetCount = 0;
     std::size_t uncachedModelCount = 0;
     try {
         requested.reserve(gameObjects.size());
         requestedRenderData.reserve(gameObjects.size());
+        candidateDescriptorPools.reserve(resources.descriptorSets.size());
         for (GameObject* object : gameObjects) {
             const bool ownedByScene = object != nullptr &&
                 std::any_of(scene->gameObjects().begin(),
@@ -763,6 +765,12 @@ Result VulkanContext::detachGameObjectsResourcesInternal(
         for (const OwnedDescriptorSets& allocation : resources.descriptorSets) {
             if (requested.count(allocation.owner) != 0) {
                 ++ownedDescriptorSetCount;
+                if (allocation.pool != VK_NULL_HANDLE &&
+                    std::find(candidateDescriptorPools.begin(),
+                              candidateDescriptorPools.end(),
+                              allocation.pool) == candidateDescriptorPools.end()) {
+                    candidateDescriptorPools.push_back(allocation.pool);
+                }
             }
         }
         for (const auto& asset : resources.uncachedGpuModels) {
@@ -783,6 +791,7 @@ Result VulkanContext::detachGameObjectsResourcesInternal(
     try {
         detached.buffers.reserve(ownedBufferCount);
         detached.descriptorSets.reserve(ownedDescriptorSetCount);
+        detached.descriptorPools.reserve(candidateDescriptorPools.size());
         detached.uncachedGpuModels.reserve(uncachedModelCount);
         detached.renderData.reserve(requestedRenderData.size());
         detached.meshRenderStates.reserve(requested.size());
@@ -826,6 +835,25 @@ Result VulkanContext::detachGameObjectsResourcesInternal(
     };
     moveOwnedRecords(resources.buffers, detached.buffers);
     moveOwnedRecords(resources.descriptorSets, detached.descriptorSets);
+
+    for (VkDescriptorPool candidatePool : candidateDescriptorPools) {
+        if (candidatePool == VK_NULL_HANDLE || candidatePool == descriptorPool) {
+            continue;
+        }
+        const bool stillReferenced = std::any_of(
+            resources.descriptorSets.begin(), resources.descriptorSets.end(),
+            [candidatePool](const OwnedDescriptorSets& allocation) {
+                return allocation.pool == candidatePool;
+            });
+        if (stillReferenced) continue;
+
+        const auto pool = std::find(resources.descriptorPools.begin(),
+                                     resources.descriptorPools.end(),
+                                     candidatePool);
+        if (pool == resources.descriptorPools.end()) continue;
+        detached.descriptorPools.push_back(*pool);
+        resources.descriptorPools.erase(pool);
+    }
 
     auto renderDataIterator = resources.renderData.begin();
     for (auto sourceIterator = resources.renderData.begin();
