@@ -10,6 +10,7 @@
 
 class GameObject;
 class Scene;
+class EditorSession;
 class TypeRegistry;
 
 namespace editor {
@@ -38,6 +39,21 @@ public:
         Scene& scene, const GameObject& source, const TypeRegistry& registry,
         const RendererAttachment& attachRenderer,
         GameObject*& duplicate);
+
+    // Reparents every applicable top-level selected root beneath the Active
+    // GameObject while preserving world transforms and selection state.
+    [[nodiscard]] static Result parentSelectionToActive(
+        Scene& scene, const EditorSession& editorSession);
+
+    // Creates one authored Group, places it in the Active selected root's
+    // former hierarchy slot, and groups the selected roots transactionally.
+    [[nodiscard]] static Result groupSelection(
+        Scene& scene, EditorSession& editorSession,
+        const TypeRegistry& registry, const RendererAttachment& attachRenderer,
+        GameObject*& group);
+    [[nodiscard]] static Result groupSelection(
+        Scene& scene, EditorSession& editorSession,
+        const TypeRegistry& registry, GameObject*& group);
 };
 
 }  // namespace editor

@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <exception>
+#include <limits>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -260,6 +262,20 @@ Result SceneSerializer::serializeAuthored(const Scene& scene,
         nlohmann::json record;
         result = serializeObject(*object, registry, record);
         if (!result) return result;
+
+        const GameObject* parent = object->parent();
+        const auto& siblings = parent == nullptr
+                                   ? scene.rootObjects()
+                                   : parent->children();
+        const auto sibling = std::find(siblings.begin(), siblings.end(),
+                                       object.get());
+        if (sibling == siblings.end()) {
+            return Result::failure(
+                "Object '" + object->persistentId +
+                "' is missing from its authored sibling list");
+        }
+        record["siblingIndex"] = static_cast<std::size_t>(
+            std::distance(siblings.begin(), sibling));
         output["objects"].push_back(std::move(record));
 
         if (scene.activeCamera() != nullptr &&
@@ -345,6 +361,7 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
         struct PendingHierarchy {
             GameObject* object = nullptr;
             std::optional<std::string> parentId;
+            std::optional<std::size_t> siblingIndex;
         };
 
         std::unordered_set<std::string> savedIds;
@@ -363,6 +380,7 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
             }
 
             std::optional<std::string> parentId;
+            std::optional<std::size_t> siblingIndex;
             if (version == formatVersion) {
                 if (!record.contains("parentId")) {
                     return Result::failure("Object '" + id +
@@ -376,6 +394,25 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
                             "' parentId must be null or a non-empty string");
                     }
                     parentId = parent.get<std::string>();
+                }
+                if (record.contains("siblingIndex")) {
+                    const auto& siblingOrder = record.at("siblingIndex");
+                    if (!siblingOrder.is_number_unsigned()) {
+                        return Result::failure(
+                            "Object '" + id +
+                            "' siblingIndex must be an unsigned integer");
+                    }
+                    const std::uint64_t decoded =
+                        siblingOrder.get<std::uint64_t>();
+                    if (decoded >
+                        static_cast<std::uint64_t>(
+                            std::numeric_limits<std::size_t>::max())) {
+                        return Result::failure(
+                            "Object '" + id + "' siblingIndex is out of range");
+                    }
+                    // Keep presentation metadata separate from parentId: the
+                    // latter remains the sole serialized hierarchy truth.
+                    siblingIndex = static_cast<std::size_t>(decoded);
                 }
             }
 
@@ -421,7 +458,8 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
             }
 
             savedObjects.emplace(id, object);
-            pendingHierarchy.push_back({object, std::move(parentId)});
+            pendingHierarchy.push_back(
+                {object, std::move(parentId), siblingIndex});
         }
 
         if (version == 1 || version == formatVersion) {
@@ -465,6 +503,78 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
                         return Result::failure(
                             "Failed to restore hierarchy for object '" + childId +
                             "': " + result.error());
+                    }
+                }
+            }
+
+            bool hasSiblingOrder = false;
+            bool hasMissingSiblingOrder = false;
+            for (const PendingHierarchy& pending : pendingHierarchy) {
+                hasSiblingOrder |= pending.siblingIndex.has_value();
+                hasMissingSiblingOrder |= !pending.siblingIndex.has_value();
+            }
+            bool validSiblingOrder = hasSiblingOrder && !hasMissingSiblingOrder;
+            std::vector<GameObject*> orderParents;
+            if (validSiblingOrder) {
+                orderParents.reserve(pendingHierarchy.size());
+                for (const PendingHierarchy& pending : pendingHierarchy) {
+                    GameObject* parent = pending.object->parent();
+                    if (std::find(orderParents.begin(), orderParents.end(),
+                                  parent) == orderParents.end()) {
+                        orderParents.push_back(parent);
+                    }
+                }
+
+                for (GameObject* parent : orderParents) {
+                    std::vector<const PendingHierarchy*> siblings;
+                    for (const PendingHierarchy& pending : pendingHierarchy) {
+                        if (pending.object->parent() == parent) {
+                            siblings.push_back(&pending);
+                        }
+                    }
+                    std::sort(
+                        siblings.begin(), siblings.end(),
+                        [](const PendingHierarchy* left,
+                           const PendingHierarchy* right) {
+                            return *left->siblingIndex < *right->siblingIndex;
+                        });
+                    for (std::size_t index = 0; index < siblings.size(); ++index) {
+                        if (!siblings[index]->siblingIndex.has_value() ||
+                            *siblings[index]->siblingIndex != index) {
+                            validSiblingOrder = false;
+                            break;
+                        }
+                    }
+                    if (!validSiblingOrder) break;
+                }
+            }
+
+            if (hasSiblingOrder && !validSiblingOrder) {
+                loadData.warnings.push_back(
+                    "Ignoring incomplete or conflicting scene hierarchy order metadata");
+            } else if (validSiblingOrder) {
+                for (GameObject* parent : orderParents) {
+                    std::vector<const PendingHierarchy*> siblings;
+                    for (const PendingHierarchy& pending : pendingHierarchy) {
+                        if (pending.object->parent() == parent) {
+                            siblings.push_back(&pending);
+                        }
+                    }
+                    std::sort(
+                        siblings.begin(), siblings.end(),
+                        [](const PendingHierarchy* left,
+                           const PendingHierarchy* right) {
+                            return *left->siblingIndex < *right->siblingIndex;
+                        });
+                    for (std::size_t index = 0; index < siblings.size(); ++index) {
+                        Result reorder = candidate.reorderGameObject(
+                            *siblings[index]->object, parent, index);
+                        if (!reorder) {
+                            return Result::failure(
+                                "Failed to restore sibling order for object '" +
+                                siblings[index]->object->persistentId + "': " +
+                                reorder.error());
+                        }
                     }
                 }
             }

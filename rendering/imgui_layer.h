@@ -155,6 +155,13 @@ private:
         bool valid = false;
     };
 
+    struct HierarchyReorderRequest {
+        Scene* scene = nullptr;
+        GameObject* object = nullptr;
+        GameObject* expectedParent = nullptr;
+        std::size_t siblingIndex = 0;
+    };
+
     VkInstance instance_ = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
     VkDevice device_ = VK_NULL_HANDLE;
@@ -184,6 +191,7 @@ private:
     std::shared_ptr<NativeFileDialogState> nativeFileDialogState_;
     bool sceneInteractionAreaHovered_ = false;
     SceneInteractionRect sceneInteractionRect_;
+    std::optional<HierarchyReorderRequest> pendingHierarchyReorder_;
     const GameObject* physicsDiagnosticsObject_ = nullptr;
     std::optional<physics::ShapeDiagnostics> physicsDiagnostics_;
     std::string physicsDiagnosticsError_;

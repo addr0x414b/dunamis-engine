@@ -37,6 +37,14 @@ public:
         std::unique_ptr<GameObject> gameObject);
     [[nodiscard]] Result reparentGameObject(
         GameObject& child, GameObject* newParent, ReparentMode mode);
+    // Reorders an object inside the sibling list belonging to expectedParent.
+    // The expected parent is part of the request so callers cannot turn this
+    // presentation-only operation into a reparenting operation.
+    [[nodiscard]] Result reorderGameObject(
+        GameObject& object, GameObject* expectedParent,
+        std::size_t siblingIndex);
+    [[nodiscard]] Result reorderGameObject(
+        GameObject& object, std::size_t siblingIndex);
     [[nodiscard]] Result setActiveCamera(std::shared_ptr<Camera> camera);
     [[nodiscard]] Result setActiveCameraReference(Camera* camera);
     [[nodiscard]] Result validateForActivation() const;
@@ -44,6 +52,8 @@ public:
 
     [[nodiscard]] const std::vector<std::unique_ptr<GameObject>>&
     gameObjects() const noexcept;
+    [[nodiscard]] const std::vector<GameObject*>&
+    rootObjects() const noexcept;
     [[nodiscard]] std::size_t pointLightCount() const noexcept;
     [[nodiscard]] const PointLight& pointLightAt(std::size_t index) const;
     [[nodiscard]] const DirectionalLight*
@@ -79,12 +89,22 @@ private:
     [[nodiscard]] Result addGameObjectInternal(
         std::unique_ptr<GameObject> gameObject, bool allowActive,
         GameObject*& inserted);
+    [[nodiscard]] Result validateReparentGameObject(
+        const GameObject& child, GameObject* newParent, ReparentMode mode,
+        std::optional<std::size_t> destinationIndex) const;
+    [[nodiscard]] Result reparentGameObjectAt(
+        GameObject& child, GameObject* newParent, ReparentMode mode,
+        std::size_t destinationIndex);
     [[nodiscard]] bool ownsGameObject(const GameObject* gameObject) const noexcept;
 
     [[nodiscard]] Result activate();
     void deactivate() noexcept;
 
     std::vector<std::unique_ptr<GameObject>> gameObjects_;
+    // Hierarchy presentation order is deliberately separate from lifetime
+    // ownership. Every pointer here is non-owning and is owned by
+    // gameObjects_.
+    std::vector<GameObject*> rootObjects_;
     std::array<std::size_t, scene_limits::maxPointLights>
         pointLightIndices_{};
     std::size_t pointLightCount_ = 0;

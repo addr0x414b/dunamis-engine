@@ -67,6 +67,13 @@ constexpr SDL_DialogFileFilter sceneFileFilters[] = {
     {"All Files", "*"},
 };
 
+constexpr char hierarchyDragPayloadType[] = "DUNAMIS_HIERARCHY_OBJECT";
+
+struct HierarchyDragPayload {
+    Scene* scene = nullptr;
+    GameObject* object = nullptr;
+};
+
 std::string formatMemoryBytes(std::size_t bytes) {
     constexpr double kibibyte = 1024.0;
     constexpr double mebibyte = kibibyte * 1024.0;
@@ -658,6 +665,18 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
         !editorActionPending()) {
         submitEditorAction(EditorCommand::DuplicateGameObject);
     }
+    if (editorShortcutAvailable &&
+        ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_P,
+                        ImGuiInputFlags_RouteGlobal) &&
+        !editorActionPending()) {
+        submitEditorAction(EditorCommand::ParentSelectionToActive);
+    }
+    if (editorShortcutAvailable &&
+        ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_G,
+                        ImGuiInputFlags_RouteGlobal) &&
+        !editorActionPending()) {
+        submitEditorAction(EditorCommand::GroupSelection);
+    }
     const float playButtonWidth =
         ImGui::CalcTextSize("Play").x + 2.0f * style.FramePadding.x;
     const float simulateButtonWidth =
@@ -944,6 +963,12 @@ void ImGuiLayer::submitEditorAction(EditorCommand command) {
 }
 
 void ImGuiLayer::submitEditorAction(EditorAction action) {
+    if (action.command == EditorCommand::ParentSelectionToActive ||
+        action.command == EditorCommand::GroupSelection) {
+        cancelEditorTransformDrag();
+        finishRuntimeTransformDrag();
+        gizmoDragActive_ = false;
+    }
     if (editorSession_ != nullptr) {
         editorSession_->submitEditorAction(std::move(action));
     }
@@ -1058,6 +1083,7 @@ void ImGuiLayer::selectGameObject(Scene* scene, GameObject* object,
 }
 
 void ImGuiLayer::drawSceneHierarchy(Scene* scene, bool disabled) {
+    pendingHierarchyReorder_.reset();
     ImGui::SetNextWindowSize(ImVec2(300.0f, 400.0f),
                              ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Scene Hierarchy")) {
@@ -1068,9 +1094,8 @@ void ImGuiLayer::drawSceneHierarchy(Scene* scene, bool disabled) {
     ImGui::BeginDisabled(disabled);
 
     bool hasObject = false;
-    for (const auto& objectOwner : scene->gameObjects()) {
-        GameObject* object = objectOwner.get();
-        if (object == nullptr || object->parent() != nullptr) {
+    for (GameObject* object : scene->rootObjects()) {
+        if (object == nullptr) {
             continue;
         }
 
@@ -1094,6 +1119,21 @@ void ImGuiLayer::drawSceneHierarchy(Scene* scene, bool disabled) {
     }
 
     ImGui::EndDisabled();
+
+    if (pendingHierarchyReorder_.has_value()) {
+        const HierarchyReorderRequest request = *pendingHierarchyReorder_;
+        pendingHierarchyReorder_.reset();
+        if (request.scene == scene && request.object != nullptr) {
+            const Result result = request.scene->reorderGameObject(
+                *request.object, request.expectedParent,
+                request.siblingIndex);
+            if (result) {
+                inspectorError_.clear();
+            } else {
+                inspectorError_ = result.error();
+            }
+        }
+    }
     ImGui::End();
 }
 
@@ -1120,9 +1160,71 @@ void ImGuiLayer::drawSceneHierarchyNode(Scene* scene, GameObject* object) {
     }
 
     const bool open = ImGui::TreeNodeEx(label, flags);
+    const ImVec2 rowMin = ImGui::GetItemRectMin();
+    const ImVec2 rowMax = ImGui::GetItemRectMax();
     const bool clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
     const bool toggledOpen = ImGui::IsItemToggledOpen();
-    if (clicked && !toggledOpen) {
+
+    bool dragDropInteraction = false;
+    if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoHoldToOpenOthers)) {
+        const HierarchyDragPayload dragPayload{scene, object};
+        ImGui::SetDragDropPayload(hierarchyDragPayloadType, &dragPayload,
+                                  sizeof(dragPayload));
+        ImGui::TextUnformatted(label);
+        ImGui::EndDragDropSource();
+        dragDropInteraction = true;
+    }
+
+    bool reorderDelivered = false;
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload =
+                ImGui::AcceptDragDropPayload(hierarchyDragPayloadType)) {
+            if (payload->DataSize == sizeof(HierarchyDragPayload)) {
+                const auto* dragPayload =
+                    static_cast<const HierarchyDragPayload*>(payload->Data);
+                GameObject* draggedObject = dragPayload->object;
+                if (dragPayload->scene == scene && draggedObject != nullptr &&
+                    draggedObject != object &&
+                    draggedObject->parent() == object->parent()) {
+                    const auto& siblings = object->parent() == nullptr
+                                               ? scene->rootObjects()
+                                               : object->parent()->children();
+                    const auto draggedIt =
+                        std::find(siblings.begin(), siblings.end(),
+                                  draggedObject);
+                    const auto targetIt =
+                        std::find(siblings.begin(), siblings.end(), object);
+                    if (draggedIt != siblings.end() &&
+                        targetIt != siblings.end()) {
+                        const std::size_t draggedIndex = static_cast<std::size_t>(
+                            std::distance(siblings.begin(), draggedIt));
+                        const std::size_t targetIndex = static_cast<std::size_t>(
+                            std::distance(siblings.begin(), targetIt));
+                        const bool dropAfter =
+                            ImGui::GetIO().MousePos.y >
+                            (rowMin.y + rowMax.y) * 0.5f;
+                        std::size_t destinationIndex =
+                            targetIndex + (dropAfter ? 1U : 0U);
+                        if (draggedIndex < destinationIndex) {
+                            --destinationIndex;
+                        }
+
+                        if (payload->IsDelivery()) {
+                            pendingHierarchyReorder_ = HierarchyReorderRequest{
+                                scene, draggedObject, object->parent(),
+                                destinationIndex};
+                            reorderDelivered = true;
+                        }
+                    }
+                }
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+
+    if (clicked && !toggledOpen && !dragDropInteraction &&
+        !reorderDelivered && !ImGui::IsDragDropActive() &&
+        !ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
         const ImGuiIO& io = ImGui::GetIO();
         selectGameObject(
             scene, object,
@@ -1886,6 +1988,7 @@ void ImGuiLayer::processWorldSelection(Scene* scene, const glm::mat4& view,
     if (!editorToolsEnabled(runState) || !inputEnabled_ ||
         !sceneInteractionRect_.valid || !sceneInteractionAreaHovered_ ||
         gizmoDragActive_ || ImGuizmo::IsOver() || ImGuizmo::IsUsing() ||
+        ImGui::IsDragDropActive() ||
         ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
         !ImGui::IsMouseClicked(ImGuiMouseButton_Left, false)) {
         return;
@@ -2354,6 +2457,7 @@ void ImGuiLayer::shutdown() noexcept {
     physicsDiagnosticsError_.clear();
     sceneInteractionAreaHovered_ = false;
     sceneInteractionRect_ = {};
+    pendingHierarchyReorder_.reset();
     inputEnabled_ = true;
     gizmoDragActive_ = false;
     runtimeTransformDragActive_ = false;
@@ -2407,6 +2511,7 @@ void ImGuiLayer::abandon() noexcept {
     physicsDiagnosticsError_.clear();
     sceneInteractionAreaHovered_ = false;
     sceneInteractionRect_ = {};
+    pendingHierarchyReorder_.reset();
     inputEnabled_ = true;
     gizmoDragActive_ = false;
     runtimeTransformDragActive_ = false;

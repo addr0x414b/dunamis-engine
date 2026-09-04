@@ -264,6 +264,26 @@ Result Dunamis::run() {
                     visualServer.setEditorError(result.error());
                     result = Result::success();
                 }
+            } else if (command == EditorCommand::ParentSelectionToActive) {
+                result = parentSelectedGameObjects();
+                if (result) {
+                    visualServer.setEditorError({});
+                } else {
+                    spdlog::error("Selection parenting failed: {}",
+                                  result.error());
+                    visualServer.setEditorError(result.error());
+                    result = Result::success();
+                }
+            } else if (command == EditorCommand::GroupSelection) {
+                result = groupSelectedGameObjects();
+                if (result) {
+                    visualServer.setEditorError({});
+                } else {
+                    spdlog::error("Selection grouping failed: {}",
+                                  result.error());
+                    visualServer.setEditorError(result.error());
+                    result = Result::success();
+                }
             } else if (command == EditorCommand::SaveScene) {
                 captureColliderVisibility();
                 result = sceneManager_.saveEditingScene(
@@ -539,6 +559,47 @@ Result Dunamis::duplicateSelectedGameObject() {
 
     editorSession_.select(editingScene, duplicate);
     return Result::success();
+}
+
+Result Dunamis::parentSelectedGameObjects() {
+    if (editorSession_.runState() != SceneRunState::Editing) {
+        return Result::failure(
+            "Selection parenting is available only while Editing");
+    }
+
+    Scene* editingScene = sceneManager_.editingScene();
+    if (!editingScene || sceneManager_.activeScene() != editingScene ||
+        visualServer.renderScene() != editingScene ||
+        !editingScene->isActive()) {
+        return Result::failure(
+            "The editing Scene is not the active rendered Scene");
+    }
+
+    return editor::EditorObjectCoordinator::parentSelectionToActive(
+        *editingScene, editorSession_);
+}
+
+Result Dunamis::groupSelectedGameObjects() {
+    if (editorSession_.runState() != SceneRunState::Editing) {
+        return Result::failure(
+            "Selection grouping is available only while Editing");
+    }
+
+    Scene* editingScene = sceneManager_.editingScene();
+    if (!editingScene || sceneManager_.activeScene() != editingScene ||
+        visualServer.renderScene() != editingScene ||
+        !editingScene->isActive()) {
+        return Result::failure(
+            "The editing Scene is not the active rendered Scene");
+    }
+
+    GameObject* group = nullptr;
+    return editor::EditorObjectCoordinator::groupSelection(
+        *editingScene, editorSession_, sceneManager_.typeRegistry(),
+        [this](Scene& scene, GameObject& gameObject) {
+            return visualServer.attachGameObject(&scene, &gameObject);
+        },
+        group);
 }
 
 Result Dunamis::beginRuntimeSession(SceneRunState targetState) {

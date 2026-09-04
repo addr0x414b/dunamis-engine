@@ -3,6 +3,7 @@
 #include "camera.h"
 #include "character.h"
 #include "directional_light.h"
+#include "group.h"
 #include "point_light.h"
 
 #include <exception>
@@ -161,6 +162,10 @@ Result registerEngineTypes(TypeRegistry& registry) {
         [](GameObject& object, const std::string& path) {
             return object.setAuthoredModelPath(path);
         });
+    if (!result) return result;
+
+    result = registry.registerType<Group>(
+        "Group", "GameObject", [] { return std::make_unique<Group>(); });
     if (!result) return result;
 
     result = registry.registerType<Character>(
