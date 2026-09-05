@@ -38,6 +38,9 @@ inline void releaseStbiPixel(StbiPixelOwner& owner,
 }
 
 struct Vertex {
+    // Canonical asset boundary: CPU model positions are meters. Source-format
+    // conversion happens once during Assimp ingestion; renderer, picking, and
+    // physics share these values. GameObject scale is dimensionless.
     glm::vec3 pos;
     glm::vec3 color;
     glm::vec2 texCoord;

@@ -1,4 +1,5 @@
-add_library(GameObject STATIC game_object.cpp model_renderable.cpp)
+add_library(GameObject STATIC game_object.cpp model_renderable.cpp
+        ../assets/model_import_policy.cpp)
 target_include_directories(GameObject PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(GameObject PUBLIC spdlog glm assimp PRIVATE Threads::Threads)
 

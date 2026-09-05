@@ -2,6 +2,7 @@
 #include "loading_cache_key.h"
 
 #include "../assets/model_asset.h"
+#include "../assets/model_import_policy.h"
 
 #include <spdlog/spdlog.h>
 #define STB_IMAGE_IMPLEMENTATION
@@ -1186,6 +1187,10 @@ Result ModelRenderable::loadModel() {
         texturePath ? std::string(texturePath) : std::string{};
     spdlog::info("Loading game object model from path {}...", requestedModelPath);
 
+    // Imported geometry policy is fixed globally for this process, and this
+    // cache is in-process only. There cannot be a pre-normalization asset in
+    // the cache alongside the current policy, so the existing model identity
+    // and texture-fallback key remains sufficient.
     const ModelAssetCacheKey cacheKey =
         model_loading::makeModelAssetCacheKey(
             requestedModelPath.c_str(),
@@ -1277,10 +1282,13 @@ Result ModelRenderable::loadModel() {
     const auto sourceLoadingStart = LoadModelProfile::Clock::now();
     try {
         const auto assimpReadStart = LoadModelProfile::Clock::now();
-        scene = importer.ReadFile(modelPath, aiProcess_Triangulate |
-                                                 aiProcess_FlipUVs |
-                                                 aiProcess_GenSmoothNormals |
-                                                 aiProcess_CalcTangentSpace | aiProcess_PreTransformVertices | aiProcess_FindInvalidData);
+        // This is the asset-to-meter boundary. GlobalScale consumes Assimp's
+        // format-specific source scale (FBX UnitScaleFactor in the pinned
+        // implementation), and it runs before PreTransformVertices. The
+        // resulting Vertex::pos values are meter-valued exactly once; render,
+        // picking, and physics all consume this same CPU geometry.
+        scene = importer.ReadFile(
+            modelPath, model_loading::meterNormalizedImportFlags());
         profile.assimpReadTime =
             LoadModelProfile::Clock::now() - assimpReadStart;
     } catch (const std::exception& exception) {

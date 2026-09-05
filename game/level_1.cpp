@@ -80,7 +80,9 @@ void Level1::buildDefaults() {
     auto test8 = std::make_unique<GameObject>();
     //test8->persistentId = "sponzaaaa";
     test8->name = "Fox";
-    test8->scale = glm::vec3(1.0f, 1.0f, 1.0f);
+    // glTF numeric coordinates are preserved at ingestion; this legacy
+    // default scene needs the versioned-scene equivalent of a 0.01 scale.
+    test8->scale = glm::vec3(0.01f, 0.01f, 0.01f);
     test8->physics.enabled = true;
     test8->physics.motionType = GameObject::PhysicsMotionType::Static;
     test8->physics.colliderType = GameObject::PhysicsColliderType::Mesh;
@@ -91,7 +93,7 @@ void Level1::buildDefaults() {
     auto test9 = std::make_unique<GameObject>();
     //test9->persistentId = "sponzaaaa23123";
     test9->name = "Pot";
-    test9->scale = glm::vec3(750.0f, 750.0f, 750.0f);
+    test9->scale = glm::vec3(7.5f, 7.5f, 7.5f);
     test9->physics.enabled = true;
     test9->physics.motionType = GameObject::PhysicsMotionType::Static;
     test9->physics.colliderType = GameObject::PhysicsColliderType::ConvexHull;
@@ -102,7 +104,7 @@ void Level1::buildDefaults() {
     auto test10 = std::make_unique<GameObject>();
     test10->name = "Brah";
     //test10->persistentId = "90du-918dey798qwdgd";
-    test10->scale = glm::vec3(100.0f, 100.0f, 100.0f);
+    test10->scale = glm::vec3(1.0f, 1.0f, 1.0f);
     test10->rotation = glm::vec3(-90.0f, 0.0f, 0.0f);
     test10->position = glm::vec3(3.22f, 0.0f, -1.22f);
     test10->modelPath = "game/assets/models/glTF-Sample-Assets/Models/BrainStem/glTF/BrainStem.gltf";
@@ -116,7 +118,7 @@ void Level1::buildDefaults() {
     //avocado->persistentId = "physics_test_avocado";
     avocado->name = "Physics Test Avocado";
     avocado->position = glm::vec3(0.0f, 3.0f, -1.75f);
-    avocado->scale = glm::vec3(500.0f);
+    avocado->scale = glm::vec3(5.0f);
     avocado->physics.enabled = true;
     avocado->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
     avocado->physics.colliderType = GameObject::PhysicsColliderType::ConvexHull;

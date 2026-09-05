@@ -27,7 +27,7 @@ struct SceneLoadData {
 
 class SceneSerializer {
 public:
-    static constexpr int formatVersion = 3;
+    static constexpr int formatVersion = 4;
 
     [[nodiscard]] static Result serializeAuthored(
         const Scene& scene, const TypeRegistry& registry,

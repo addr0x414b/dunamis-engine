@@ -21,7 +21,8 @@ namespace physics {
 
 // Increment when the cache wrapper or static mesh cooking semantics change.
 constexpr std::uint32_t physicsShapeCacheVersion = 1;
-constexpr std::uint32_t physicsShapeCookingVersion = 1;
+// Imported CPU vertex positions are now normalized to meters before cooking.
+constexpr std::uint32_t physicsShapeCookingVersion = 2;
 // Version 2 invalidates cooked shapes made with the former 100 DU/meter
 // convention, even though the cache identity also records the conversion.
 constexpr std::uint32_t physicsUnitConventionVersion = 2;

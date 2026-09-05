@@ -1,5 +1,7 @@
 #include "scene_serializer.h"
 
+#include "../assets/model_import_policy.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -60,8 +62,8 @@ Result migrateLegacyScalarProperty(nlohmann::json& properties,
     return Result::success();
 }
 
-Result migrateLegacyObjectRecord(nlohmann::json& record,
-                                 const TypeRegistry& registry) {
+Result migrateLegacyWorldObjectRecord(nlohmann::json& record,
+                                      const TypeRegistry& registry) {
     if (!record.is_object() || !record.contains("type") ||
         !record.at("type").is_string()) {
         return Result::success();
@@ -129,11 +131,11 @@ Result migrateLegacyObjectRecord(nlohmann::json& record,
     return Result::success();
 }
 
-Result migrateLegacyDocumentToCurrent(nlohmann::json& document,
-                                      const TypeRegistry& registry) {
+Result migrateLegacyWorldDocument(nlohmann::json& document,
+                                  const TypeRegistry& registry) {
     if (document.contains("objects") && document.at("objects").is_array()) {
         for (auto& record : document.at("objects")) {
-            Result result = migrateLegacyObjectRecord(record, registry);
+            Result result = migrateLegacyWorldObjectRecord(record, registry);
             if (!result) return result;
         }
     }
@@ -145,7 +147,75 @@ Result migrateLegacyDocumentToCurrent(nlohmann::json& document,
             "editor camera position");
         if (!result) return result;
     }
-    document["formatVersion"] = SceneSerializer::formatVersion;
+    return Result::success();
+}
+
+Result migrateLegacyAssetScaleObjectRecord(
+    nlohmann::json& record, const TypeRegistry& registry,
+    std::vector<std::string>& warnings) {
+    if (!record.is_object() || !record.contains("type") ||
+        !record.at("type").is_string() ||
+        !record.contains("properties") ||
+        !record.at("properties").is_object()) {
+        return Result::success();
+    }
+
+    std::string objectId = "<unknown>";
+    if (record.contains("id") && record.at("id").is_string()) {
+        objectId = record.at("id").get<std::string>();
+    }
+    const TypeDescriptor* type =
+        registry.find(record.at("type").get<std::string>());
+    if (!type || !registry.isA(*type, "GameObject") ||
+        registry.findProperty(*type, "scale") == nullptr) {
+        return Result::success();
+    }
+
+    auto& properties = record.at("properties");
+    const auto modelPath = properties.find("modelPath");
+    const auto scale = properties.find("scale");
+    if (modelPath == properties.end() || !modelPath->is_string() ||
+        modelPath->get<std::string>().empty() || scale == properties.end()) {
+        return Result::success();
+    }
+
+    glm::vec3 value{};
+    Result result = authored_property::decode(scale.value(), value);
+    if (!result) {
+        return Result::failure("Cannot migrate scale on object '" + objectId +
+                               "': " + result.error());
+    }
+
+    const std::string modelPathString = modelPath->get<std::string>();
+    const model_loading::LegacyAssetScaleMigration migration =
+        model_loading::inspectLegacyAssetScaleMigration(modelPathString);
+    if (!migration.known) {
+        warnings.push_back(
+            "Preserving legacy scale on object '" + objectId +
+            "' for asset '" + modelPathString + "': " + migration.evidence);
+        return Result::success();
+    }
+
+    value *= migration.scaleFactor;
+    result = authored_property::encode(value, scale.value());
+    if (!result) {
+        return Result::failure("Cannot migrate scale on object '" + objectId +
+                               "': " + result.error());
+    }
+    return Result::success();
+}
+
+Result migrateLegacyAssetScaleDocument(
+    nlohmann::json& document, const TypeRegistry& registry,
+    std::vector<std::string>& warnings) {
+    if (!document.contains("objects") || !document.at("objects").is_array()) {
+        return Result::success();
+    }
+    for (auto& record : document.at("objects")) {
+        Result result = migrateLegacyAssetScaleObjectRecord(
+            record, registry, warnings);
+        if (!result) return result;
+    }
     return Result::success();
 }
 
@@ -465,24 +535,32 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
             return Result::failure("Scene document requires integer formatVersion");
         }
         const int sourceVersion = document.at("formatVersion").get<int>();
-        if (sourceVersion != 1 && sourceVersion != 2 &&
-            sourceVersion != formatVersion) {
+        if (sourceVersion < 1 || sourceVersion > formatVersion) {
             return Result::failure("Unsupported scene formatVersion " +
                                    std::to_string(sourceVersion));
         }
 
         nlohmann::json migratedDocument = document;
-        if (sourceVersion != formatVersion) {
-            Result migration = migrateLegacyDocumentToCurrent(
+        if (sourceVersion == 1 || sourceVersion == 2) {
+            Result migration = migrateLegacyWorldDocument(
                 migratedDocument, registry);
             if (!migration) {
                 return Result::failure("Scene migration failed: " +
                                        migration.error());
             }
         }
+        if (sourceVersion != formatVersion) {
+            Result migration = migrateLegacyAssetScaleDocument(
+                migratedDocument, registry, loadData.warnings);
+            if (!migration) {
+                return Result::failure("Scene asset-basis migration failed: " +
+                                       migration.error());
+            }
+            migratedDocument["formatVersion"] = formatVersion;
+        }
 
         const nlohmann::json& input = migratedDocument;
-        const bool hasSavedHierarchy = sourceVersion == 2 ||
+        const bool hasSavedHierarchy = sourceVersion == 2 || sourceVersion == 3 ||
                                        sourceVersion == formatVersion;
         if (!input.contains("scene") || !input.at("scene").is_object()) {
             return Result::failure("Scene document requires a scene object");

@@ -993,6 +993,26 @@ void testCookedShapeCache() {
                physics::ShapeCacheLoadStatus::Invalid,
            "old-unit cooked cache entry was accepted");
 
+    const physics::StaticMeshShapeCacheKey cookingVersionKey =
+        physics::makeStaticMeshShapeCacheKey("cooking-version-model", geometry,
+                                             glm::vec3(1.0f));
+    expect(secondCache.save(cookingVersionKey, *restored.shape, saveError),
+           "failed to create cooking-version cache entry");
+    {
+        std::fstream cookingVersionFile(
+            secondCache.pathFor(cookingVersionKey),
+            std::ios::binary | std::ios::in | std::ios::out);
+        const std::uint32_t incompatibleCookingVersion =
+            physics::physicsShapeCookingVersion - 1;
+        cookingVersionFile.seekp(12);
+        cookingVersionFile.write(
+            reinterpret_cast<const char*>(&incompatibleCookingVersion),
+            sizeof(incompatibleCookingVersion));
+    }
+    expect(secondCache.load(cookingVersionKey).status ==
+               physics::ShapeCacheLoadStatus::Invalid,
+           "pre-normalization cooked cache entry was accepted");
+
     std::filesystem::remove_all(directory, error);
     JPH::UnregisterTypes();
     delete JPH::Factory::sInstance;

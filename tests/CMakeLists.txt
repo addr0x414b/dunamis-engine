@@ -164,6 +164,8 @@ add_test(NAME editor_structure_semantics COMMAND EditorStructureTests)
 
 add_executable(ScenePersistenceTests scene_persistence_tests.cpp)
 target_include_directories(ScenePersistenceTests PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_definitions(ScenePersistenceTests PRIVATE
+        DUNAMIS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_link_libraries(ScenePersistenceTests PRIVATE
         Scene GameObject Camera InputManager Editor glm spdlog
         nlohmann_json::nlohmann_json)
@@ -215,6 +217,22 @@ target_compile_definitions(ModelLoadingCacheTests PRIVATE
 target_link_libraries(ModelLoadingCacheTests PRIVATE
         GameObject VulkanUtils assimp glm spdlog)
 add_test(NAME model_loading_cache COMMAND ModelLoadingCacheTests)
+
+add_executable(ModelImportUnitTests model_import_unit_tests.cpp)
+target_include_directories(ModelImportUnitTests PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_definitions(ModelImportUnitTests PRIVATE
+        DUNAMIS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(ModelImportUnitTests PRIVATE
+        Physics
+        GameObject
+        Jolt
+        VulkanUtils
+        assimp
+        glm
+        spdlog
+        Threads::Threads)
+add_test(NAME model_import_units COMMAND ModelImportUnitTests)
+set_tests_properties(model_import_units PROPERTIES TIMEOUT 30)
 
 add_executable(ModelLoadingBenchmark model_loading_benchmark.cpp)
 target_include_directories(ModelLoadingBenchmark PRIVATE ${CMAKE_SOURCE_DIR})

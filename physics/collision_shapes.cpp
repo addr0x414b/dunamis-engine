@@ -64,11 +64,14 @@ Result buildScaledLocalConvexHull(const std::vector<MeshInstance>& instances,
             if (!isFinite(vertex.pos)) {
                 return Result::failure("Mesh contains a non-finite vertex position");
             }
-            const glm::vec3 scaledDunamisUnits = vertex.pos * scale;
-            if (!isFinite(scaledDunamisUnits)) {
+            // Imported vertex positions are already meters. Scale is
+            // dimensionless; this explicit helper is the 1:1 Dunamis/Jolt
+            // boundary and must not become another asset-unit conversion.
+            const glm::vec3 scaledMeters = vertex.pos * scale;
+            if (!isFinite(scaledMeters)) {
                 return Result::failure("Scale produced a non-finite convex hull point");
             }
-            output.points.push_back(dunamisToMeters(scaledDunamisUnits));
+            output.points.push_back(dunamisToMeters(scaledMeters));
         }
     }
     if (output.points.empty()) {
@@ -130,11 +133,14 @@ Result buildScaledLocalTriangleMesh(
             if (!isFinite(vertex.pos)) {
                 return Result::failure("Mesh contains a non-finite vertex position");
             }
-            const glm::vec3 scaledDunamisUnits = vertex.pos * scale;
-            if (!isFinite(scaledDunamisUnits)) {
+            // Imported vertex positions are already meters; only the
+            // dimensionless authored scale is applied before the explicit
+            // 1:1 Dunamis/Jolt conversion boundary.
+            const glm::vec3 scaledMeters = vertex.pos * scale;
+            if (!isFinite(scaledMeters)) {
                 return Result::failure("Mesh scale produced a non-finite vertex position");
             }
-            output.vertices.push_back(dunamisToMeters(scaledDunamisUnits));
+            output.vertices.push_back(dunamisToMeters(scaledMeters));
         }
         for (const std::uint32_t index : mesh.indices) {
             if (index >= mesh.vertices.size()) {
