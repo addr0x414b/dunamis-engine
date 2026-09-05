@@ -8,6 +8,11 @@ class InputManager;
 
 class EditorCameraController {
 public:
+    static constexpr float startingDistanceMeters = 3.0f;
+    static constexpr float normalSpeedMetersPerSecond = 5.0f;
+    static constexpr float fastSpeedMetersPerSecond = 15.0f;
+    static constexpr float slowSpeedMetersPerSecond = 1.0f;
+
     EditorCameraController();
 
     void update(const InputManager& input);

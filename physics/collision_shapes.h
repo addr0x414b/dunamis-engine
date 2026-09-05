@@ -29,7 +29,8 @@ struct CookedShape {
 };
 
 // These functions are the single source of shape cooking semantics for
-// runtime bodies and editor inspection. Geometry is authored in Dunamis units;
+// runtime bodies and editor inspection. Geometry uses meter-valued Dunamis
+// units;
 // shapes and transforms returned here are in Jolt meters.
 [[nodiscard]] Result buildGameObjectShape(const GameObject& object,
                                           CookedShape& output);

@@ -521,8 +521,8 @@ void testCharacterShapeCenterOfMassTransform() {
 
     Character character;
     character.position = glm::vec3(10.0f, 20.0f, -30.0f);
-    character.capsuleHeight = 180.0f;
-    character.capsuleRadius = 35.0f;
+    character.capsuleHeight = 1.8f;
+    character.capsuleRadius = 0.35f;
     physics::CookedShape cooked;
     expect(static_cast<bool>(physics::buildCharacterShape(character, cooked)),
            "failed to build character capsule for COM placement test");
@@ -658,26 +658,26 @@ void testShapeDiagnostics() {
     GameObject sphereObject;
     sphereObject.physics.enabled = true;
     sphereObject.physics.colliderType = GameObject::PhysicsColliderType::Sphere;
-    sphereObject.physics.sphereRadius = 42.0f;
+    sphereObject.physics.sphereRadius = 0.42f;
     physics::CookedShape sphere;
     expect(static_cast<bool>(physics::buildGameObjectShape(sphereObject, sphere)),
            "failed to build sphere diagnostic shape");
     expect(sphere.diagnostics.representation ==
                physics::ShapeDiagnostics::Representation::AnalyticSphere &&
-               near(sphere.diagnostics.radius, 42.0f) &&
+               near(sphere.diagnostics.radius, 0.42f) &&
                sphere.diagnostics.joltBytes > 0,
            "sphere diagnostics were not populated as analytic data");
 
     Character character;
-    character.capsuleHeight = 180.0f;
-    character.capsuleRadius = 35.0f;
+    character.capsuleHeight = 1.8f;
+    character.capsuleRadius = 0.35f;
     physics::CookedShape capsule;
     expect(static_cast<bool>(physics::buildCharacterShape(character, capsule)),
            "failed to build capsule diagnostic shape");
     expect(capsule.diagnostics.representation ==
                physics::ShapeDiagnostics::Representation::AnalyticCapsule &&
-               near(capsule.diagnostics.height, 180.0f) &&
-               near(capsule.diagnostics.radius, 35.0f) &&
+               near(capsule.diagnostics.height, 1.8f) &&
+               near(capsule.diagnostics.radius, 0.35f) &&
                capsule.diagnostics.joltBytes > 0,
            "character diagnostics were not populated as analytic data");
 
@@ -696,18 +696,32 @@ void testAccumulator() {
 }
 
 void testPhysicsUnits() {
+    expect(near(physics::dunamisUnitsPerMeter, 1.0f) &&
+               near(physics::metersPerDunamisUnit, 1.0f),
+           "Dunamis world-unit contract is not one meter per unit");
     expect(near(physics::dunamisToMeters(0.0f), 0.0f), "0 DU conversion failed");
-    expect(near(physics::dunamisToMeters(1.0f), 0.01f), "1 DU conversion failed");
-    expect(near(physics::dunamisToMeters(100.0f), 1.0f), "100 DU conversion failed");
-    expect(near(physics::dunamisToMeters(250.0f), 2.5f), "250 DU conversion failed");
-    expect(near(physics::dunamisToMeters(-100.0f), -1.0f), "negative DU conversion failed");
+    expect(near(physics::dunamisToMeters(1.0f), 1.0f), "1 DU conversion failed");
+    expect(near(physics::dunamisToMeters(100.0f), 100.0f), "100 DU conversion failed");
+    expect(near(physics::dunamisToMeters(250.0f), 250.0f), "250 DU conversion failed");
+    expect(near(physics::dunamisToMeters(-100.0f), -100.0f), "negative DU conversion failed");
     const glm::vec3 authored(250.0f, -100.0f, 1.0f);
     const glm::vec3 meters = physics::dunamisToMeters(authored);
-    expect(meters == glm::vec3(2.5f, -1.0f, 0.01f), "vector DU conversion failed");
+    expect(meters == authored, "vector DU conversion failed");
     const glm::vec3 roundTrip = physics::metersToDunamis(meters);
     expect(near(roundTrip.x, authored.x) && near(roundTrip.y, authored.y) &&
                near(roundTrip.z, authored.z),
            "DU to meters round trip failed");
+    const JPH::RVec3 joltPosition = physics::toJoltPosition(
+        glm::vec3(1.0f, -2.0f, 3.0f));
+    expect(near(static_cast<float>(joltPosition.GetX()), 1.0f) &&
+               near(static_cast<float>(joltPosition.GetY()), -2.0f) &&
+               near(static_cast<float>(joltPosition.GetZ()), 3.0f),
+           "one Dunamis meter did not reach Jolt as one meter");
+    const glm::mat4 dunamisTransform = physics::joltTransformToDunamis(
+        JPH::RMat44::sRotationTranslation(
+            JPH::Quat::sIdentity(), JPH::RVec3(1.0f, -2.0f, 3.0f)));
+    expect(glm::vec3(dunamisTransform[3]) == glm::vec3(1.0f, -2.0f, 3.0f),
+           "one Jolt meter did not return as one Dunamis meter");
 }
 
 void testScaledLocalTriangleMesh() {
@@ -726,10 +740,10 @@ void testScaledLocalTriangleMesh() {
     const JPH::AABox bounds = output.shape->GetLocalBounds();
     expect(near(bounds.mMin.GetX(), 0.0f) && near(bounds.mMin.GetY(), 0.0f) &&
                near(bounds.mMin.GetZ(), 0.0f) &&
-               near(bounds.mMax.GetX(), 0.02f) &&
-               near(bounds.mMax.GetY(), 0.06f) &&
-               near(bounds.mMax.GetZ(), 0.12f),
-           "static mesh did not preserve authored scale and DU-to-meter conversion");
+               near(bounds.mMax.GetX(), 2.0f) &&
+               near(bounds.mMax.GetY(), 6.0f) &&
+               near(bounds.mMax.GetZ(), 12.0f),
+           "static mesh did not preserve authored scale and meter conversion");
 
     GameObject invalidObject;
     invalidObject.physics.enabled = true;
@@ -772,12 +786,12 @@ void testConvexHullInputAndRotation() {
            "convex hull did not produce a Jolt convex hull shape");
     const JPH::AABox bounds = cooked.shape->GetLocalBounds();
     const JPH::Vec3 centerOfMass = cooked.shape->GetCenterOfMass();
-    expect(near(centerOfMass.GetX() + bounds.mMin.GetX(), 0.02f) &&
-               near(centerOfMass.GetY() + bounds.mMin.GetY(), 0.06f) &&
-               near(centerOfMass.GetZ() + bounds.mMin.GetZ(), 0.12f) &&
-               near(centerOfMass.GetX() + bounds.mMax.GetX(), 0.04f) &&
-               near(centerOfMass.GetY() + bounds.mMax.GetY(), 0.09f) &&
-               near(centerOfMass.GetZ() + bounds.mMax.GetZ(), 0.16f),
+    expect(near(centerOfMass.GetX() + bounds.mMin.GetX(), 2.0f) &&
+               near(centerOfMass.GetY() + bounds.mMin.GetY(), 6.0f) &&
+               near(centerOfMass.GetZ() + bounds.mMin.GetZ(), 12.0f) &&
+               near(centerOfMass.GetX() + bounds.mMax.GetX(), 4.0f) &&
+               near(centerOfMass.GetY() + bounds.mMax.GetY(), 9.0f) &&
+               near(centerOfMass.GetZ() + bounds.mMax.GetZ(), 16.0f),
            "convex hull points did not preserve scaled local meter coordinates");
 
     object.scale = glm::vec3(0.0f);
@@ -959,6 +973,26 @@ void testCookedShapeCache() {
     expect(secondCache.load(versionKey).status == physics::ShapeCacheLoadStatus::Invalid,
            "incompatible cooked cache version was accepted");
 
+    const physics::StaticMeshShapeCacheKey unitVersionKey =
+        physics::makeStaticMeshShapeCacheKey("unit-version-model", geometry,
+                                             glm::vec3(1.0f));
+    expect(secondCache.save(unitVersionKey, *restored.shape, saveError),
+           "failed to create unit-version cache entry");
+    {
+        std::fstream unitVersionFile(
+            secondCache.pathFor(unitVersionKey),
+            std::ios::binary | std::ios::in | std::ios::out);
+        const std::uint32_t incompatibleUnitVersion =
+            physics::physicsUnitConventionVersion - 1;
+        unitVersionFile.seekp(16);
+        unitVersionFile.write(
+            reinterpret_cast<const char*>(&incompatibleUnitVersion),
+            sizeof(incompatibleUnitVersion));
+    }
+    expect(secondCache.load(unitVersionKey).status ==
+               physics::ShapeCacheLoadStatus::Invalid,
+           "old-unit cooked cache entry was accepted");
+
     std::filesystem::remove_all(directory, error);
     JPH::UnregisterTypes();
     delete JPH::Factory::sInstance;
@@ -1048,10 +1082,10 @@ void testDynamicConvexRotationIntegration() {
 MeshInstance floorInstance() {
     MeshInstance instance;
     instance.mesh.vertices = {
-        {{-10.0f, 0.0f, -10.0f}, {}, {}, {}, {}},
-        {{10.0f, 0.0f, -10.0f}, {}, {}, {}, {}},
-        {{10.0f, 0.0f, 10.0f}, {}, {}, {}, {}},
-        {{-10.0f, 0.0f, 10.0f}, {}, {}, {}, {}}};
+        {{-0.1f, 0.0f, -0.1f}, {}, {}, {}, {}},
+        {{0.1f, 0.0f, -0.1f}, {}, {}, {}, {}},
+        {{0.1f, 0.0f, 0.1f}, {}, {}, {}, {}},
+        {{-0.1f, 0.0f, 0.1f}, {}, {}, {}, {}}};
     instance.mesh.indices = {0, 1, 2, 0, 2, 3};
     return instance;
 }
@@ -1065,10 +1099,10 @@ MeshInstance upwardSmallFloorInstance() {
 MeshInstance characterFloorInstance() {
     MeshInstance instance;
     instance.mesh.vertices = {
-        {{-1000.0f, 0.0f, -1000.0f}, {}, {}, {}, {}},
-        {{1000.0f, 0.0f, -1000.0f}, {}, {}, {}, {}},
-        {{1000.0f, 0.0f, 1000.0f}, {}, {}, {}, {}},
-        {{-1000.0f, 0.0f, 1000.0f}, {}, {}, {}, {}}};
+        {{-10.0f, 0.0f, -10.0f}, {}, {}, {}, {}},
+        {{10.0f, 0.0f, -10.0f}, {}, {}, {}, {}},
+        {{10.0f, 0.0f, 10.0f}, {}, {}, {}, {}},
+        {{-10.0f, 0.0f, 10.0f}, {}, {}, {}, {}}};
     instance.mesh.indices = {0, 2, 1, 0, 3, 2};
     return instance;
 }
@@ -1076,10 +1110,10 @@ MeshInstance characterFloorInstance() {
 MeshInstance characterWallInstance() {
     MeshInstance instance;
     instance.mesh.vertices = {
-        {{-1000.0f, 0.0f, -250.0f}, {}, {}, {}, {}},
-        {{1000.0f, 0.0f, -250.0f}, {}, {}, {}, {}},
-        {{1000.0f, 500.0f, -250.0f}, {}, {}, {}, {}},
-        {{-1000.0f, 500.0f, -250.0f}, {}, {}, {}, {}}};
+        {{-10.0f, 0.0f, -2.5f}, {}, {}, {}, {}},
+        {{10.0f, 0.0f, -2.5f}, {}, {}, {}, {}},
+        {{10.0f, 5.0f, -2.5f}, {}, {}, {}, {}},
+        {{-10.0f, 5.0f, -2.5f}, {}, {}, {}, {}}};
     instance.mesh.indices = {0, 1, 2, 0, 2, 3};
     return instance;
 }
@@ -1102,7 +1136,7 @@ void testPhysicsServerColliderCombinations() {
     auto staticConvex = std::make_unique<GameObject>();
     GameObject* staticConvexPointer = staticConvex.get();
     staticConvex->name = "Static Convex Hull";
-    staticConvex->position = {0.0f, 300.0f, 0.0f};
+    staticConvex->position = {0.0f, 3.0f, 0.0f};
     staticConvex->physics.enabled = true;
     staticConvex->physics.motionType = GameObject::PhysicsMotionType::Static;
     staticConvex->physics.colliderType =
@@ -1115,7 +1149,7 @@ void testPhysicsServerColliderCombinations() {
 
     auto dynamicConvex = std::make_unique<GameObject>();
     dynamicConvex->name = "Dynamic Convex Hull";
-    dynamicConvex->position = {100.0f, 300.0f, 0.0f};
+    dynamicConvex->position = {1.0f, 3.0f, 0.0f};
     dynamicConvex->physics.enabled = true;
     dynamicConvex->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
     dynamicConvex->physics.colliderType =
@@ -1128,12 +1162,12 @@ void testPhysicsServerColliderCombinations() {
 
     auto dynamicSphere = std::make_unique<GameObject>();
     dynamicSphere->name = "Dynamic Sphere";
-    dynamicSphere->position = {-100.0f, 300.0f, 0.0f};
+    dynamicSphere->position = {-1.0f, 3.0f, 0.0f};
     dynamicSphere->physics.enabled = true;
     dynamicSphere->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
     dynamicSphere->physics.colliderType =
         GameObject::PhysicsColliderType::Sphere;
-    dynamicSphere->physics.sphereRadius = 20.0f;
+    dynamicSphere->physics.sphereRadius = 0.2f;
     expect(static_cast<bool>(validScene.addGameObject(std::move(dynamicSphere))),
            "failed to add dynamic sphere object");
 
@@ -1145,7 +1179,7 @@ void testPhysicsServerColliderCombinations() {
     expect(server.runtimeSessionActive(),
            "valid collider combinations did not keep the runtime session active");
 
-    const glm::vec3 stationaryPosition{0.0f, 450.0f, 0.0f};
+    const glm::vec3 stationaryPosition{0.0f, 4.5f, 0.0f};
     server.applyRuntimeTransform(*staticConvexPointer, stationaryPosition,
                                  glm::vec3(0.0f), false);
     advanceRuntimePhysics(server, 6);
@@ -1234,7 +1268,7 @@ void testPhysicsServerHierarchyStaticFollow() {
     auto parentOwner = std::make_unique<GameObject>();
     GameObject* parent = parentOwner.get();
     parent->name = "Static Physics Parent";
-    parent->position = {100.0f, 0.0f, 0.0f};
+    parent->position = {1.0f, 0.0f, 0.0f};
 
     auto floorOwner = std::make_unique<GameObject>();
     GameObject* floor = floorOwner.get();
@@ -1244,7 +1278,7 @@ void testPhysicsServerHierarchyStaticFollow() {
     floor->physics.enabled = true;
     floor->physics.motionType = GameObject::PhysicsMotionType::Static;
     floor->physics.colliderType = GameObject::PhysicsColliderType::Mesh;
-    floor->position = {20.0f, 0.0f, 0.0f};
+    floor->position = {0.2f, 0.0f, 0.0f};
     expect(static_cast<bool>(floor->modelRenderable().addMeshInstance(
                upwardSmallFloorInstance())),
            "failed to create parented static floor");
@@ -1252,11 +1286,11 @@ void testPhysicsServerHierarchyStaticFollow() {
     auto sphereOwner = std::make_unique<GameObject>();
     GameObject* sphere = sphereOwner.get();
     sphere->name = "Static Follow Test Sphere";
-    sphere->position = {120.0f, 100.0f, 0.0f};
+    sphere->position = {1.2f, 1.0f, 0.0f};
     sphere->physics.enabled = true;
     sphere->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
     sphere->physics.colliderType = GameObject::PhysicsColliderType::Sphere;
-    sphere->physics.sphereRadius = 5.0f;
+    sphere->physics.sphereRadius = 0.05f;
 
     expect(static_cast<bool>(scene.addGameObject(std::move(parentOwner))),
            "failed to add static physics parent");
@@ -1275,12 +1309,12 @@ void testPhysicsServerHierarchyStaticFollow() {
            "failed to create parented static hierarchy physics session");
     advanceRuntimePhysics(server, 120);
     const float settledPosition = sphere->position.y;
-    expect(settledPosition > 0.0f && settledPosition < 20.0f,
+    expect(settledPosition > 0.0f && settledPosition < 2.0f,
            "static child world placement did not support the dynamic body at the parented floor");
 
-    parent->position.x = 200.0f;
+    parent->position.x = 2.0f;
     advanceRuntimePhysics(server, 20);
-    expect(sphere->position.y < settledPosition - 2.0f,
+    expect(sphere->position.y < settledPosition - 0.02f,
            "static child did not follow a supported moving parent in Jolt");
 
     server.endRuntimeSession();
@@ -1298,7 +1332,7 @@ void testPhysicsServerHierarchyDynamicWritebackAndEdit() {
     auto parentOwner = std::make_unique<GameObject>();
     GameObject* parent = parentOwner.get();
     parent->name = "Dynamic Physics Parent";
-    parent->position = {100.0f, 0.0f, 0.0f};
+    parent->position = {1.0f, 0.0f, 0.0f};
 
     auto childOwner = std::make_unique<GameObject>();
     GameObject* child = childOwner.get();
@@ -1306,8 +1340,8 @@ void testPhysicsServerHierarchyDynamicWritebackAndEdit() {
     child->physics.enabled = true;
     child->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
     child->physics.colliderType = GameObject::PhysicsColliderType::Sphere;
-    child->physics.sphereRadius = 5.0f;
-    child->position = {30.0f, 200.0f, 0.0f};
+    child->physics.sphereRadius = 0.05f;
+    child->position = {0.3f, 2.0f, 0.0f};
     child->scale = {2.0f, 3.0f, 4.0f};
 
     expect(static_cast<bool>(scene.addGameObject(std::move(parentOwner))),
@@ -1324,7 +1358,7 @@ void testPhysicsServerHierarchyDynamicWritebackAndEdit() {
     expect(static_cast<bool>(server.beginRuntimeSession(scene)),
            "failed to create dynamic hierarchy physics session");
 
-    const glm::vec3 editedLocalPosition{45.0f, 250.0f, -12.0f};
+    const glm::vec3 editedLocalPosition{0.45f, 2.5f, -0.12f};
     const glm::vec3 editedLocalRotation{15.0f, 25.0f, -10.0f};
     server.applyRuntimeTransform(*child, editedLocalPosition,
                                  editedLocalRotation, true);
@@ -1337,7 +1371,7 @@ void testPhysicsServerHierarchyDynamicWritebackAndEdit() {
                1.0e-4f,
            "dynamic editor override changed authored local scale");
 
-    parent->position.x += 50.0f;
+    parent->position.x += 0.5f;
     server.applyRuntimeTransform(*child, child->position, child->rotation,
                                  false);
     advanceRuntimePhysics(server, 2);
@@ -1398,15 +1432,15 @@ void testPhysicsServerCharacterHierarchy() {
     auto parentOwner = std::make_unique<GameObject>();
     GameObject* parent = parentOwner.get();
     parent->name = "Character Runtime Parent";
-    parent->position = {100.0f, 50.0f, -40.0f};
+    parent->position = {1.0f, 0.5f, -0.4f};
     parent->rotation = {15.0f, 25.0f, 35.0f};
 
     auto characterOwner = std::make_unique<CountingCharacter>();
     CountingCharacter* character = characterOwner.get();
     character->name = "Parented Runtime Character";
-    character->position = {30.0f, 300.0f, -10.0f};
+    character->position = {0.3f, 3.0f, -0.1f};
     character->rotation = {-20.0f, 10.0f, 5.0f};
-    character->desiredVelocity = {200.0f, 17.0f, -300.0f};
+    character->desiredVelocity = {2.0f, 0.17f, -3.0f};
 
     expect(static_cast<bool>(scene.addGameObject(std::move(parentOwner))),
            "failed to add Character runtime parent");
@@ -1434,7 +1468,7 @@ void testPhysicsServerCharacterHierarchy() {
            "CharacterVirtual startup did not use the authored local position relative to its parent");
     expect(character->transformResolvedCount == 1,
            "Character physics did not resolve its initial transform");
-    expect(character->desiredVelocity == glm::vec3(200.0f, 17.0f, -300.0f),
+    expect(character->desiredVelocity == glm::vec3(2.0f, 0.17f, -3.0f),
            "Character physics changed the world-space desired velocity");
 
     glm::vec3 worldPosition;
@@ -1447,11 +1481,11 @@ void testPhysicsServerCharacterHierarchy() {
 
     const glm::vec3 localBeforeParentMovement = character->position;
     const glm::vec3 fixedWorldPosition = worldPosition;
-    parent->position.x += 50.0f;
+    parent->position.x += 0.5f;
     server.update();
     expect(character->transformResolvedCount == 2,
            "Character parent movement did not produce a resolved writeback");
-    expect(glm::length(character->position - localBeforeParentMovement) > 1.0f,
+    expect(glm::length(character->position - localBeforeParentMovement) > 0.01f,
            "Character local position did not compensate for parent movement");
     expect(static_cast<bool>(physics::deriveCharacterWorldPosition(
                *character, worldPosition)),
@@ -1489,7 +1523,7 @@ void testPhysicsServerRejectsUnsupportedCharacterHierarchy() {
     rigidChild->physics.enabled = true;
     rigidChild->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
     rigidChild->physics.colliderType = GameObject::PhysicsColliderType::Sphere;
-    rigidChild->physics.sphereRadius = 5.0f;
+    rigidChild->physics.sphereRadius = 0.05f;
     expect(static_cast<bool>(characterAncestorRigidBodyScene.addGameObject(
                std::move(rigidCharacterParentOwner))),
            "failed to add Character rigid-body parent");
@@ -1599,13 +1633,13 @@ void testPhysicsServerParentedPlayerCamera() {
     auto parentOwner = std::make_unique<GameObject>();
     GameObject* parent = parentOwner.get();
     parent->name = "Player Camera Parent";
-    parent->position = {120.0f, 30.0f, -80.0f};
+    parent->position = {1.2f, 0.3f, -0.8f};
     parent->rotation = {12.0f, -28.0f, 37.0f};
 
     auto playerOwner = std::make_unique<Player>();
     Player* player = playerOwner.get();
     player->init();
-    player->position = {25.0f, 250.0f, -15.0f};
+    player->position = {0.25f, 2.5f, -0.15f};
     expect(static_cast<bool>(scene.addGameObject(std::move(parentOwner))),
            "failed to add Player camera parent");
     expect(static_cast<bool>(scene.addGameObject(std::move(playerOwner))),
@@ -1635,22 +1669,22 @@ void testPhysicsServerParentedPlayerCamera() {
                    1.0e-3f,
            "parented Player CharacterVirtual writeback changed its world position");
     expect(glm::length(player->camera->position -
-                       (playerWorldPosition + glm::vec3(0.0f, 150.0f, 0.0f))) <=
+                       (playerWorldPosition + glm::vec3(0.0f, 1.5f, 0.0f))) <=
                1.0e-3f,
            "parented Player camera did not follow CharacterVirtual world position");
 
     const glm::vec3 localBeforeParentMovement = player->position;
-    parent->position.x += 50.0f;
+    parent->position.x += 0.5f;
     server.update();
     const glm::vec3 movedPlayerWorldPosition =
         glm::vec3(player->worldTransformMatrix()[3]);
-    expect(glm::length(player->position - localBeforeParentMovement) > 1.0f &&
+    expect(glm::length(player->position - localBeforeParentMovement) > 0.01f &&
                glm::length(movedPlayerWorldPosition - expectedWorldPosition) <=
                    1.0e-3f,
            "parented Player did not preserve its CharacterVirtual world position after parent movement");
     expect(glm::length(player->camera->position -
                        (movedPlayerWorldPosition +
-                        glm::vec3(0.0f, 150.0f, 0.0f))) <= 1.0e-3f,
+                        glm::vec3(0.0f, 1.5f, 0.0f))) <= 1.0e-3f,
            "Player camera was dragged independently of CharacterVirtual");
 
     server.endRuntimeSession();
@@ -1686,8 +1720,8 @@ void testRuntimeCharacterFloorWallAndLifecycle() {
 
     auto character = std::make_unique<Character>();
     Character* characterPointer = character.get();
-    character->position = {0.0f, 300.0f, 0.0f};
-    character->desiredVelocity = {200.0f, 0.0f, -300.0f};
+    character->position = {0.0f, 3.0f, 0.0f};
+    character->desiredVelocity = {2.0f, 0.0f, -3.0f};
     expect(static_cast<bool>(scene.addGameObject(std::move(character))),
            "failed to add runtime character");
 
@@ -1702,9 +1736,9 @@ void testRuntimeCharacterFloorWallAndLifecycle() {
     expect(characterPointer->position.y >= -1.0f &&
                characterPointer->position.y <= 5.0f,
            "runtime character did not settle at the static floor");
-    expect(characterPointer->position.z > -220.0f,
+    expect(characterPointer->position.z > -2.2f,
            "runtime character passed through the static wall");
-    expect(characterPointer->position.x > 100.0f,
+    expect(characterPointer->position.x > 1.0f,
            "runtime character did not slide along the static wall");
 
     server.endRuntimeSession();
@@ -1732,7 +1766,7 @@ void testDynamicPositionAndGravityWorldScale() {
                                   JPH::cMaxPhysicsBarriers, 1);
     JPH::BodyInterface& bodies = system.GetBodyInterface();
 
-    const glm::vec3 authoredPosition(0.0f, 300.0f, 0.0f);
+    const glm::vec3 authoredPosition(0.0f, 3.0f, 0.0f);
     const glm::vec3 physicalPosition = physics::dunamisToMeters(authoredPosition);
     JPH::BodyCreationSettings settings(
         new JPH::SphereShape(0.05f),
@@ -1742,15 +1776,15 @@ void testDynamicPositionAndGravityWorldScale() {
         bodies.CreateAndAddBody(settings, JPH::EActivation::Activate);
     expect(!body.IsInvalid(), "failed to create world-scale dynamic body");
     expect(near(static_cast<float>(bodies.GetPosition(body).GetY()), 3.0f),
-           "300 authored DU was not represented as 3 Jolt meters");
+           "3 Dunamis meters was not represented as 3 Jolt meters");
     for (int step = 0; step < 60; ++step) {
         (void)system.Update(1.0f / 60.0f, 1, &allocator, &jobs);
     }
     const float resultingDunamisY = physics::metersToDunamis(
         static_cast<float>(bodies.GetPosition(body).GetY()));
     const float displacementDunamisY = resultingDunamisY - authoredPosition.y;
-    expect(displacementDunamisY < -450.0f && displacementDunamisY > -550.0f,
-           "one second of -9.81 m/s^2 did not produce meter-scaled DU fall");
+    expect(displacementDunamisY < -4.5f && displacementDunamisY > -5.5f,
+           "one second of -9.81 m/s^2 did not produce meter-scaled fall");
     bodies.RemoveBody(body);
     bodies.DestroyBody(body);
     JPH::UnregisterTypes();

@@ -29,6 +29,13 @@ public:
     static double pitch(const Player& player) { return player.pitch; }
 };
 
+class InputManagerTestAccess {
+public:
+    static void setMode(InputManager& input, InputMode mode) {
+        input.inputMode_ = mode;
+    }
+};
+
 class GameObjectTestAccess {
 public:
     static void setParent(GameObject& object, GameObject* parent) {
@@ -1529,13 +1536,47 @@ bool runPlayerCameraInitializationTests() {
 
 bool runPlayerMovementInvariantTests() {
     bool passed = true;
+    passed &= expect(Player::eyeHeightMeters == 1.5f &&
+                         Player::walkSpeedMetersPerSecond == 4.0f &&
+                         Player::sprintSpeedMetersPerSecond == 7.0f,
+                     "Player movement constants are not meter-based");
+    const Character defaultCharacter;
+    passed &= expect(defaultCharacter.capsuleHeight == 1.8f &&
+                         defaultCharacter.capsuleRadius == 0.35f,
+                     "Character default capsule dimensions are not meter-based");
+    auto gameplayInput = std::make_shared<InputManager>();
+    InputManagerTestAccess::setMode(*gameplayInput,
+                                    InputMode::GameplayInteractive);
+    Player movementPlayer;
+    movementPlayer.init();
+    movementPlayer.camera->front = {0.0f, 0.0f, -1.0f};
+    SDL_Event forwardEvent{};
+    forwardEvent.type = SDL_EVENT_KEY_DOWN;
+    forwardEvent.key.key = SDLK_W;
+    gameplayInput->handleEvent(forwardEvent);
+    movementPlayer.update(gameplayInput);
+    passed &= expect(std::fabs(glm::length(movementPlayer.desiredVelocity) -
+                               4.0f) <= 1.0e-5f &&
+                         std::fabs(movementPlayer.desiredVelocity.z + 4.0f) <=
+                             1.0e-5f,
+                     "Player walking velocity is not 4 meters per second");
+    SDL_Event sprintEvent{};
+    sprintEvent.type = SDL_EVENT_KEY_DOWN;
+    sprintEvent.key.key = SDLK_LSHIFT;
+    gameplayInput->handleEvent(sprintEvent);
+    movementPlayer.update(gameplayInput);
+    passed &= expect(std::fabs(glm::length(movementPlayer.desiredVelocity) -
+                               7.0f) <= 1.0e-5f &&
+                         std::fabs(movementPlayer.desiredVelocity.z + 7.0f) <=
+                             1.0e-5f,
+                     "Player sprint velocity is not 7 meters per second");
     {
         Player player;
         player.init();
         player.position = {10.0f, 20.0f, 30.0f};
         player.onPhysicsTransformResolved();
         passed &= expect(
-            sameVector(player.camera->position, glm::vec3(10.0f, 170.0f, 30.0f)),
+            sameVector(player.camera->position, glm::vec3(10.0f, 21.5f, 30.0f)),
             "Player camera did not follow the physics-resolved position at eye height");
         passed &= expect(player.desiredVelocity == glm::vec3(0.0f),
                          "Player starts with nonzero character movement intent");
@@ -1566,7 +1607,7 @@ bool runPlayerMovementInvariantTests() {
         const glm::vec3 playerWorldPosition =
             glm::vec3(player->worldTransformMatrix()[3]);
         const glm::vec3 expectedCameraPosition =
-            playerWorldPosition + 150.0f * glm::vec3(0.0f, 1.0f, 0.0f);
+            playerWorldPosition + 1.5f * glm::vec3(0.0f, 1.0f, 0.0f);
         passed &= expect(parentingResult &&
                              sameVector(player->camera->position,
                                         expectedCameraPosition),

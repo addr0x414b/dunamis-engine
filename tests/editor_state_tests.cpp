@@ -1,4 +1,5 @@
 #include "editor/editor_session.h"
+#include "editor/editor_camera_controller.h"
 #include "scene/game_object.h"
 #include "scene/scene.h"
 
@@ -62,6 +63,15 @@ bool hasExactly(const EditorSession& session,
 
 int main() {
     bool passed = true;
+
+    EditorCameraController editorCamera;
+    passed &= expect(
+        editorCamera.camera().position == glm::vec3(0.0f, 0.0f, 3.0f) &&
+            EditorCameraController::startingDistanceMeters == 3.0f &&
+            EditorCameraController::normalSpeedMetersPerSecond == 5.0f &&
+            EditorCameraController::fastSpeedMetersPerSecond == 15.0f &&
+            EditorCameraController::slowSpeedMetersPerSecond == 1.0f,
+        "Editor camera defaults and movement speeds are not meter-based");
 
     passed &= expect(editorToolsEnabled(SceneRunState::Editing),
                      "Editing must enable editor tools");

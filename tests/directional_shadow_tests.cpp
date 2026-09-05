@@ -225,7 +225,7 @@ int main() {
                          "Vulkan zero-to-one shadow depth mapping was not retained");
         glm::vec3 insideCoordinates;
         passed &= expect(directional_shadow::projectWorldPoint(
-                             matrices.viewProjection, glm::vec3(10.0f, 0.0f, 10.0f),
+                             matrices.viewProjection, glm::vec3(1.0f, 0.0f, 1.0f),
                              insideCoordinates),
                          "Known inside shadow point was rejected");
         glm::vec3 outsideCoordinates;

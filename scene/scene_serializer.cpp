@@ -10,6 +10,145 @@
 
 namespace {
 
+// Scene versions 1 and 2 stored legacy world distances in Dunamis units,
+// where 100 units represented one meter. Keep this conversion exclusively in
+// the versioned document migration; runtime systems use the current meter
+// contract and must not carry legacy '/100' conversions.
+constexpr float legacyDunamisUnitsPerMeter = 100.0f;
+constexpr float legacyMetersPerDunamisUnit =
+    1.0f / legacyDunamisUnitsPerMeter;
+
+Result migrateLegacyVectorProperty(nlohmann::json& properties,
+                                   const char* propertyName,
+                                   const std::string& context) {
+    const auto property = properties.find(propertyName);
+    if (property == properties.end()) return Result::success();
+
+    glm::vec3 value{};
+    Result result = authored_property::decode(property.value(), value);
+    if (!result) {
+        return Result::failure("Cannot migrate " + context + ": " +
+                               result.error());
+    }
+    value *= legacyMetersPerDunamisUnit;
+    result = authored_property::encode(value, property.value());
+    if (!result) {
+        return Result::failure("Cannot migrate " + context + ": " +
+                               result.error());
+    }
+    return Result::success();
+}
+
+Result migrateLegacyScalarProperty(nlohmann::json& properties,
+                                   const char* propertyName,
+                                   const std::string& context) {
+    const auto property = properties.find(propertyName);
+    if (property == properties.end()) return Result::success();
+
+    float value = 0.0f;
+    Result result = authored_property::decode(property.value(), value);
+    if (!result) {
+        return Result::failure("Cannot migrate " + context + ": " +
+                               result.error());
+    }
+    value *= legacyMetersPerDunamisUnit;
+    result = authored_property::encode(value, property.value());
+    if (!result) {
+        return Result::failure("Cannot migrate " + context + ": " +
+                               result.error());
+    }
+    return Result::success();
+}
+
+Result migrateLegacyObjectRecord(nlohmann::json& record,
+                                 const TypeRegistry& registry) {
+    if (!record.is_object() || !record.contains("type") ||
+        !record.at("type").is_string()) {
+        return Result::success();
+    }
+
+    std::string objectId = "<unknown>";
+    if (record.contains("id") && record.at("id").is_string()) {
+        objectId = record.at("id").get<std::string>();
+    }
+    const std::string typeName = record.at("type").get<std::string>();
+    const TypeDescriptor* type = registry.find(typeName);
+    if (!type) {
+        return Result::success();
+    }
+
+    if (record.contains("properties") && record.at("properties").is_object()) {
+        auto& properties = record.at("properties");
+        if (registry.isA(*type, "GameObject") &&
+            registry.findProperty(*type, "position") != nullptr) {
+            Result result = migrateLegacyVectorProperty(
+                properties, "position", "position on object '" + objectId + "'");
+            if (!result) return result;
+        }
+        if (registry.isA(*type, "Character")) {
+            Result result = migrateLegacyScalarProperty(
+                properties, "capsuleHeight",
+                "capsuleHeight on object '" + objectId + "'");
+            if (!result) return result;
+            result = migrateLegacyScalarProperty(
+                properties, "capsuleRadius",
+                "capsuleRadius on object '" + objectId + "'");
+            if (!result) return result;
+        }
+
+        // Directional shadow volume settings are persisted world distances and
+        // were consumed directly by the renderer in the old DU convention.
+        if (registry.findProperty(*type, "shadowFocus") != nullptr) {
+            Result result = migrateLegacyVectorProperty(
+                properties, "shadowFocus",
+                "shadowFocus on object '" + objectId + "'");
+            if (!result) return result;
+            for (const char* propertyName : {"shadowHalfExtent",
+                                             "shadowLightDistance",
+                                             "shadowNearPlane",
+                                             "shadowFarPlane"}) {
+                result = migrateLegacyScalarProperty(
+                    properties, propertyName,
+                    std::string(propertyName) + " on object '" + objectId + "'");
+                if (!result) return result;
+            }
+        }
+
+        // PhysicsBodySettings::sphereRadius is deliberately not converted:
+        // its persisted default is 0.5 and its existing consumers indicate
+        // that this field was already authored with meter semantics.
+    }
+
+    if (record.contains("attachedCamera") &&
+        record.at("attachedCamera").is_object()) {
+        Result result = migrateLegacyVectorProperty(
+            record.at("attachedCamera"), "position",
+            "attached camera position on object '" + objectId + "'");
+        if (!result) return result;
+    }
+    return Result::success();
+}
+
+Result migrateLegacyDocumentToCurrent(nlohmann::json& document,
+                                      const TypeRegistry& registry) {
+    if (document.contains("objects") && document.at("objects").is_array()) {
+        for (auto& record : document.at("objects")) {
+            Result result = migrateLegacyObjectRecord(record, registry);
+            if (!result) return result;
+        }
+    }
+    if (document.contains("editor") && document.at("editor").is_object() &&
+        document.at("editor").contains("camera") &&
+        document.at("editor").at("camera").is_object()) {
+        Result result = migrateLegacyVectorProperty(
+            document.at("editor").at("camera"), "position",
+            "editor camera position");
+        if (!result) return result;
+    }
+    document["formatVersion"] = SceneSerializer::formatVersion;
+    return Result::success();
+}
+
 Result encodeCamera(const Camera& camera, nlohmann::json& output) {
     Result result = authored_property::encode(camera.position, output["position"]);
     if (!result) return result;
@@ -325,14 +464,30 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
             !document.at("formatVersion").is_number_integer()) {
             return Result::failure("Scene document requires integer formatVersion");
         }
-        const int version = document.at("formatVersion").get<int>();
-        if (version != 1 && version != formatVersion) {
-            return Result::failure("Unsupported scene formatVersion " + std::to_string(version));
+        const int sourceVersion = document.at("formatVersion").get<int>();
+        if (sourceVersion != 1 && sourceVersion != 2 &&
+            sourceVersion != formatVersion) {
+            return Result::failure("Unsupported scene formatVersion " +
+                                   std::to_string(sourceVersion));
         }
-        if (!document.contains("scene") || !document.at("scene").is_object()) {
+
+        nlohmann::json migratedDocument = document;
+        if (sourceVersion != formatVersion) {
+            Result migration = migrateLegacyDocumentToCurrent(
+                migratedDocument, registry);
+            if (!migration) {
+                return Result::failure("Scene migration failed: " +
+                                       migration.error());
+            }
+        }
+
+        const nlohmann::json& input = migratedDocument;
+        const bool hasSavedHierarchy = sourceVersion == 2 ||
+                                       sourceVersion == formatVersion;
+        if (!input.contains("scene") || !input.at("scene").is_object()) {
             return Result::failure("Scene document requires a scene object");
         }
-        const auto& sceneData = document.at("scene");
+        const auto& sceneData = input.at("scene");
         for (const char* field : {"name", "backgroundColor", "ambientColor",
                                   "ambientIntensity"}) {
             if (!sceneData.contains(field)) {
@@ -355,7 +510,7 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
         if (!result) return result;
         candidate.name = sceneData.at("name").get<std::string>();
 
-        if (!document.contains("objects") || !document.at("objects").is_array()) {
+        if (!input.contains("objects") || !input.at("objects").is_array()) {
             return Result::failure("Scene document requires an objects array");
         }
         struct PendingHierarchy {
@@ -367,8 +522,8 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
         std::unordered_set<std::string> savedIds;
         std::unordered_map<std::string, GameObject*> savedObjects;
         std::vector<PendingHierarchy> pendingHierarchy;
-        pendingHierarchy.reserve(document.at("objects").size());
-        for (const auto& record : document.at("objects")) {
+        pendingHierarchy.reserve(input.at("objects").size());
+        for (const auto& record : input.at("objects")) {
             if (!record.is_object() || !record.contains("id") ||
                 !record.at("id").is_string() ||
                 record.at("id").get<std::string>().empty()) {
@@ -381,7 +536,7 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
 
             std::optional<std::string> parentId;
             std::optional<std::size_t> siblingIndex;
-            if (version == formatVersion) {
+            if (hasSavedHierarchy) {
                 if (!record.contains("parentId")) {
                     return Result::failure("Object '" + id +
                                            "' is missing parentId");
@@ -462,7 +617,7 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
                 {object, std::move(parentId), siblingIndex});
         }
 
-        if (version == 1 || version == formatVersion) {
+        if (sourceVersion == 1 || hasSavedHierarchy) {
             for (const PendingHierarchy& pending : pendingHierarchy) {
                 if (pending.object == nullptr || pending.object->parent() == nullptr) {
                     continue;
@@ -478,7 +633,7 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
 
         }
 
-        if (version == formatVersion) {
+        if (hasSavedHierarchy) {
             for (const PendingHierarchy& pending : pendingHierarchy) {
                 if (pending.object == nullptr) {
                     return Result::failure("Loaded object hierarchy contains a null object");
@@ -580,23 +735,23 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
             }
         }
 
-        if (document.contains("activeCamera")) {
-            result = resolveActiveCamera(document.at("activeCamera"), candidate);
+        if (input.contains("activeCamera")) {
+            result = resolveActiveCamera(input.at("activeCamera"), candidate);
             if (!result) return result;
         }
         result = candidate.validateForActivation();
         if (!result) return Result::failure("Loaded candidate scene is invalid: " + result.error());
 
-        if (document.contains("editor") && document.at("editor").is_object() &&
-            document.at("editor").contains("camera")) {
+        if (input.contains("editor") && input.at("editor").is_object() &&
+            input.at("editor").contains("camera")) {
             EditorCameraState state;
-            result = decodeCamera(document.at("editor").at("camera"), state);
+            result = decodeCamera(input.at("editor").at("camera"), state);
             if (result) loadData.editorCamera = state;
             else loadData.warnings.push_back("Ignoring invalid editor camera: " + result.error());
         }
-        if (document.contains("editor") && document.at("editor").is_object() &&
-            document.at("editor").contains("renderColliders")) {
-            const auto& ids = document.at("editor").at("renderColliders");
+        if (input.contains("editor") && input.at("editor").is_object() &&
+            input.at("editor").contains("renderColliders")) {
+            const auto& ids = input.at("editor").at("renderColliders");
             if (!ids.is_array()) {
                 loadData.warnings.push_back("Ignoring editor.renderColliders: expected an array");
             } else {

@@ -66,8 +66,9 @@ public:
     [[nodiscard]] std::string authoredTexturePath() const;
     [[nodiscard]] Result setAuthoredTexturePath(std::string path);
 
-    // position, rotation, and scale are authored in the local space of the
-    // parent. For a root object, local and world space are identical.
+    // Position is a meter-valued local offset in the parent space. Rotation
+    // remains angular and scale remains dimensionless. For a root object,
+    // local and world space are identical.
     [[nodiscard]] glm::mat4 localTransformMatrix() const noexcept;
     [[nodiscard]] glm::mat4 worldTransformMatrix() const noexcept;
 

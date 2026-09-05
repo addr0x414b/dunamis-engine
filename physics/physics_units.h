@@ -5,9 +5,13 @@
 
 namespace physics {
 
-// Dunamis scene and render transforms are authored in Dunamis units. Jolt
-// exclusively receives and returns meters at this backend boundary.
-constexpr float dunamisUnitsPerMeter = 100.0f;
+// Dunamis uses a single world-space unit convention: one Dunamis unit is one
+// meter. Positions, distances, physical dimensions, and linear velocities are
+// therefore expressed in meters (or meters per second). Scale is dimensionless
+// and rotations, FOV, colors, and intensities are not unit-converted. Keep
+// these helpers as the explicit Dunamis/Jolt ownership boundary; Jolt receives
+// meters even while the current conversion is mathematically one-to-one.
+constexpr float dunamisUnitsPerMeter = 1.0f;
 constexpr float metersPerDunamisUnit = 1.0f / dunamisUnitsPerMeter;
 
 constexpr float dunamisToMeters(float dunamisUnits) noexcept {

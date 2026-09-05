@@ -4,11 +4,12 @@
 #include "game_object.h"
 
 struct DirectionalShadowSettings {
+    // All shadow-volume positions and distances are world meters.
     glm::vec3 focus{0.0f};
-    float halfExtent = 500.0f;
-    float lightDistance = 500.0f;
-    float nearPlane = 1.0f;
-    float farPlane = 1000.0f;
+    float halfExtent = 5.0f;
+    float lightDistance = 5.0f;
+    float nearPlane = 0.01f;
+    float farPlane = 10.0f;
 };
 
 class DirectionalLight : public GameObject {

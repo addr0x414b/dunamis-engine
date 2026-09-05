@@ -3,10 +3,13 @@
 #include "scene/scene_serializer.h"
 #include "scene/type_registry.h"
 #include "scene/character.h"
+#include "scene/directional_light.h"
 #include "input/input_manager.h"
+#include "math/transform_math.h"
 
 #include <chrono>
 #include <algorithm>
+#include <cstddef>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -32,6 +35,18 @@ public:
     std::string tag;
     float runtimeOnly = 0.0f;
     float transferOnlyValue = 1.0f;
+};
+
+class AttachedCameraObject final : public GameObject {
+public:
+    AttachedCameraObject() : camera(std::make_unique<Camera>()) {}
+
+    Camera* attachedCamera() noexcept override { return camera.get(); }
+    const Camera* attachedCamera() const noexcept override {
+        return camera.get();
+    }
+
+    std::unique_ptr<Camera> camera;
 };
 
 Result registerCustom(TypeRegistry& registry) {
@@ -66,6 +81,12 @@ Result registerCustom(TypeRegistry& registry) {
             return Result::success();
         },
         PropertyLifecycle::RuntimeTransferOnly);
+}
+
+Result registerAttachedCamera(TypeRegistry& registry) {
+    return registry.registerType<AttachedCameraObject>(
+        "AttachedCameraObject", "GameObject",
+        [] { return std::make_unique<AttachedCameraObject>(); });
 }
 
 class PersistenceScene final : public Scene {
@@ -332,7 +353,7 @@ bool serializerTests() {
     nlohmann::json document;
     Result result = SceneSerializer::serializeFull(source, registry, editor, document);
     passed &= expect(static_cast<bool>(result), "full scene serialization failed: " + result.error());
-    passed &= expect(document["formatVersion"] == 2 &&
+    passed &= expect(document["formatVersion"] == 3 &&
                          document["editor"].contains("camera"),
                      "version/editor camera were not serialized");
     const auto customRecord = *std::find_if(
@@ -473,7 +494,7 @@ bool serializerTests() {
                      "wrong property type was accepted");
 
     nlohmann::json unsupported = document;
-    unsupported["formatVersion"] = 3;
+    unsupported["formatVersion"] = 4;
     EmptyScene versionCandidate;
     result = SceneSerializer::applyDocument(unsupported, versionCandidate, registry, ignored);
     passed &= expect(!result, "unsupported format version was accepted");
@@ -577,11 +598,11 @@ bool hierarchyPersistenceTests() {
         ? findObjectRecord(document, "grandchild")
         : nullptr;
     passed &= expect(
-        result && document.at("formatVersion") == 2 && rootRecord && childRecord &&
+        result && document.at("formatVersion") == 3 && rootRecord && childRecord &&
             grandchildRecord && rootRecord->at("parentId").is_null() &&
             childRecord->at("parentId") == "root" &&
             grandchildRecord->at("parentId") == "child",
-        "v2 hierarchy records did not serialize structural parentId values");
+        "v3 hierarchy records did not serialize structural parentId values");
 
     EmptyScene candidate;
     SceneLoadData load;
@@ -694,7 +715,7 @@ bool hierarchyPersistenceTests() {
         if (object.at("id") == "child") object.erase("parentId");
     }
     passed &= expectRejected(missingParent,
-                             "v2 object without parentId was accepted");
+        "v3 object without parentId was accepted");
 
     const std::vector<nlohmann::json> invalidParentIds = {
         nlohmann::json(""), 123, nlohmann::json::array(),
@@ -703,7 +724,7 @@ bool hierarchyPersistenceTests() {
         nlohmann::json malformed = document;
         setParentId(malformed, "child", invalidParentId);
         passed &= expectRejected(malformed,
-                                 "invalid v2 parentId type was accepted");
+                                 "invalid v3 parentId type was accepted");
     }
 
     nlohmann::json unknownParent = document;
@@ -715,7 +736,7 @@ bool hierarchyPersistenceTests() {
     passed &= expect(!result &&
                          result.error().find("child") != std::string::npos &&
                          result.error().find("missing-parent") != std::string::npos,
-                     "unknown v2 parent reference was accepted or lacked context");
+                     "unknown v3 parent reference was accepted or lacked context");
 
     nlohmann::json unsavedParent = document;
     setParentId(unsavedParent, "child", "candidate-only-parent");
@@ -731,13 +752,13 @@ bool hierarchyPersistenceTests() {
 
     nlohmann::json selfParent = document;
     setParentId(selfParent, "root", "root");
-    passed &= expectRejected(selfParent, "self-parenting v2 document was accepted");
+    passed &= expectRejected(selfParent, "self-parenting v3 document was accepted");
 
     nlohmann::json cycle = document;
     setParentId(cycle, "root", "grandchild");
     setParentId(cycle, "child", "root");
     setParentId(cycle, "grandchild", "child");
-    passed &= expectRejected(cycle, "cyclic v2 document was accepted");
+    passed &= expectRejected(cycle, "cyclic v3 document was accepted");
 
     return passed;
 }
@@ -844,7 +865,7 @@ bool characterPersistenceTests() {
         ? findObjectRecord(document, "character")
         : nullptr;
     passed &= expect(
-        result && document.at("formatVersion") == 2 && record &&
+        result && document.at("formatVersion") == 3 && record &&
             record->at("properties").contains("capsuleHeight") &&
             record->at("properties").contains("capsuleRadius"),
         "Character capsule dimensions were not persisted");
@@ -866,13 +887,208 @@ bool characterPersistenceTests() {
               candidate.findGameObject("character"))
         : nullptr;
     passed &= expect(
-        result && roundTripResult && roundTrip.at("formatVersion") == 2 &&
+        result && roundTripResult && roundTrip.at("formatVersion") == 3 &&
             roundTripRecord &&
             roundTripRecord->at("properties").contains("capsuleHeight") &&
             roundTripRecord->at("properties").contains("capsuleRadius") &&
             restoredCharacter && restoredCharacter->capsuleHeight == 211.0f &&
             restoredCharacter->capsuleRadius == 41.0f,
         "Character capsule dimensions did not survive serialize/load");
+    return passed;
+}
+
+bool sceneUnitMigrationTests() {
+    bool passed = true;
+    TypeRegistry registry = makeRegistry(passed);
+    passed &= expect(static_cast<bool>(registerAttachedCamera(registry)),
+                     "attached-camera migration type registration failed");
+
+    nlohmann::json legacyDocument = nlohmann::json::object();
+    legacyDocument["formatVersion"] = 2;
+    legacyDocument["scene"] = nlohmann::json::object();
+    legacyDocument["scene"]["name"] = "Legacy Units";
+    legacyDocument["scene"]["backgroundColor"] = {0.1f, 0.2f, 0.3f, 1.0f};
+    legacyDocument["scene"]["ambientColor"] = {0.4f, 0.5f, 0.6f};
+    legacyDocument["scene"]["ambientIntensity"] = 0.7f;
+    legacyDocument["activeCamera"] = {
+        {"ownerId", "camera-owner"}, {"kind", "attached"}};
+    legacyDocument["editor"] = nlohmann::json::object();
+    legacyDocument["editor"]["camera"] = nlohmann::json::object();
+    legacyDocument["editor"]["camera"]["position"] = {300.0f, 400.0f, 500.0f};
+    legacyDocument["editor"]["camera"]["front"] = {0.0f, 0.0f, -1.0f};
+    legacyDocument["editor"]["camera"]["up"] = {0.0f, 1.0f, 0.0f};
+    legacyDocument["editor"]["renderColliders"] = nlohmann::json::array();
+    legacyDocument["objects"] = nlohmann::json::array();
+
+    nlohmann::json rootRecord = nlohmann::json::object();
+    rootRecord["id"] = "root";
+    rootRecord["parentId"] = nullptr;
+    rootRecord["siblingIndex"] = std::size_t{0};
+    rootRecord["type"] = "GameObject";
+    rootRecord["properties"] = nlohmann::json::object();
+    rootRecord["properties"]["name"] = "Legacy Root";
+    rootRecord["properties"]["position"] = {1000.0f, 200.0f, 300.0f};
+    rootRecord["properties"]["rotation"] = {10.0f, 20.0f, 30.0f};
+    rootRecord["properties"]["scale"] = {2.0f, 3.0f, 4.0f};
+    rootRecord["properties"]["physics"] = {
+        {"enabled", false},
+        {"motionType", "static"},
+        {"colliderType", "sphere"},
+        {"sphereRadius", 0.5f}};
+    legacyDocument["objects"].push_back(rootRecord);
+
+    nlohmann::json characterRecord = nlohmann::json::object();
+    characterRecord["id"] = "character";
+    characterRecord["parentId"] = "root";
+    characterRecord["siblingIndex"] = std::size_t{0};
+    characterRecord["type"] = "Character";
+    characterRecord["properties"] = nlohmann::json::object();
+    characterRecord["properties"]["name"] = "Legacy Character";
+    characterRecord["properties"]["position"] = {50.0f, 0.0f, -25.0f};
+    characterRecord["properties"]["rotation"] = {-5.0f, 15.0f, 25.0f};
+    characterRecord["properties"]["scale"] = {1.0f, 1.0f, 1.0f};
+    characterRecord["properties"]["capsuleHeight"] = 180.0f;
+    characterRecord["properties"]["capsuleRadius"] = 35.0f;
+    characterRecord["properties"]["physics"] = {
+        {"enabled", false},
+        {"motionType", "static"},
+        {"colliderType", "sphere"},
+        {"sphereRadius", 0.5f}};
+    legacyDocument["objects"].push_back(characterRecord);
+
+    nlohmann::json cameraOwnerRecord = nlohmann::json::object();
+    cameraOwnerRecord["id"] = "camera-owner";
+    cameraOwnerRecord["parentId"] = nullptr;
+    cameraOwnerRecord["siblingIndex"] = std::size_t{1};
+    cameraOwnerRecord["type"] = "AttachedCameraObject";
+    cameraOwnerRecord["properties"] = nlohmann::json::object();
+    cameraOwnerRecord["properties"]["name"] = "Legacy Camera Owner";
+    cameraOwnerRecord["properties"]["position"] = {0.0f, 0.0f, 0.0f};
+    cameraOwnerRecord["properties"]["rotation"] = {0.0f, 0.0f, 0.0f};
+    cameraOwnerRecord["properties"]["scale"] = {1.0f, 1.0f, 1.0f};
+    cameraOwnerRecord["attachedCamera"] = nlohmann::json::object();
+    cameraOwnerRecord["attachedCamera"]["position"] = {0.0f, 150.0f, 0.0f};
+    cameraOwnerRecord["attachedCamera"]["front"] = {0.0f, 0.0f, -1.0f};
+    cameraOwnerRecord["attachedCamera"]["up"] = {0.0f, 1.0f, 0.0f};
+    cameraOwnerRecord["attachedCamera"]["fov"] = 75.0f;
+    legacyDocument["objects"].push_back(cameraOwnerRecord);
+
+    nlohmann::json sunRecord = nlohmann::json::object();
+    sunRecord["id"] = "sun";
+    sunRecord["parentId"] = nullptr;
+    sunRecord["siblingIndex"] = std::size_t{2};
+    sunRecord["type"] = "DirectionalLight";
+    sunRecord["properties"] = nlohmann::json::object();
+    sunRecord["properties"]["name"] = "Legacy Sun";
+    sunRecord["properties"]["position"] = {0.0f, 0.0f, 0.0f};
+    sunRecord["properties"]["rotation"] = {0.0f, 0.0f, 0.0f};
+    sunRecord["properties"]["scale"] = {1.0f, 1.0f, 1.0f};
+    sunRecord["properties"]["color"] = {0.2f, 0.4f, 0.6f};
+    sunRecord["properties"]["intensity"] = 12.0f;
+    sunRecord["properties"]["shadowFocus"] = {100.0f, 200.0f, 300.0f};
+    sunRecord["properties"]["shadowHalfExtent"] = 500.0f;
+    sunRecord["properties"]["shadowLightDistance"] = 500.0f;
+    sunRecord["properties"]["shadowNearPlane"] = 1.0f;
+    sunRecord["properties"]["shadowFarPlane"] = 1000.0f;
+    legacyDocument["objects"].push_back(sunRecord);
+    nlohmann::json document = legacyDocument;
+
+    EmptyScene candidate;
+    SceneLoadData load;
+    Result result = SceneSerializer::applyDocument(
+        document, candidate, registry, load);
+    const auto* root = result
+        ? candidate.findGameObject("root")
+        : nullptr;
+    const auto* character = result
+        ? dynamic_cast<const Character*>(candidate.findGameObject("character"))
+        : nullptr;
+    const auto* cameraOwner = result
+        ? dynamic_cast<const AttachedCameraObject*>(
+              candidate.findGameObject("camera-owner"))
+        : nullptr;
+    const auto* sun = result
+        ? dynamic_cast<const DirectionalLight*>(candidate.findGameObject("sun"))
+        : nullptr;
+    passed &= expect(
+        result && root && character && cameraOwner && sun &&
+            root->position == glm::vec3(10.0f, 2.0f, 3.0f) &&
+            character->position == glm::vec3(0.5f, 0.0f, -0.25f) &&
+            character->parent() == root &&
+            character->capsuleHeight == 1.8f &&
+            character->capsuleRadius == 0.35f &&
+            root->scale == glm::vec3(2.0f, 3.0f, 4.0f) &&
+            root->rotation == glm::vec3(10.0f, 20.0f, 30.0f),
+        "v2 world positions or Character dimensions did not migrate to meters");
+    if (root && character) {
+        const glm::mat4 expectedRoot = transform_math::makeModelMatrix(
+            {10.0f, 2.0f, 3.0f}, {10.0f, 20.0f, 30.0f},
+            {2.0f, 3.0f, 4.0f});
+        const glm::mat4 expectedCharacter = expectedRoot *
+            transform_math::makeModelMatrix(
+                {0.5f, 0.0f, -0.25f}, {-5.0f, 15.0f, 25.0f},
+                {1.0f, 1.0f, 1.0f});
+        passed &= expect(sameMatrix(root->worldTransformMatrix(), expectedRoot) &&
+                             sameMatrix(character->worldTransformMatrix(),
+                                        expectedCharacter),
+                         "v2 child local position did not preserve hierarchy layout");
+    }
+    passed &= expect(
+        cameraOwner && cameraOwner->camera &&
+            cameraOwner->camera->position == glm::vec3(0.0f, 1.5f, 0.0f) &&
+            cameraOwner->camera->front == glm::vec3(0.0f, 0.0f, -1.0f) &&
+            cameraOwner->camera->up == glm::vec3(0.0f, 1.0f, 0.0f) &&
+            cameraOwner->camera->fov() == 75.0f && load.editorCamera &&
+            load.editorCamera->position == glm::vec3(3.0f, 4.0f, 5.0f) &&
+            load.editorCamera->front == glm::vec3(0.0f, 0.0f, -1.0f) &&
+            load.editorCamera->up == glm::vec3(0.0f, 1.0f, 0.0f),
+        "v2 camera positions did not migrate without changing camera semantics");
+    passed &= expect(
+        sun && sun->color == glm::vec3(0.2f, 0.4f, 0.6f) &&
+            sun->intensity == 12.0f &&
+            sun->shadow.focus == glm::vec3(1.0f, 2.0f, 3.0f) &&
+            sun->shadow.halfExtent == 5.0f &&
+            sun->shadow.lightDistance == 5.0f &&
+            sun->shadow.nearPlane == 0.01f &&
+            sun->shadow.farPlane == 10.0f && root &&
+            root->physics.sphereRadius == 0.5f && character &&
+            character->physics.sphereRadius == 0.5f,
+        "v2 mixed-unit exceptions or non-distance fields were changed incorrectly");
+    passed &= expect(
+        result && cameraOwner && cameraOwner->camera &&
+            candidate.activeCamera() == cameraOwner->camera.get() &&
+            load.authoredBaseline.at("formatVersion") == 3,
+        "migrated scene did not establish the current authored baseline");
+
+    Camera migratedEditor;
+    if (load.editorCamera) {
+        migratedEditor.position = load.editorCamera->position;
+        migratedEditor.front = load.editorCamera->front;
+        migratedEditor.up = load.editorCamera->up;
+    }
+    nlohmann::json saved;
+    const Result saveResult = result
+        ? SceneSerializer::serializeFull(candidate, registry, migratedEditor, saved)
+        : Result::failure("migrated scene could not be saved");
+    passed &= expect(saveResult && saved.at("formatVersion") == 3,
+                     "saving a migrated scene did not write format v3");
+
+    EmptyScene reloaded;
+    SceneLoadData reloadData;
+    const Result reloadResult = saveResult
+        ? SceneSerializer::applyDocument(saved, reloaded, registry, reloadData)
+        : Result::failure("migrated scene was not serializable");
+    const GameObject* reloadedRoot = reloaded.findGameObject("root");
+    const Character* reloadedCharacter = dynamic_cast<const Character*>(
+        reloaded.findGameObject("character"));
+    passed &= expect(
+        reloadResult && reloadedRoot && reloadedCharacter &&
+            reloadedRoot->position == glm::vec3(10.0f, 2.0f, 3.0f) &&
+            reloadedCharacter->position == glm::vec3(0.5f, 0.0f, -0.25f) &&
+            reloadedCharacter->capsuleHeight == 1.8f &&
+            reloadData.editorCamera &&
+            reloadData.editorCamera->position == glm::vec3(3.0f, 4.0f, 5.0f),
+        "loading a saved v3 scene applied a second legacy conversion");
     return passed;
 }
 
@@ -936,7 +1152,7 @@ bool managerDirtyTests() {
         findObjectRecord(savedDocument, "custom");
     const nlohmann::json* savedCamera =
         findObjectRecord(savedDocument, "camera");
-    passed &= expect(savedDocument.at("formatVersion") == 2 && savedCustom &&
+    passed &= expect(savedDocument.at("formatVersion") == 3 && savedCustom &&
                          savedCamera &&
                          savedCustom->at("properties").contains("physics") &&
                          !savedCustom->at("properties").contains("transferOnlyValue") &&
@@ -1020,8 +1236,8 @@ bool managerV1MigrationTests() {
     nlohmann::json v2Document = result
         ? readSceneDocument(path)
         : nlohmann::json{};
-    passed &= expect(result && v2Document.at("formatVersion") == 2,
-                     "migration fixture was not written as v2");
+    passed &= expect(result && v2Document.at("formatVersion") == 3,
+                     "migration fixture was not written as v3");
 
     nlohmann::json v1Document = v2Document;
     if (v1Document.is_object()) {
@@ -1035,9 +1251,9 @@ bool managerV1MigrationTests() {
     }
 
     const Scene* stableScene = manager.editingScene();
-    result = SceneSerializer::formatVersion == 2
+    result = SceneSerializer::formatVersion == 3
         ? manager.prepareEditingSceneLoad(path)
-        : Result::failure("current scene format is not v2");
+        : Result::failure("current scene format is not v3");
     const Scene* prepared = manager.preparedEditingScene();
     const GameObject* preparedCustom = prepared
         ? prepared->findGameObject("custom")
@@ -1065,20 +1281,20 @@ bool managerV1MigrationTests() {
     passed &= expect(
         result && manager.editingScene() != stableScene && loadedCustom &&
             loadedCustom->parent() == nullptr && !manager.hasUnsavedChanges(),
-        "v1 load did not commit cleanly with a v2 authored baseline");
+        "v1 load did not commit cleanly with a v3 authored baseline");
 
     result = manager.saveEditingScene(editor);
     const nlohmann::json upgraded = result
         ? readSceneDocument(path)
         : nlohmann::json{};
-    bool everyObjectHasParentId = result && upgraded.at("formatVersion") == 2;
+    bool everyObjectHasParentId = result && upgraded.at("formatVersion") == 3;
     if (result) {
         for (const auto& object : upgraded.at("objects")) {
             everyObjectHasParentId &= object.contains("parentId");
         }
     }
     passed &= expect(result && everyObjectHasParentId,
-                     "saving a v1 scene did not upgrade every object to v2");
+                     "saving a v1 scene did not upgrade every object to v3");
 
     nlohmann::json malformed = upgraded;
     if (malformed.is_object()) {
@@ -1208,6 +1424,7 @@ int main() {
     passed &= hierarchyPersistenceTests();
     passed &= runtimeHierarchyTests();
     passed &= characterPersistenceTests();
+    passed &= sceneUnitMigrationTests();
     passed &= managerDirtyTests();
     passed &= managerV1MigrationTests();
     passed &= managerSavePathTests();

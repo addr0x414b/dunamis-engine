@@ -11,9 +11,6 @@
 namespace {
 
 const glm::vec3 playerWorldUp{0.0f, 1.0f, 0.0f};
-constexpr float playerEyeHeightDunamisUnits = 150.0f;
-constexpr float walkSpeedDunamisUnitsPerSecond = 400.0f;
-constexpr float sprintSpeedDunamisUnitsPerSecond = 700.0f;
 constexpr float minimumMovementVectorLength = 1.0e-4f;
 
 bool isFiniteVector(const glm::vec3& value) noexcept {
@@ -47,7 +44,7 @@ void Player::synchronizeCameraPosition() noexcept {
     }
 
     const glm::vec3 cameraPosition =
-        worldPosition + playerEyeHeightDunamisUnits * playerWorldUp;
+        worldPosition + Player::eyeHeightMeters * playerWorldUp;
     if (!isFiniteVector(cameraPosition)) {
         return;
     }
@@ -104,9 +101,9 @@ void Player::update(std::shared_ptr<InputManager> input) {
         return;
     }
 
-    float movementSpeedUnitsPerSecond = walkSpeedDunamisUnitsPerSecond;
+    float movementSpeedMetersPerSecond = Player::walkSpeedMetersPerSecond;
     if (input->isKeyDown(SDLK_LSHIFT)) {
-        movementSpeedUnitsPerSecond = sprintSpeedDunamisUnitsPerSecond;
+        movementSpeedMetersPerSecond = Player::sprintSpeedMetersPerSecond;
     }
 
     glm::vec3 forward{camera->front.x, 0.0f, camera->front.z};
@@ -134,7 +131,7 @@ void Player::update(std::shared_ptr<InputManager> input) {
             if (std::isfinite(movementLength) &&
                 movementLength > minimumMovementVectorLength) {
                 desiredVelocity = movement *
-                    (movementSpeedUnitsPerSecond / movementLength);
+                    (movementSpeedMetersPerSecond / movementLength);
             } else {
                 desiredVelocity = glm::vec3(0.0f);
             }

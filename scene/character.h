@@ -4,11 +4,12 @@
 #include "game_object.h"
 
 // A generic game object whose movement is resolved by character physics.
-// Values are authored in Dunamis units and Dunamis units per second.
+// Physical dimensions and desired linear velocity use meters and meters per
+// second, respectively.
 class Character : public GameObject {
 public:
-    float capsuleHeight = 180.0f;
-    float capsuleRadius = 35.0f;
+    float capsuleHeight = 1.8f;
+    float capsuleRadius = 0.35f;
     glm::vec3 desiredVelocity = glm::vec3(0.0f);
     bool grounded = false;
 };

@@ -104,18 +104,18 @@ void Level1::buildDefaults() {
     //test10->persistentId = "90du-918dey798qwdgd";
     test10->scale = glm::vec3(100.0f, 100.0f, 100.0f);
     test10->rotation = glm::vec3(-90.0f, 0.0f, 0.0f);
-    test10->position = glm::vec3(322.0f, 0.0f, -122.0f);
+    test10->position = glm::vec3(3.22f, 0.0f, -1.22f);
     test10->modelPath = "game/assets/models/glTF-Sample-Assets/Models/BrainStem/glTF/BrainStem.gltf";
     requireSuccess(test10->loadModel(), "Failed to load Sponza");
     requireSuccess(addGameObject(std::move(test10)), "Failed to add Sponza");
 
     // The loaded CPU Sponza mesh has a horizontal surface at (x=0, z=0,
-    // y≈-2.5). At 100 Dunamis units per meter, this gives the test body a
+    // y≈-2.5). In meter-valued world space, this gives the test body a
     // visible three-meter drop before it reaches the floor.
     auto avocado = std::make_unique<GameObject>();
     //avocado->persistentId = "physics_test_avocado";
     avocado->name = "Physics Test Avocado";
-    avocado->position = glm::vec3(0.0f, 300.0f, -175.0f);
+    avocado->position = glm::vec3(0.0f, 3.0f, -1.75f);
     avocado->scale = glm::vec3(500.0f);
     avocado->physics.enabled = true;
     avocado->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
@@ -143,7 +143,7 @@ void Level1::buildDefaults() {
     //test4->persistentId = "directional_light";
     test4->name = "Direc Light";
     test4->scale = glm::vec3(200.0f, 200.0f, 200.0f);
-    test4->position = glm::vec3(50.0f, 20.0f, 100.0f);
+    test4->position = glm::vec3(0.5f, 0.2f, 1.0f);
     //test4->modelPath = "game/assets/models/Avocado.glb";
     //test4->intensity = 100.0f;
     //requireSuccess(test4->loadModel(), "Failed to load Directional Light Avocado");
@@ -153,7 +153,7 @@ void Level1::buildDefaults() {
     //test5->persistentId = "point_light";
     test5->name = "Point Light";
     test5->scale = glm::vec3(500.0f, 500.0f, 500.0f);
-    test5->position = glm::vec3(250.0f, 20.0f, 100.0f);
+    test5->position = glm::vec3(2.5f, 0.2f, 1.0f);
     //test5->modelPath = "game/assets/models/Avocado.glb";
     test5->intensity = 100.0f;
     //requireSuccess(test5->loadModel(), "Failed to load Point Light Avocado");

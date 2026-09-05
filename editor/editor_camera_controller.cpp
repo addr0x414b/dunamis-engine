@@ -9,7 +9,7 @@
 #include "../core/time.h"
 
 EditorCameraController::EditorCameraController() {
-    camera_.position = glm::vec3(0.0f, 0.0f, 300.0f);
+    camera_.position = glm::vec3(0.0f, 0.0f, startingDistanceMeters);
     camera_.front = glm::vec3(0.0f, 0.0f, -1.0f);
     camera_.up = glm::vec3(0.0f, 1.0f, 0.0f);
 }
@@ -19,15 +19,15 @@ void EditorCameraController::update(const InputManager& input) {
         return;
     }
 
-    float movementSpeedUnitsPerSecond = 500.0f;
+    float movementSpeedMetersPerSecond = normalSpeedMetersPerSecond;
     if (input.isKeyDown(SDLK_LSHIFT)) {
-        movementSpeedUnitsPerSecond = 1500.0f;
+        movementSpeedMetersPerSecond = fastSpeedMetersPerSecond;
     } else if (input.isKeyDown(SDLK_LCTRL)) {
-        movementSpeedUnitsPerSecond = 100.0f;
+        movementSpeedMetersPerSecond = slowSpeedMetersPerSecond;
     }
 
     const float movementDistance =
-        movementSpeedUnitsPerSecond * Time::deltaTime();
+        movementSpeedMetersPerSecond * Time::deltaTime();
     const glm::vec3 right =
         glm::normalize(glm::cross(camera_.front, camera_.up));
     if (input.isKeyDown(SDLK_W)) {

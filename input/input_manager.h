@@ -44,6 +44,8 @@ public:
     SDL_Window* window = nullptr;
 
 private:
+    friend class InputManagerTestAccess;
+
     std::unordered_map<SDL_Keycode, bool> currentKeys;
     std::unordered_map<SDL_Keycode, bool> pressedKeys;
     std::unordered_map<SDL_Keycode, bool> releasedKeys;

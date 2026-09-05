@@ -12,6 +12,10 @@ class PlayerTestAccess;
 
 class Player : public Character {
 public:
+    static constexpr float eyeHeightMeters = 1.5f;
+    static constexpr float walkSpeedMetersPerSecond = 4.0f;
+    static constexpr float sprintSpeedMetersPerSecond = 7.0f;
+
     void init();
     void start(std::shared_ptr<InputManager> input);
     void update(std::shared_ptr<InputManager> input);
