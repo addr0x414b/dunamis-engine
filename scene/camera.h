@@ -11,6 +11,11 @@ struct CameraWorldPose {
 
 class Camera : public GameObject {
 public:
+    // Clipping distances are world meters: 0.1 m (10 cm) near and
+    // 10,000 m (10 km) far by default.
+    static constexpr float defaultNearClipMeters = 0.1f;
+    static constexpr float defaultFarClipMeters = 10000.0f;
+
     Camera();
 
     [[nodiscard]] bool calculateWorldPose(
@@ -19,6 +24,13 @@ public:
     // Vertical field of view in degrees.
     [[nodiscard]] float fov() const noexcept;
     [[nodiscard]] bool setFov(float fovDegrees) noexcept;
+
+    [[nodiscard]] float nearClip() const noexcept;
+    [[nodiscard]] float farClip() const noexcept;
+    [[nodiscard]] bool setNearClip(float value) noexcept;
+    [[nodiscard]] bool setFarClip(float value) noexcept;
+    [[nodiscard]] bool setClipPlanes(float nearValue,
+                                     float farValue) noexcept;
 
     [[nodiscard]] bool deriveYawPitchDegrees(
         double& yawDegrees, double& pitchDegrees) const noexcept;
@@ -33,6 +45,8 @@ public:
 
 private:
     float fovDegrees_ = 60.0f;
+    float nearClipMeters_ = defaultNearClipMeters;
+    float farClipMeters_ = defaultFarClipMeters;
 };
 
 #endif

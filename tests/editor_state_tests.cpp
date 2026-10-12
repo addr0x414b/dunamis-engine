@@ -1,5 +1,6 @@
 #include "editor/editor_session.h"
 #include "editor/editor_camera_controller.h"
+#include "rendering/camera_projection.h"
 #include "scene/game_object.h"
 #include "scene/scene.h"
 
@@ -59,6 +60,15 @@ bool hasExactly(const EditorSession& session,
                        });
 }
 
+bool sameMatrix(const glm::mat4& first, const glm::mat4& second) {
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            if (first[column][row] != second[column][row]) return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 int main() {
@@ -67,11 +77,42 @@ int main() {
     EditorCameraController editorCamera;
     passed &= expect(
         editorCamera.camera().position == glm::vec3(0.0f, 0.0f, 3.0f) &&
+            editorCamera.camera().nearClip() == Camera::defaultNearClipMeters &&
+            editorCamera.camera().farClip() == Camera::defaultFarClipMeters &&
             EditorCameraController::startingDistanceMeters == 3.0f &&
             EditorCameraController::normalSpeedMetersPerSecond == 5.0f &&
             EditorCameraController::fastSpeedMetersPerSecond == 15.0f &&
             EditorCameraController::slowSpeedMetersPerSecond == 1.0f,
         "Editor camera defaults and movement speeds are not meter-based");
+
+    EditorCameraState savedEditorCamera;
+    savedEditorCamera.position = {4.0f, 5.0f, 6.0f};
+    savedEditorCamera.nearClip = 20000.0f;
+    savedEditorCamera.farClip = 30000.0f;
+    const Result editorCameraRestore = editorCamera.restore(savedEditorCamera);
+    Camera runtimeCamera;
+    const bool runtimeCameraClipSet =
+        runtimeCamera.setClipPlanes(savedEditorCamera.nearClip,
+                                    savedEditorCamera.farClip);
+    const glm::mat4 editorProjection = camera_projection::makeVulkanPerspective(
+        editorCamera.camera().fov(), 4.0f / 3.0f,
+        editorCamera.camera().nearClip(), editorCamera.camera().farClip());
+    const glm::mat4 runtimeProjection = camera_projection::makeVulkanPerspective(
+        runtimeCamera.fov(), 4.0f / 3.0f,
+        runtimeCamera.nearClip(), runtimeCamera.farClip());
+    passed &= expect(editorCameraRestore && runtimeCameraClipSet &&
+                         editorCamera.camera().nearClip() == 20000.0f &&
+                         editorCamera.camera().farClip() == 30000.0f &&
+                         sameMatrix(editorProjection, runtimeProjection),
+                     "Editor camera did not restore or share runtime clip projection behavior");
+
+    EditorCameraState invalidEditorCamera = savedEditorCamera;
+    invalidEditorCamera.nearClip = 40000.0f;
+    invalidEditorCamera.farClip = 30000.0f;
+    passed &= expect(!editorCamera.restore(invalidEditorCamera) &&
+                         editorCamera.camera().nearClip() == 20000.0f &&
+                         editorCamera.camera().farClip() == 30000.0f,
+                     "Invalid editor clip restore partially changed camera state");
 
     passed &= expect(editorToolsEnabled(SceneRunState::Editing),
                      "Editing must enable editor tools");

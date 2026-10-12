@@ -16,6 +16,8 @@ struct EditorCameraState {
     glm::vec3 position{0.0f};
     glm::vec3 front{0.0f, 0.0f, -1.0f};
     glm::vec3 up{0.0f, 1.0f, 0.0f};
+    float nearClip = Camera::defaultNearClipMeters;
+    float farClip = Camera::defaultFarClipMeters;
 };
 
 struct SceneLoadData {

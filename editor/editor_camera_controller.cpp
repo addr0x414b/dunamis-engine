@@ -82,6 +82,12 @@ Result EditorCameraController::restore(const EditorCameraState& state) noexcept 
         !candidate.setYawPitchDegrees(yaw, pitch, state.up)) {
         return Result::failure("Editor camera orientation is invalid");
     }
+    if (!candidate.setClipPlanes(state.nearClip, state.farClip)) {
+        return Result::failure("Editor camera clip planes are invalid");
+    }
+    if (!camera_.setClipPlanes(candidate.nearClip(), candidate.farClip())) {
+        return Result::failure("Editor camera clip planes are invalid");
+    }
     camera_.position = candidate.position;
     camera_.front = candidate.front;
     camera_.up = candidate.up;

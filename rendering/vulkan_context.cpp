@@ -1,5 +1,6 @@
 #include "vulkan_context.h"
 
+#include "camera_projection.h"
 #include "renderer_configuration.h"
 #include "../editor/editor_session.h"
 #include "../physics/physics_server.h"
@@ -5460,11 +5461,10 @@ Result VulkanContext::drawFrame(Scene* scene, const Camera& renderCamera,
         cameraWorldPose.position,
         cameraWorldPose.position + cameraWorldPose.front,
         cameraWorldPose.up);
-    glm::mat4 projection = glm::perspective(
-        glm::radians(renderCamera.fov()),
+    const glm::mat4 projection = camera_projection::makeVulkanPerspective(
+        renderCamera.fov(),
         swapchainExtent.width / static_cast<float>(swapchainExtent.height),
-        0.1f, 10000.0f);
-    projection[1][1] *= -1.0f;
+        renderCamera.nearClip(), renderCamera.farClip());
     prepareSelectedPhysicsDiagnostics(scene, runState);
     imguiLayer.drawEditor(scene, view, projection, runState);
     imguiLayer.finishFrame();

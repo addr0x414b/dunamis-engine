@@ -112,6 +112,9 @@ public:
         directional->persistentId = "sun";
         directional->rotation = {25.0f, -40.0f, 3.0f};
         directional->shadow.halfExtent = 321.0f;
+        directional->shadow.lightDistance = 123.0f;
+        directional->shadow.nearPlane = 0.25f;
+        directional->shadow.farPlane = 456.0f;
         require(addGameObject(std::move(directional)));
 
         auto camera = std::make_unique<Camera>();
@@ -193,6 +196,14 @@ const nlohmann::json* findObjectRecord(
     return nullptr;
 }
 
+nlohmann::json* findObjectRecord(
+    nlohmann::json& document, const std::string& persistentId) {
+    for (auto& object : document.at("objects")) {
+        if (object.at("id") == persistentId) return &object;
+    }
+    return nullptr;
+}
+
 GameObject* addPlainObject(Scene& scene, const std::string& persistentId) {
     auto object = std::make_unique<GameObject>();
     object->persistentId = persistentId;
@@ -206,6 +217,8 @@ TypeRegistry makeRegistry(bool& passed) {
                      "engine type registration failed");
     passed &= expect(static_cast<bool>(registerCustom(registry)),
                      "custom type registration failed");
+    passed &= expect(static_cast<bool>(registerAttachedCamera(registry)),
+                     "attached-camera type registration failed");
     return registry;
 }
 
@@ -270,9 +283,13 @@ bool registryTests() {
                          contains(cameraPersisted, "front") &&
                          contains(cameraPersisted, "physics") &&
                          contains(cameraPersisted, "fov") &&
+                         contains(cameraPersisted, "nearClip") &&
+                         contains(cameraPersisted, "farClip") &&
                          contains(cameraRuntimeTransfer, "position") &&
                          contains(cameraRuntimeTransfer, "physics") &&
-                         contains(cameraRuntimeTransfer, "fov") && fov &&
+                         contains(cameraRuntimeTransfer, "fov") &&
+                         contains(cameraRuntimeTransfer, "nearClip") &&
+                         contains(cameraRuntimeTransfer, "farClip") && fov &&
                          fov->lifecycle == PropertyLifecycle::Persisted &&
                          fov->read && fov->write && fov->copy && physics &&
                          physics->lifecycle == PropertyLifecycle::Persisted &&
@@ -287,6 +304,14 @@ bool registryTests() {
     passed &= expect(sourceFovConfigured && fovCopy &&
                          destinationCamera.fov() == 90.0f,
                      "camera FOV was not copied through its typed descriptor");
+    const bool sourceClipPairConfigured =
+        sourceCamera.setClipPlanes(20000.0f, 30000.0f);
+    const Result cameraCopy = registry.copyAuthoredProperties(
+        sourceCamera, destinationCamera);
+    passed &= expect(sourceClipPairConfigured && cameraCopy &&
+                         destinationCamera.nearClip() == 20000.0f &&
+                         destinationCamera.farClip() == 30000.0f,
+                     "authored Camera copy did not restore clip planes atomically");
     const float validFov = destinationCamera.fov();
     passed &= expect(!destinationCamera.setFov(0.0f) &&
                          destinationCamera.fov() == validFov,
@@ -346,9 +371,12 @@ bool serializerTests() {
     sourceCustom->physics.colliderType = GameObject::PhysicsColliderType::Sphere;
     sourceCustom->physics.sphereRadius = 4.25f;
     const bool configuredSourceFov = sourceCamera->setFov(90.0f);
+    const bool configuredSourceClipPair =
+        sourceCamera->setClipPlanes(20000.0f, 30000.0f);
     Camera editor;
     editor.position = {11.0f, 12.0f, 13.0f};
     editor.front = {-1.0f, 0.0f, 0.0f};
+    const bool configuredEditorClipPair = editor.setClipPlanes(0.02f, 0.05f);
 
     nlohmann::json document;
     Result result = SceneSerializer::serializeFull(source, registry, editor, document);
@@ -371,6 +399,10 @@ bool serializerTests() {
                          !customRecord["properties"].contains("transferOnlyValue") &&
                          customRecord["properties"].contains("physics") &&
                          cameraRecord["properties"].contains("fov") &&
+                         cameraRecord["properties"].contains("nearClip") &&
+                         cameraRecord["properties"].contains("farClip") &&
+                         document["editor"]["camera"].contains("nearClip") &&
+                         document["editor"]["camera"].contains("farClip") &&
                          cameraRecord["properties"].contains("physics"),
                      "generic custom/inherited property serialization failed");
     passed &= expect(document["activeCamera"]["ownerId"] == "camera" &&
@@ -403,8 +435,14 @@ bool serializerTests() {
     passed &= expect(point && point->intensity == 7.0f &&
                          sun && directionalLightCount == 1 &&
                          sun->shadow.halfExtent == 321.0f &&
+                         sun->shadow.lightDistance == 123.0f &&
+                         sun->shadow.nearPlane == 0.25f &&
+                         sun->shadow.farPlane == 456.0f &&
                          camera && candidate.activeCamera() == camera &&
-                         configuredSourceFov && camera->fov() == 90.0f &&
+                         configuredSourceFov && configuredSourceClipPair &&
+                         camera->fov() == 90.0f &&
+                         camera->nearClip() == 20000.0f &&
+                         camera->farClip() == 30000.0f &&
                          candidate.ambientIntensity() == 0.7f,
                      "built-in object/camera/scene state did not round trip");
     passed &= expect(
@@ -418,15 +456,111 @@ bool serializerTests() {
     passed &= expect(candidate.findGameObject("base")->authoredTexturePath() ==
                          "textures/override.png",
                      "logical texture override path did not round trip");
-    passed &= expect(load.editorCamera && load.editorCamera->position.x == 11.0f,
+    passed &= expect(load.editorCamera && load.editorCamera->position.x == 11.0f &&
+                         configuredEditorClipPair &&
+                         load.editorCamera->nearClip == 0.02f &&
+                         load.editorCamera->farClip == 0.05f,
                      "editor camera did not round trip");
+
+    Camera restoredEditor;
+    if (load.editorCamera) {
+        restoredEditor.position = load.editorCamera->position;
+        restoredEditor.front = load.editorCamera->front;
+        restoredEditor.up = load.editorCamera->up;
+        (void)restoredEditor.setClipPlanes(load.editorCamera->nearClip,
+                                           load.editorCamera->farClip);
+    }
+    nlohmann::json idempotentDocument;
+    const Result idempotentResult = SceneSerializer::serializeFull(
+        candidate, registry, restoredEditor, idempotentDocument);
+    passed &= expect(idempotentResult && idempotentDocument == document,
+                     "current v4 scene round trip was not idempotent");
+
+    nlohmann::json oldCameraFields = document;
+    auto* oldStandaloneRecord = findObjectRecord(oldCameraFields, "camera");
+    if (oldStandaloneRecord) {
+        oldStandaloneRecord->at("properties").erase("nearClip");
+        oldStandaloneRecord->at("properties").erase("farClip");
+    }
+    oldCameraFields["editor"]["camera"].erase("nearClip");
+    oldCameraFields["editor"]["camera"].erase("farClip");
+    EmptyScene oldFieldsCandidate;
+    SceneLoadData oldFieldsLoad;
+    const Result oldFieldsResult = SceneSerializer::applyDocument(
+        oldCameraFields, oldFieldsCandidate, registry, oldFieldsLoad);
+    const auto* defaultCamera = dynamic_cast<const Camera*>(
+        oldFieldsCandidate.findGameObject("camera"));
+    passed &= expect(oldFieldsResult && defaultCamera &&
+                         defaultCamera->nearClip() ==
+                             Camera::defaultNearClipMeters &&
+                         defaultCamera->farClip() ==
+                             Camera::defaultFarClipMeters &&
+                         oldFieldsLoad.editorCamera &&
+                         oldFieldsLoad.editorCamera->nearClip ==
+                             Camera::defaultNearClipMeters &&
+                         oldFieldsLoad.editorCamera->farClip ==
+                             Camera::defaultFarClipMeters,
+                     "v4 records without optional clip fields lost Camera defaults");
+
+    nlohmann::json invalidClipPair = document;
+    auto* invalidCameraRecord = findObjectRecord(invalidClipPair, "camera");
+    if (invalidCameraRecord) {
+        invalidCameraRecord->at("properties")["nearClip"] = 20000.0f;
+        invalidCameraRecord->at("properties")["farClip"] = 10000.0f;
+    }
+    EmptyScene invalidClipCandidate;
+    SceneLoadData invalidClipLoad;
+    const Result invalidClipResult = SceneSerializer::applyDocument(
+        invalidClipPair, invalidClipCandidate, registry, invalidClipLoad);
+    passed &= expect(!invalidClipResult,
+                     "invalid serialized Camera clip pair was accepted");
+
+    nlohmann::json smallClipPair = document;
+    auto* smallCameraRecord = findObjectRecord(smallClipPair, "camera");
+    if (smallCameraRecord) {
+        smallCameraRecord->at("properties")["nearClip"] = 0.02f;
+        smallCameraRecord->at("properties")["farClip"] = 0.05f;
+    }
+    EmptyScene smallClipCandidate;
+    SceneLoadData smallClipLoad;
+    const Result smallClipResult = SceneSerializer::applyDocument(
+        smallClipPair, smallClipCandidate, registry, smallClipLoad);
+    const auto* smallClipCamera = dynamic_cast<const Camera*>(
+        smallClipCandidate.findGameObject("camera"));
+    passed &= expect(smallClipResult && smallClipCamera &&
+                         smallClipCamera->nearClip() == 0.02f &&
+                         smallClipCamera->farClip() == 0.05f,
+                     "small valid standalone clip pair restored in property order");
+
+    nlohmann::json invalidEditorClipPair = document;
+    invalidEditorClipPair["editor"]["camera"]["nearClip"] = 40000.0f;
+    invalidEditorClipPair["editor"]["camera"]["farClip"] = 30000.0f;
+    EmptyScene invalidEditorClipCandidate;
+    SceneLoadData invalidEditorClipLoad;
+    const Result invalidEditorClipResult = SceneSerializer::applyDocument(
+        invalidEditorClipPair, invalidEditorClipCandidate,
+        registry, invalidEditorClipLoad);
+    passed &= expect(invalidEditorClipResult &&
+                         invalidEditorClipLoad.editorCamera &&
+                         invalidEditorClipLoad.editorCamera->nearClip ==
+                             Camera::defaultNearClipMeters &&
+                         invalidEditorClipLoad.editorCamera->farClip ==
+                             Camera::defaultFarClipMeters &&
+                         !invalidEditorClipLoad.warnings.empty(),
+                     "invalid optional editor clip planes did not warn and fall back");
 
     nlohmann::json v1 = document;
     v1["formatVersion"] = 1;
     for (auto& object : v1["objects"]) {
         object.erase("parentId");
         if (object.at("id") == "custom") object["parentId"] = "base";
+        if (object.at("id") == "camera") {
+            object["properties"].erase("nearClip");
+            object["properties"].erase("farClip");
+        }
     }
+    v1["editor"]["camera"].erase("nearClip");
+    v1["editor"]["camera"].erase("farClip");
     EmptyScene v1Candidate;
     SceneLoadData v1Load;
     result = SceneSerializer::applyDocument(v1, v1Candidate, registry, v1Load);
@@ -434,7 +568,16 @@ bool serializerTests() {
     const Camera* v1Camera =
         dynamic_cast<const Camera*>(v1Candidate.findGameObject("camera"));
     passed &= expect(result && v1Custom && v1Custom->parent() == nullptr &&
-                         v1Camera && v1Candidate.activeCamera() == v1Camera,
+                         v1Camera && v1Candidate.activeCamera() == v1Camera &&
+                         v1Camera->nearClip() ==
+                             Camera::defaultNearClipMeters &&
+                         v1Camera->farClip() ==
+                             Camera::defaultFarClipMeters &&
+                         v1Load.editorCamera &&
+                         v1Load.editorCamera->nearClip ==
+                             Camera::defaultNearClipMeters &&
+                         v1Load.editorCamera->farClip ==
+                             Camera::defaultFarClipMeters,
                      "v1 scene did not load as roots or restore active camera");
 
     nlohmann::json unknownProperty = document;
@@ -547,6 +690,108 @@ bool serializerTests() {
                          restoredGenerated->persistentId == generatedId &&
                          restoredGenerated->name == "Flower Pot",
                      "Generated identity or renamed name did not survive load");
+    return passed;
+}
+
+bool attachedCameraPersistenceTests() {
+    bool passed = true;
+    TypeRegistry registry = makeRegistry(passed);
+    EmptyScene source;
+    auto owner = std::make_unique<AttachedCameraObject>();
+    owner->persistentId = "attached";
+    owner->camera->position = {1.0f, 2.0f, 3.0f};
+    owner->camera->front = {0.0f, 0.0f, -1.0f};
+    owner->camera->up = {0.0f, 1.0f, 0.0f};
+    const bool configured = owner->camera->setFov(75.0f) &&
+                            owner->camera->setClipPlanes(20000.0f, 30000.0f);
+    AttachedCameraObject* sourceOwner = owner.get();
+    const Result added = source.addGameObject(std::move(owner));
+    Camera editor;
+    nlohmann::json document;
+    const Result serialized = added
+        ? SceneSerializer::serializeFull(source, registry, editor, document)
+        : Result::failure("attached camera owner could not be added");
+    const nlohmann::json* record = serialized
+        ? findObjectRecord(document, "attached")
+        : nullptr;
+    passed &= expect(configured && serialized && record &&
+                         document.at("formatVersion") == SceneSerializer::formatVersion &&
+                         record->at("attachedCamera").at("nearClip") == 20000.0f &&
+                         record->at("attachedCamera").at("farClip") == 30000.0f,
+                     "attached Camera clip planes were not serialized in v4");
+
+    EmptyScene restored;
+    SceneLoadData load;
+    const Result loaded = serialized
+        ? SceneSerializer::applyDocument(document, restored, registry, load)
+        : Result::failure("attached Camera serialization failed");
+    const auto* restoredOwner = dynamic_cast<const AttachedCameraObject*>(
+        restored.findGameObject("attached"));
+    passed &= expect(loaded && restoredOwner &&
+                         restoredOwner->camera->position == glm::vec3(1.0f, 2.0f, 3.0f) &&
+                         restoredOwner->camera->fov() == 75.0f &&
+                         restoredOwner->camera->nearClip() == 20000.0f &&
+                         restoredOwner->camera->farClip() == 30000.0f,
+                     "attached Camera clip planes did not survive load");
+
+    Camera copied;
+    const Result authoredCopy = sourceOwner
+        ? SceneSerializer::copyAuthoredAttachedCameraState(
+              *sourceOwner->camera, copied, registry)
+        : Result::failure("attached Camera source is unavailable");
+    passed &= expect(authoredCopy && copied.position == glm::vec3(1.0f, 2.0f, 3.0f) &&
+                         copied.fov() == 75.0f && copied.nearClip() == 20000.0f &&
+                         copied.farClip() == 30000.0f,
+                     "attached Camera authored-state copy lost clip planes");
+
+    EmptyScene runtime;
+    const Result runtimeCopy = SceneSerializer::copyAuthoredState(
+        source, runtime, registry);
+    const auto* runtimeOwner = dynamic_cast<const AttachedCameraObject*>(
+        runtime.findGameObject("attached"));
+    passed &= expect(runtimeCopy && runtimeOwner &&
+                         runtimeOwner->camera->nearClip() == 20000.0f &&
+                         runtimeOwner->camera->farClip() == 30000.0f,
+                     "runtime Scene preparation lost attached Camera clip planes");
+
+    nlohmann::json oldDocument = document;
+    auto* oldRecord = findObjectRecord(oldDocument, "attached");
+    if (oldRecord) {
+        oldRecord->at("attachedCamera").erase("nearClip");
+        oldRecord->at("attachedCamera").erase("farClip");
+    }
+    EmptyScene oldCandidate;
+    SceneLoadData oldLoad;
+    const Result oldLoadResult = SceneSerializer::applyDocument(
+        oldDocument, oldCandidate, registry, oldLoad);
+    const auto* oldOwner = dynamic_cast<const AttachedCameraObject*>(
+        oldCandidate.findGameObject("attached"));
+    passed &= expect(oldLoadResult && oldOwner &&
+                         oldOwner->camera->nearClip() ==
+                             Camera::defaultNearClipMeters &&
+                         oldOwner->camera->farClip() ==
+                             Camera::defaultFarClipMeters,
+                     "legacy attached Camera record did not receive default clips");
+
+    nlohmann::json invalidDocument = document;
+    auto* invalidRecord = findObjectRecord(invalidDocument, "attached");
+    if (invalidRecord) {
+        invalidRecord->at("attachedCamera")["nearClip"] = 40000.0f;
+        invalidRecord->at("attachedCamera")["farClip"] = 30000.0f;
+    }
+    EmptyScene invalidCandidate;
+    SceneLoadData invalidLoad;
+    const Result invalidResult = SceneSerializer::applyDocument(
+        invalidDocument, invalidCandidate, registry, invalidLoad);
+    const auto* invalidOwner = dynamic_cast<const AttachedCameraObject*>(
+        invalidCandidate.findGameObject("attached"));
+    passed &= expect(!invalidResult && invalidOwner &&
+                         invalidOwner->camera->position == glm::vec3(0.0f) &&
+                         invalidOwner->camera->nearClip() ==
+                             Camera::defaultNearClipMeters &&
+                         invalidOwner->camera->farClip() ==
+                             Camera::defaultFarClipMeters,
+                     "invalid attached Camera record partially mutated camera state");
     return passed;
 }
 
@@ -900,8 +1145,6 @@ bool characterPersistenceTests() {
 bool sceneUnitMigrationTests() {
     bool passed = true;
     TypeRegistry registry = makeRegistry(passed);
-    passed &= expect(static_cast<bool>(registerAttachedCamera(registry)),
-                     "attached-camera migration type registration failed");
 
     const auto fixtureDirectory =
         std::filesystem::temp_directory_path() /
@@ -1097,10 +1340,16 @@ bool sceneUnitMigrationTests() {
             cameraOwner->camera->position == glm::vec3(0.0f, 1.5f, 0.0f) &&
             cameraOwner->camera->front == glm::vec3(0.0f, 0.0f, -1.0f) &&
             cameraOwner->camera->up == glm::vec3(0.0f, 1.0f, 0.0f) &&
-            cameraOwner->camera->fov() == 75.0f && load.editorCamera &&
+            cameraOwner->camera->fov() == 75.0f &&
+            cameraOwner->camera->nearClip() ==
+                Camera::defaultNearClipMeters &&
+            cameraOwner->camera->farClip() ==
+                Camera::defaultFarClipMeters && load.editorCamera &&
             load.editorCamera->position == glm::vec3(3.0f, 4.0f, 5.0f) &&
             load.editorCamera->front == glm::vec3(0.0f, 0.0f, -1.0f) &&
-            load.editorCamera->up == glm::vec3(0.0f, 1.0f, 0.0f),
+            load.editorCamera->up == glm::vec3(0.0f, 1.0f, 0.0f) &&
+            load.editorCamera->nearClip == Camera::defaultNearClipMeters &&
+            load.editorCamera->farClip == Camera::defaultFarClipMeters,
         "v2 camera positions did not migrate without changing camera semantics");
     passed &= expect(
         sun && sun->color == glm::vec3(0.2f, 0.4f, 0.6f) &&
@@ -1213,7 +1462,10 @@ bool managerDirtyTests() {
     editingCustom->runtimeOnly = 777.0f;
     editingCustom->transferOnlyValue = 123.0f;
     const bool configuredCameraFov = editingCamera->setFov(90.0f);
-    passed &= expect(configuredCameraFov && manager.hasUnsavedChanges(),
+    const bool configuredCameraClipPair =
+        editingCamera->setClipPlanes(20000.0f, 30000.0f);
+    passed &= expect(configuredCameraFov && configuredCameraClipPair &&
+                         manager.hasUnsavedChanges(),
                      "authored camera FOV did not become persisted dirty state");
     editingCustom->spinSpeed = 270.0f;
     result = manager.prepareRuntimeScene();
@@ -1230,7 +1482,10 @@ bool managerDirtyTests() {
                          runtimeCustom->runtimeOnly == 0.0f &&
                          runtimeCustom->transferOnlyValue == 123.0f &&
                          configuredCameraFov && runtimeCamera &&
-                         runtimeCamera->fov() == 90.0f,
+                         configuredCameraClipPair &&
+                         runtimeCamera->fov() == 90.0f &&
+                         runtimeCamera->nearClip() == 20000.0f &&
+                         runtimeCamera->farClip() == 30000.0f,
                      "runtime clone omitted authored custom state or copied transient state");
     manager.cancelPreparedRuntimeScene();
 
@@ -1258,7 +1513,9 @@ bool managerDirtyTests() {
                          savedCamera &&
                          savedCustom->at("properties").contains("physics") &&
                          !savedCustom->at("properties").contains("transferOnlyValue") &&
-                         savedCamera->at("properties").contains("fov"),
+                         savedCamera->at("properties").contains("fov") &&
+                         savedCamera->at("properties").at("nearClip") == 20000.0f &&
+                         savedCamera->at("properties").at("farClip") == 30000.0f,
                      "authored property state was not persisted");
     editor.position.x = 50.0f;
     passed &= expect(!manager.hasUnsavedChanges(),
@@ -1523,6 +1780,7 @@ bool managerSavePathTests() {
 int main() {
     bool passed = registryTests();
     passed &= serializerTests();
+    passed &= attachedCameraPersistenceTests();
     passed &= hierarchyPersistenceTests();
     passed &= runtimeHierarchyTests();
     passed &= characterPersistenceTests();

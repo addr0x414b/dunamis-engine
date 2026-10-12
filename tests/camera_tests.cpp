@@ -1,4 +1,5 @@
 #include "scene/camera.h"
+#include "rendering/camera_projection.h"
 
 #include <cmath>
 #include <iostream>
@@ -63,6 +64,95 @@ bool runFovTests() {
                          !wideCamera.setFov(
                              std::numeric_limits<float>::quiet_NaN()),
                      "Invalid Camera FOV was accepted");
+    return passed;
+}
+
+bool runClipPlaneTests() {
+    bool passed = true;
+    Camera camera;
+    passed &= expect(camera.nearClip() == Camera::defaultNearClipMeters &&
+                         camera.farClip() == Camera::defaultFarClipMeters,
+                     "Camera clipping defaults were not 0.1m and 10,000m");
+
+    passed &= expect(camera.setClipPlanes(20000.0f, 30000.0f) &&
+                         camera.nearClip() == 20000.0f &&
+                         camera.farClip() == 30000.0f,
+                     "Camera rejected a valid large clip-plane pair");
+    passed &= expect(camera.setNearClip(25000.0f) &&
+                         camera.setFarClip(40000.0f) &&
+                         camera.nearClip() == 25000.0f &&
+                         camera.farClip() == 40000.0f,
+                     "Independent Camera clip setters rejected a valid update");
+
+    const float originalNear = camera.nearClip();
+    const float originalFar = camera.farClip();
+    const auto unchanged = [&]() {
+        return camera.nearClip() == originalNear &&
+               camera.farClip() == originalFar;
+    };
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float infinity = std::numeric_limits<float>::infinity();
+    passed &= expect(!camera.setClipPlanes(0.0f, 1.0f) && unchanged(),
+                     "Zero near clip changed Camera state");
+    passed &= expect(!camera.setClipPlanes(-1.0f, 1.0f) && unchanged(),
+                     "Negative near clip changed Camera state");
+    passed &= expect(!camera.setClipPlanes(originalNear, originalNear) &&
+                         unchanged(),
+                     "Far equal to near changed Camera state");
+    passed &= expect(!camera.setClipPlanes(originalFar, originalNear) &&
+                         unchanged(),
+                     "Far below near changed Camera state");
+    passed &= expect(!camera.setClipPlanes(nan, originalFar) && unchanged(),
+                     "NaN near clip changed Camera state");
+    passed &= expect(!camera.setClipPlanes(originalNear, infinity) && unchanged(),
+                     "Infinite far clip changed Camera state");
+    passed &= expect(!camera.setNearClip(infinity) && unchanged() &&
+                         !camera.setFarClip(nan) && unchanged(),
+                     "Invalid independent clip setter changed Camera state");
+
+    passed &= expect(camera.setClipPlanes(0.02f, 0.05f) &&
+                         camera.nearClip() == 0.02f &&
+                         camera.farClip() == 0.05f,
+                     "Camera rejected a valid small clip-plane pair");
+    passed &= expect(camera.setNearClip(0.04f) &&
+                         !camera.setFarClip(0.03f) &&
+                         camera.nearClip() == 0.04f &&
+                         camera.farClip() == 0.05f,
+                     "Small clip-plane setters did not preserve the invariant");
+    passed &= expect(camera.fov() == 60.0f && camera.setFov(90.0f) &&
+                         camera.fov() == 90.0f,
+                     "Clip-plane changes regressed Camera FOV behavior");
+    return passed;
+}
+
+bool runProjectionTests() {
+    Camera camera;
+    const glm::mat4 defaultProjection = camera_projection::makeVulkanPerspective(
+        camera.fov(), 16.0f / 9.0f, camera.nearClip(), camera.farClip());
+    bool passed = expect(defaultProjection[1][1] < 0.0f,
+                         "Vulkan perspective projection lost Y inversion");
+
+    glm::vec4 nearPoint = defaultProjection *
+        glm::vec4(0.0f, 0.0f, -camera.nearClip(), 1.0f);
+    glm::vec4 farPoint = defaultProjection *
+        glm::vec4(0.0f, 0.0f, -camera.farClip(), 1.0f);
+    const float nearDepth = nearPoint.z / nearPoint.w;
+    const float farDepth = farPoint.z / farPoint.w;
+    passed &= expect(std::fabs(nearDepth) < 2.0e-4f &&
+                         std::fabs(farDepth - 1.0f) < 2.0e-4f,
+                     "Vulkan perspective depth did not map near/far to [0, 1]");
+
+    passed &= expect(camera.setClipPlanes(1.0f, 100.0f),
+                     "Could not configure custom projection clip planes");
+    const glm::mat4 customProjection = camera_projection::makeVulkanPerspective(
+        camera.fov(), 16.0f / 9.0f, camera.nearClip(), camera.farClip());
+    passed &= expect(!sameMatrix(defaultProjection, customProjection),
+                     "Camera clip-plane changes did not alter projection");
+    nearPoint = customProjection * glm::vec4(0.0f, 0.0f, -1.0f, 1.0f);
+    farPoint = customProjection * glm::vec4(0.0f, 0.0f, -100.0f, 1.0f);
+    passed &= expect(std::fabs(nearPoint.z / nearPoint.w) < 1.0e-5f &&
+                         std::fabs(farPoint.z / farPoint.w - 1.0f) < 1.0e-5f,
+                     "Custom Vulkan perspective depth range is invalid");
     return passed;
 }
 
@@ -272,7 +362,8 @@ bool runOrientationDeltaTests() {
 }  // namespace
 
 int main() {
-    return runFovTests() && runRootWorldPoseTests() && runDerivationTests() &&
+    return runFovTests() && runClipPlaneTests() && runProjectionTests() &&
+                   runRootWorldPoseTests() && runDerivationTests() &&
                    runYawPitchMutationTests() &&
                    runOrientationDeltaTests()
                ? 0

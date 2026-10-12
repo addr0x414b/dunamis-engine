@@ -95,8 +95,21 @@ Result TypeRegistry::copyAuthoredProperties(const GameObject& source,
             "Authored-property copy requires matching registered concrete types");
     }
 
+    const Camera* sourceCamera = dynamic_cast<const Camera*>(&source);
+    Camera* destinationCamera = dynamic_cast<Camera*>(&destination);
+    const bool copyCameraClipPair =
+        sourceCamera != nullptr && destinationCamera != nullptr;
+
     for (const PropertyDescriptor* property : persistedProperties(*sourceType)) {
-        if (!property || !property->copy) {
+        if (!property) {
+            return Result::failure(
+                "Persisted property '<null>' has no copy callback");
+        }
+        if (copyCameraClipPair &&
+            (property->name == "nearClip" || property->name == "farClip")) {
+            continue;
+        }
+        if (!property->copy) {
             return Result::failure(
                 "Persisted property '" +
                 (property ? property->name : std::string{"<null>"}) +
@@ -118,6 +131,13 @@ Result TypeRegistry::copyAuthoredProperties(const GameObject& source,
                 "Failed to copy authored property '" + property->name +
                 "': copy callback threw an unknown exception");
         }
+    }
+
+    if (copyCameraClipPair &&
+        !destinationCamera->setClipPlanes(sourceCamera->nearClip(),
+                                          sourceCamera->farClip())) {
+        return Result::failure(
+            "Failed to copy authored Camera clip planes: invalid near/far pair");
     }
 
     return Result::success();
@@ -195,6 +215,28 @@ Result registerEngineTypes(TypeRegistry& registry) {
                 ? Result::success()
                 : Result::failure(
                       "Camera FOV must be finite and between 0 and 180 degrees");
+        },
+        PropertyLifecycle::Persisted);
+    if (!result) return result;
+    result = registry.registerAccessor<Camera, float>(
+        "Camera", "nearClip",
+        [](const Camera& camera) { return camera.nearClip(); },
+        [](Camera& camera, const float value) {
+            return camera.setNearClip(value)
+                ? Result::success()
+                : Result::failure(
+                      "Camera near clip must be finite, positive, and less than far clip");
+        },
+        PropertyLifecycle::Persisted);
+    if (!result) return result;
+    result = registry.registerAccessor<Camera, float>(
+        "Camera", "farClip",
+        [](const Camera& camera) { return camera.farClip(); },
+        [](Camera& camera, const float value) {
+            return camera.setFarClip(value)
+                ? Result::success()
+                : Result::failure(
+                      "Camera far clip must be finite and greater than near clip");
         },
         PropertyLifecycle::Persisted);
     if (!result) return result;

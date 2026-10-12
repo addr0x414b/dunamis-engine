@@ -207,6 +207,13 @@ int main() {
                      "Missing directional light did not disable the shadow pass");
     passed &= runDirectionalLightDirectionTests();
     DirectionalLight light;
+    passed &= expect(light.shadow.halfExtent == 50.0f &&
+                         light.shadow.lightDistance == 100.0f &&
+                         light.shadow.nearPlane == 0.1f &&
+                         light.shadow.farPlane == 200.0f &&
+                         (2.0f * light.shadow.halfExtent /
+                              directional_shadow::mapResolution) < 0.05f,
+                     "Meter-scale directional-shadow defaults or texel density are unsuitable");
     directional_shadow::LightMatrices matrices;
     const Result result = directional_shadow::calculateLightMatrices(light, matrices);
     passed &= expect(static_cast<bool>(result), "Valid directional shadow settings failed");
@@ -228,7 +235,22 @@ int main() {
                              matrices.viewProjection, glm::vec3(1.0f, 0.0f, 1.0f),
                              insideCoordinates),
                          "Known inside shadow point was rejected");
+        const glm::vec3 lightRight{
+            matrices.view[0][0], matrices.view[1][0], matrices.view[2][0]};
+        glm::vec3 nearEdgeCoordinates;
         glm::vec3 outsideCoordinates;
+        passed &= expect(directional_shadow::projectWorldPoint(
+                             matrices.viewProjection,
+                             light.shadow.focus + lightRight *
+                                 (light.shadow.halfExtent - 0.1f),
+                             nearEdgeCoordinates),
+                         "Point near the configured shadow edge was rejected");
+        passed &= expect(!directional_shadow::projectWorldPoint(
+                             matrices.viewProjection,
+                             light.shadow.focus + lightRight *
+                                 (light.shadow.halfExtent + 1.0f),
+                             outsideCoordinates),
+                         "Point outside the configured shadow edge was accepted");
         passed &= expect(!directional_shadow::projectWorldPoint(
                              matrices.viewProjection, glm::vec3(1000.0f),
                              outsideCoordinates),
@@ -263,6 +285,24 @@ int main() {
     passed &= expectInvalid(
         [](DirectionalLight& invalid) { invalid.shadow.halfExtent = 0.0f; },
         "Zero half extent was accepted");
+    passed &= expectInvalid(
+        [](DirectionalLight& invalid) {
+            invalid.shadow.halfExtent = std::numeric_limits<float>::infinity();
+        },
+        "Infinite half extent was accepted");
+    passed &= expectInvalid(
+        [](DirectionalLight& invalid) { invalid.shadow.lightDistance = 0.0f; },
+        "Zero light distance was accepted");
+    passed &= expectInvalid(
+        [](DirectionalLight& invalid) {
+            invalid.shadow.nearPlane = std::numeric_limits<float>::quiet_NaN();
+        },
+        "NaN shadow near plane was accepted");
+    passed &= expectInvalid(
+        [](DirectionalLight& invalid) {
+            invalid.shadow.farPlane = std::numeric_limits<float>::infinity();
+        },
+        "Infinite shadow far plane was accepted");
     passed &= expectInvalid(
         [](DirectionalLight& invalid) {
             invalid.shadow.nearPlane = invalid.shadow.farPlane;

@@ -224,7 +224,11 @@ Result encodeCamera(const Camera& camera, nlohmann::json& output) {
     if (!result) return result;
     result = authored_property::encode(camera.front, output["front"]);
     if (!result) return result;
-    return authored_property::encode(camera.up, output["up"]);
+    result = authored_property::encode(camera.up, output["up"]);
+    if (!result) return result;
+    result = authored_property::encode(camera.nearClip(), output["nearClip"]);
+    if (!result) return result;
+    return authored_property::encode(camera.farClip(), output["farClip"]);
 }
 
 Result encodeAttachedCamera(const Camera& camera, nlohmann::json& output) {
@@ -233,7 +237,8 @@ Result encodeAttachedCamera(const Camera& camera, nlohmann::json& output) {
     return authored_property::encode(camera.fov(), output["fov"]);
 }
 
-Result decodeCamera(const nlohmann::json& input, EditorCameraState& state) {
+Result decodeCamera(const nlohmann::json& input, EditorCameraState& state,
+                    std::string* invalidClipWarning = nullptr) {
     if (!input.is_object()) return Result::failure("expected camera object");
     for (const char* field : {"position", "front", "up"}) {
         if (!input.contains(field)) {
@@ -257,6 +262,32 @@ Result decodeCamera(const nlohmann::json& input, EditorCameraState& state) {
                  glm::cross(validation.front, validation.up)) <= 1.0e-8f) {
         return Result::failure("camera orientation is invalid");
     }
+
+    float nearClip = Camera::defaultNearClipMeters;
+    float farClip = Camera::defaultFarClipMeters;
+    Result clipResult = Result::success();
+    if (input.contains("nearClip")) {
+        clipResult = authored_property::decode(input.at("nearClip"), nearClip);
+    }
+    if (clipResult && input.contains("farClip")) {
+        clipResult = authored_property::decode(input.at("farClip"), farClip);
+    }
+    if (clipResult && !validation.setClipPlanes(nearClip, farClip)) {
+        clipResult = Result::failure(
+            "near clip must be finite and positive, and far clip must be finite and greater");
+    }
+    if (!clipResult) {
+        if (!invalidClipWarning) {
+            return Result::failure("camera clip planes are invalid: " +
+                                   clipResult.error());
+        }
+        *invalidClipWarning = "camera clip planes are invalid: " +
+                              clipResult.error();
+        nearClip = Camera::defaultNearClipMeters;
+        farClip = Camera::defaultFarClipMeters;
+    }
+    state.nearClip = nearClip;
+    state.farClip = farClip;
     return Result::success();
 }
 
@@ -264,17 +295,27 @@ Result decodeAttachedCamera(const nlohmann::json& input, Camera& camera) {
     EditorCameraState state;
     Result result = decodeCamera(input, state);
     if (!result) return result;
+    float fov = camera.fov();
+    if (input.contains("fov")) {
+        result = authored_property::decode(input.at("fov"), fov);
+        if (!result) return result;
+    }
+    Camera validation;
+    if (!validation.setFov(fov)) {
+        return Result::failure(
+            "camera FOV must be finite and between 0 and 180 degrees");
+    }
+    if (!validation.setClipPlanes(state.nearClip, state.farClip)) {
+        return Result::failure("camera clip planes are invalid");
+    }
+
+    if (!camera.setClipPlanes(state.nearClip, state.farClip) ||
+        !camera.setFov(fov)) {
+        return Result::failure("attached camera settings are invalid");
+    }
     camera.position = state.position;
     camera.front = state.front;
     camera.up = state.up;
-    if (input.contains("fov")) {
-        float fov = 0.0f;
-        result = authored_property::decode(input.at("fov"), fov);
-        if (!result) return result;
-        if (!camera.setFov(fov)) {
-            return Result::failure("camera FOV must be finite and between 0 and 180 degrees");
-        }
-    }
     return Result::success();
 }
 
@@ -283,8 +324,35 @@ Result applyProperties(const nlohmann::json& properties, GameObject& object,
                        const TypeRegistry& registry,
                        std::vector<std::string>& warnings) {
     if (!properties.is_object()) return Result::failure("expected properties object");
+    Camera* camera = dynamic_cast<Camera*>(&object);
+    const bool hasClipPair = camera && properties.contains("nearClip") &&
+                             properties.contains("farClip");
+    float nearClip = Camera::defaultNearClipMeters;
+    float farClip = Camera::defaultFarClipMeters;
+    if (hasClipPair) {
+        Result result = authored_property::decode(
+            properties.at("nearClip"), nearClip);
+        if (!result) {
+            return Result::failure("Failed to restore Camera clip pair: " +
+                                   result.error());
+        }
+        result = authored_property::decode(properties.at("farClip"), farClip);
+        if (!result) {
+            return Result::failure("Failed to restore Camera clip pair: " +
+                                   result.error());
+        }
+        Camera validation;
+        if (!validation.setClipPlanes(nearClip, farClip)) {
+            return Result::failure(
+                "Camera near clip must be positive and far clip must exceed near clip");
+        }
+    }
     for (const PropertyDescriptor* descriptor :
          registry.persistedProperties(type)) {
+        if (hasClipPair && (descriptor->name == "nearClip" ||
+                            descriptor->name == "farClip")) {
+            continue;
+        }
         const auto property = properties.find(descriptor->name);
         if (property == properties.end()) continue;
         Result result = descriptor->write(object, property.value());
@@ -301,6 +369,9 @@ Result applyProperties(const nlohmann::json& properties, GameObject& object,
             warnings.push_back("Ignoring unknown property '" + property.key() +
                                "' on type '" + type.name + "'");
         }
+    }
+    if (hasClipPair && !camera->setClipPlanes(nearClip, farClip)) {
+        return Result::failure("Failed to restore Camera clip pair");
     }
     return Result::success();
 }
@@ -823,8 +894,17 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
         if (input.contains("editor") && input.at("editor").is_object() &&
             input.at("editor").contains("camera")) {
             EditorCameraState state;
-            result = decodeCamera(input.at("editor").at("camera"), state);
-            if (result) loadData.editorCamera = state;
+            std::string clipWarning;
+            result = decodeCamera(input.at("editor").at("camera"), state,
+                                  &clipWarning);
+            if (result) {
+                loadData.editorCamera = state;
+                if (!clipWarning.empty()) {
+                    loadData.warnings.push_back(
+                        "Ignoring invalid editor camera clip planes: " +
+                        clipWarning);
+                }
+            }
             else loadData.warnings.push_back("Ignoring invalid editor camera: " + result.error());
         }
         if (input.contains("editor") && input.at("editor").is_object() &&
@@ -974,6 +1054,20 @@ Result SceneSerializer::copyAuthoredAttachedCameraState(
                 std::string(propertyName) +
                 "': copy callback threw an unknown exception");
         }
+    }
+    for (const char* propertyName : {"nearClip", "farClip"}) {
+        const PropertyDescriptor* property =
+            registry.findProperty(*sourceType, propertyName);
+        if (!property || property->lifecycle != PropertyLifecycle::Persisted ||
+            !property->copy) {
+            return Result::failure(
+                "Attached Camera persisted property '" +
+                std::string(propertyName) + "' has no copy callback");
+        }
+    }
+    if (!destination.setClipPlanes(source.nearClip(), source.farClip())) {
+        return Result::failure(
+            "Failed to copy attached Camera clip planes: invalid near/far pair");
     }
     return Result::success();
 }

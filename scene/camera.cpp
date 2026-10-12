@@ -73,6 +73,11 @@ bool isValidFovDegrees(float fovDegrees) noexcept {
            fovDegrees < 180.0f;
 }
 
+bool isValidClipPlanes(float nearValue, float farValue) noexcept {
+    return std::isfinite(nearValue) && std::isfinite(farValue) &&
+           nearValue > 0.0f && farValue > nearValue;
+}
+
 }  // namespace
 
 Camera::Camera() {
@@ -146,6 +151,32 @@ bool Camera::setFov(float fovDegrees) noexcept {
     }
 
     fovDegrees_ = fovDegrees;
+    return true;
+}
+
+float Camera::nearClip() const noexcept {
+    return nearClipMeters_;
+}
+
+float Camera::farClip() const noexcept {
+    return farClipMeters_;
+}
+
+bool Camera::setNearClip(float value) noexcept {
+    return setClipPlanes(value, farClipMeters_);
+}
+
+bool Camera::setFarClip(float value) noexcept {
+    return setClipPlanes(nearClipMeters_, value);
+}
+
+bool Camera::setClipPlanes(float nearValue, float farValue) noexcept {
+    if (!isValidClipPlanes(nearValue, farValue)) {
+        return false;
+    }
+
+    nearClipMeters_ = nearValue;
+    farClipMeters_ = farValue;
     return true;
 }
 
