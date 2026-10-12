@@ -17,6 +17,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace {
@@ -202,6 +203,48 @@ nlohmann::json* findObjectRecord(
         if (object.at("id") == persistentId) return &object;
     }
     return nullptr;
+}
+
+void writeLegacyScaleFbx(const std::filesystem::path& path,
+                         double unitScaleFactor) {
+    std::ofstream file(path);
+    file << "; FBX 7.4.0 project file\n"
+            "FBXHeaderExtension:  {\n"
+            "\tFBXHeaderVersion: 1003\n"
+            "\tFBXVersion: 7400\n"
+            "\tCreator: \"Dunamis scene persistence test fixture\"\n"
+            "}\n"
+            "GlobalSettings:  {\n"
+            "\tVersion: 1000\n"
+            "\tProperties70:  {\n";
+    file << "\t\tP: \"UnitScaleFactor\", \"double\", \"Number\", \"\","
+         << unitScaleFactor << "\n";
+    file << "\t}\n"
+            "}\n"
+            "Definitions:  {\n"
+            "\tVersion: 100\n"
+            "\tCount: 3\n"
+            "\tObjectType: \"Model\" { Count: 1 }\n"
+            "\tObjectType: \"Geometry\" { Count: 1 }\n"
+            "\tObjectType: \"Material\" { Count: 1 }\n"
+            "}\n"
+            "Objects:  {\n"
+            "\tGeometry: 1, \"Geometry::Triangle\", \"Mesh\" {\n"
+            "\t\tGeometryVersion: 124\n"
+            "\t\tVertices: *9 { a: 0,0,0,100,0,0,0,100,0 }\n"
+            "\t\tPolygonVertexIndex: *3 { a: 0,1,-3 }\n"
+            "\t}\n"
+            "\tModel: 2, \"Model::Triangle\", \"Mesh\" { Version: 232 }\n"
+            "\tMaterial: 3, \"Material::Material\", \"\" {\n"
+            "\t\tVersion: 102\n"
+            "\t\tShadingModel: \"phong\"\n"
+            "\t}\n"
+            "}\n"
+            "Connections:  {\n"
+            "\tC: \"OO\",1,2\n"
+            "\tC: \"OO\",2,0\n"
+            "\tC: \"OO\",3,2\n"
+            "}\n";
 }
 
 GameObject* addPlainObject(Scene& scene, const std::string& persistentId) {
@@ -1443,6 +1486,458 @@ bool sceneUnitMigrationTests() {
     return passed;
 }
 
+bool legacyAssetHierarchyMigrationTests() {
+    bool passed = true;
+    TypeRegistry registry = makeRegistry(passed);
+    const auto fixtureDirectory =
+        std::filesystem::temp_directory_path() /
+        ("dunamis-legacy-hierarchy-migration-" +
+         std::to_string(std::chrono::steady_clock::now()
+                            .time_since_epoch()
+                            .count()));
+    std::filesystem::create_directories(fixtureDirectory);
+    const auto objPath = fixtureDirectory / "meter-triangle.obj";
+    const auto fbxUnitOnePath = fixtureDirectory / "unit-one.fbx";
+    const auto fbxInvalidScalePath = fixtureDirectory / "unit-invalid.fbx";
+    const std::string fallbackTexture =
+        (std::filesystem::path(DUNAMIS_SOURCE_DIR) /
+         "rendering/default_textures/error.jpg")
+            .string();
+    {
+        std::ofstream model(objPath);
+        model << "v 0 0 0\n"
+                 "v 2 0 0\n"
+                 "v 0 1 0\n"
+                 "f 1 2 3\n";
+    }
+    writeLegacyScaleFbx(fbxUnitOnePath, 1.0);
+    writeLegacyScaleFbx(fbxInvalidScalePath, -100.0);
+
+    const auto makeDocument = [](int version) {
+        nlohmann::json document = {
+            {"formatVersion", version},
+            {"scene", {{"name", "Legacy Hierarchy"},
+                       {"backgroundColor", {0.1f, 0.2f, 0.3f, 1.0f}},
+                       {"ambientColor", {0.4f, 0.5f, 0.6f}},
+                       {"ambientIntensity", 0.7f}}},
+            {"activeCamera", nullptr},
+            {"objects", nlohmann::json::array()}};
+        return document;
+    };
+    const auto makeRecord = [fallbackTexture](
+        const std::string& id, nlohmann::json parentId,
+        const std::string& modelPath, const glm::vec3& position,
+        const glm::vec3& rotation, const glm::vec3& scale,
+        std::size_t siblingIndex = 0) {
+        nlohmann::json properties = {
+            {"name", id},
+            {"texturePath", fallbackTexture},
+            {"position", {position.x, position.y, position.z}},
+            {"rotation", {rotation.x, rotation.y, rotation.z}},
+            {"scale", {scale.x, scale.y, scale.z}}};
+        if (!modelPath.empty()) properties["modelPath"] = modelPath;
+        return nlohmann::json{
+            {"id", id}, {"parentId", std::move(parentId)},
+            {"siblingIndex", siblingIndex}, {"type", "GameObject"},
+            {"properties", std::move(properties)}};
+    };
+    const auto transformedPoint = [](const glm::mat4& matrix,
+                                     const glm::vec3& point) {
+        const glm::vec4 transformed = matrix * glm::vec4(point, 1.0f);
+        return glm::vec3(transformed) / transformed.w;
+    };
+    std::unordered_map<GameObject*, std::string> stableModelPathStorage;
+    const auto apply = [&](const nlohmann::json& document,
+                           EmptyScene& candidate, SceneLoadData& load) {
+        // Keep model paths stable and pre-seed them so applyDocument's path
+        // setter sees no change and the migration fixture does not import.
+        for (const auto& record : document.at("objects")) {
+            const auto& properties = record.at("properties");
+            if (!properties.contains("modelPath") ||
+                !properties.at("modelPath").is_string() ||
+                properties.at("modelPath").get<std::string>().empty()) {
+                continue;
+            }
+            const std::string id = record.at("id").get<std::string>();
+            GameObject* object = candidate.findGameObject(id);
+            if (object == nullptr) object = addPlainObject(candidate, id);
+            if (object == nullptr) continue;
+            const auto [path, inserted] = stableModelPathStorage.emplace(
+                object, properties.at("modelPath").get<std::string>());
+            (void)inserted;
+            object->modelPath = path->second.c_str();
+        }
+        Result applied = SceneSerializer::applyDocument(
+            document, candidate, registry, load);
+        return applied;
+    };
+
+    // A model parent changes basis by 0.01. Its model-less children must
+    // cancel that factor locally, including under rotated nonuniform scale.
+    nlohmann::json parentAndChild = makeDocument(3);
+    const glm::vec3 parentPosition{3.0f, -4.0f, 5.0f};
+    const glm::vec3 parentRotation{21.0f, -33.0f, 17.0f};
+    const glm::vec3 parentScale{100.0f, 50.0f, 200.0f};
+    const glm::vec3 childPosition{2.0f, -3.0f, 4.0f};
+    const glm::vec3 childRotation{-11.0f, 28.0f, 39.0f};
+    const glm::vec3 childScale{1.5f, 0.5f, 2.0f};
+    parentAndChild["objects"].push_back(makeRecord(
+        "parent", nullptr, objPath.string(), parentPosition,
+        parentRotation, parentScale));
+    parentAndChild["objects"].push_back(makeRecord(
+        "child", "parent", "", childPosition, childRotation,
+        childScale, 0));
+    parentAndChild["objects"].push_back(makeRecord(
+        "sibling", "parent", "", {-1.0f, 2.0f, 0.5f},
+        {0.0f, 12.0f, 0.0f}, {1.0f, 2.0f, 1.0f}, 1));
+    const glm::mat4 oldParentWorld = transform_math::makeModelMatrix(
+        parentPosition, parentRotation, parentScale);
+    const glm::mat4 oldChildWorld = oldParentWorld *
+        transform_math::makeModelMatrix(childPosition, childRotation,
+                                        childScale);
+    EmptyScene parentChildCandidate;
+    SceneLoadData parentChildLoad;
+    Result result = apply(parentAndChild, parentChildCandidate,
+                          parentChildLoad);
+    const GameObject* migratedParent =
+        parentChildCandidate.findGameObject("parent");
+    const GameObject* migratedChild =
+        parentChildCandidate.findGameObject("child");
+    const GameObject* migratedSibling =
+        parentChildCandidate.findGameObject("sibling");
+    passed &= expect(
+        result && migratedParent && migratedChild && migratedSibling &&
+            migratedParent->scale == glm::vec3(1.0f, 0.5f, 2.0f) &&
+            migratedChild->parent() == migratedParent &&
+            migratedParent->children().size() == 2 &&
+            migratedParent->children()[0] == migratedChild &&
+            migratedParent->children()[1] == migratedSibling &&
+            sameVector(migratedChild->position, childPosition / 0.01f) &&
+            sameVector(migratedChild->scale, childScale / 0.01f) &&
+            sameMatrix(migratedChild->worldTransformMatrix(), oldChildWorld,
+                       1.0e-3f) &&
+            sameVector(transformedPoint(migratedChild->worldTransformMatrix(),
+                                        {0.0f, 0.0f, 0.0f}),
+                       transformedPoint(oldChildWorld, {0.0f, 0.0f, 0.0f}),
+                       1.0e-3f) &&
+            sameVector(transformedPoint(migratedParent->worldTransformMatrix(),
+                                        {2.0f, 1.0f, 0.0f}),
+                       transformedPoint(oldParentWorld,
+                                       {0.02f, 0.01f, 0.0f}),
+                       1.0e-3f),
+        "model parent migration changed its geometry or model-less child hierarchy");
+
+    // Save the migrated hierarchy as v4 and verify reloading applies nothing.
+    nlohmann::json savedHierarchy;
+    Result saveResult = result
+        ? SceneSerializer::serializeAuthored(parentChildCandidate, registry,
+                                             savedHierarchy)
+        : Result::failure("parent/child hierarchy migration failed");
+    EmptyScene reloadedHierarchy;
+    SceneLoadData reloadData;
+    const Result reloadResult = saveResult
+        ? apply(savedHierarchy, reloadedHierarchy, reloadData)
+        : Result::failure("migrated hierarchy could not be serialized");
+    const GameObject* reloadedParent =
+        reloadedHierarchy.findGameObject("parent");
+    const GameObject* reloadedChild =
+        reloadedHierarchy.findGameObject("child");
+    passed &= expect(
+        saveResult && reloadResult && savedHierarchy.at("formatVersion") == 4 &&
+            reloadedParent && reloadedChild &&
+            sameMatrix(reloadedParent->worldTransformMatrix(),
+                       migratedParent->worldTransformMatrix(), 1.0e-3f) &&
+            sameMatrix(reloadedChild->worldTransformMatrix(),
+                       migratedChild->worldTransformMatrix(), 1.0e-3f),
+        "saved v4 hierarchy received asset compensation a second time");
+
+    // Different factors on parent and child are applied relative to the
+    // immediate parent. The child's matrix changes by its own 0.01 factor,
+    // while transformed model points and its world origin stay equivalent.
+    nlohmann::json twoModels = makeDocument(3);
+    const glm::vec3 modelParentPosition{-3.0f, 4.0f, 2.0f};
+    const glm::vec3 modelParentRotation{13.0f, 34.0f, -9.0f};
+    const glm::vec3 modelParentScale{2.0f, 3.0f, 0.75f};
+    const glm::vec3 modelChildPosition{5.0f, -2.0f, 1.5f};
+    const glm::vec3 modelChildRotation{-22.0f, 7.0f, 31.0f};
+    const glm::vec3 modelChildScale{3.0f, 0.5f, 2.0f};
+    twoModels["objects"].push_back(makeRecord(
+        "model-parent", nullptr, fbxUnitOnePath.string(),
+        modelParentPosition, modelParentRotation, modelParentScale));
+    twoModels["objects"].push_back(makeRecord(
+        "model-child", "model-parent", objPath.string(),
+        modelChildPosition, modelChildRotation, modelChildScale));
+    const glm::mat4 oldModelParentWorld = transform_math::makeModelMatrix(
+        modelParentPosition, modelParentRotation, modelParentScale);
+    const glm::mat4 oldModelChildWorld = oldModelParentWorld *
+        transform_math::makeModelMatrix(modelChildPosition,
+                                        modelChildRotation,
+                                        modelChildScale);
+    EmptyScene twoModelCandidate;
+    SceneLoadData twoModelLoad;
+    result = apply(twoModels, twoModelCandidate, twoModelLoad);
+    const GameObject* migratedModelParent =
+        twoModelCandidate.findGameObject("model-parent");
+    const GameObject* migratedModelChild =
+        twoModelCandidate.findGameObject("model-child");
+    bool childGeometryPreserved = result && migratedModelChild;
+    for (const glm::vec3 point : {glm::vec3(0.0f), glm::vec3(1.0f, 0.0f, 0.0f),
+                                  glm::vec3(0.0f, 2.0f, 1.0f)}) {
+        childGeometryPreserved &= migratedModelChild &&
+            sameVector(
+                transformedPoint(migratedModelChild->worldTransformMatrix(),
+                                 point),
+                transformedPoint(oldModelChildWorld, point * 0.01f),
+                1.0e-3f);
+    }
+    passed &= expect(
+        result && migratedModelParent && migratedModelChild &&
+            migratedModelChild->parent() == migratedModelParent &&
+            sameVector(migratedModelChild->position, modelChildPosition) &&
+            sameVector(migratedModelChild->scale, modelChildScale * 0.01f) &&
+            childGeometryPreserved &&
+            sameVector(transformedPoint(
+                           migratedModelChild->worldTransformMatrix(),
+                           {0.0f, 0.0f, 0.0f}),
+                       transformedPoint(oldModelChildWorld,
+                                       {0.0f, 0.0f, 0.0f}),
+                       1.0e-3f) &&
+            !sameMatrix(migratedModelChild->worldTransformMatrix(),
+                        oldModelChildWorld, 1.0e-3f),
+        "different parent/child asset factors did not preserve child model geometry");
+
+    // A model-less grouping node absorbs the root factor once. Its child is
+    // then compensated only against the group's factor (1), not the root's.
+    nlohmann::json nested = makeDocument(3);
+    const glm::vec3 rootPosition{1.0f, -2.0f, 3.0f};
+    const glm::vec3 rootRotation{9.0f, 27.0f, -18.0f};
+    const glm::vec3 rootScale{100.0f, 60.0f, 40.0f};
+    const glm::vec3 groupPosition{2.0f, 3.0f, -4.0f};
+    const glm::vec3 groupRotation{11.0f, 5.0f, 36.0f};
+    const glm::vec3 groupScale{0.5f, 2.0f, 1.25f};
+    const glm::vec3 nestedChildPosition{-3.0f, 4.0f, 2.0f};
+    const glm::vec3 nestedChildRotation{17.0f, -23.0f, 8.0f};
+    const glm::vec3 nestedChildScale{1.5f, 0.75f, 2.5f};
+    const glm::vec3 grandchildPosition{1.0f, -1.0f, 2.0f};
+    const glm::vec3 grandchildRotation{-4.0f, 19.0f, 6.0f};
+    const glm::vec3 grandchildScale{0.8f, 1.1f, 1.3f};
+    nested["objects"].push_back(makeRecord(
+        "root-model", nullptr, objPath.string(), rootPosition,
+        rootRotation, rootScale));
+    nested["objects"].push_back(makeRecord(
+        "group", "root-model", "", groupPosition, groupRotation,
+        groupScale));
+    nested["objects"].push_back(makeRecord(
+        "nested-model", "group", fbxUnitOnePath.string(),
+        nestedChildPosition, nestedChildRotation, nestedChildScale));
+    nested["objects"].push_back(makeRecord(
+        "grandchild", "nested-model", "", grandchildPosition,
+        grandchildRotation, grandchildScale));
+    const glm::mat4 oldRootWorld = transform_math::makeModelMatrix(
+        rootPosition, rootRotation, rootScale);
+    const glm::mat4 oldGroupWorld = oldRootWorld *
+        transform_math::makeModelMatrix(groupPosition, groupRotation,
+                                        groupScale);
+    const glm::mat4 oldNestedChildWorld = oldGroupWorld *
+        transform_math::makeModelMatrix(nestedChildPosition,
+                                        nestedChildRotation,
+                                        nestedChildScale);
+    const glm::mat4 oldGrandchildWorld = oldNestedChildWorld *
+        transform_math::makeModelMatrix(grandchildPosition,
+                                        grandchildRotation,
+                                        grandchildScale);
+    EmptyScene nestedCandidate;
+    SceneLoadData nestedLoad;
+    result = apply(nested, nestedCandidate, nestedLoad);
+    const GameObject* migratedGroup = nestedCandidate.findGameObject("group");
+    const GameObject* migratedNestedChild =
+        nestedCandidate.findGameObject("nested-model");
+    const GameObject* migratedGrandchild =
+        nestedCandidate.findGameObject("grandchild");
+    passed &= expect(
+        result && migratedGroup && migratedNestedChild && migratedGrandchild &&
+            migratedNestedChild->parent() == migratedGroup &&
+            migratedGrandchild->parent() == migratedNestedChild &&
+            sameVector(migratedGroup->position, groupPosition / 0.01f) &&
+            sameVector(migratedGroup->scale, groupScale / 0.01f) &&
+            sameVector(migratedNestedChild->position, nestedChildPosition) &&
+            sameVector(migratedNestedChild->scale, nestedChildScale) &&
+            sameVector(migratedGrandchild->position, grandchildPosition) &&
+            sameVector(migratedGrandchild->scale, grandchildScale) &&
+            sameMatrix(migratedGroup->worldTransformMatrix(), oldGroupWorld,
+                       1.0e-3f) &&
+            sameMatrix(migratedNestedChild->worldTransformMatrix(),
+                       oldNestedChildWorld, 1.0e-3f) &&
+            sameMatrix(migratedGrandchild->worldTransformMatrix(),
+                       oldGrandchildWorld, 1.0e-3f) &&
+            sameVector(transformedPoint(
+                           nestedCandidate.findGameObject("root-model")
+                               ->worldTransformMatrix(),
+                           {1.0f, 1.0f, 0.0f}),
+                       transformedPoint(oldRootWorld, {0.01f, 0.01f, 0.0f}),
+                       1.0e-3f),
+        "nested migration reapplied an ancestor factor or changed descendant layout");
+
+    // v2 first converts legacy world distances to meters, then compensates
+    // the immediate parent's asset factor. v1 has no persisted hierarchy and
+    // therefore continues to load every object as a root.
+    nlohmann::json versioned = makeDocument(2);
+    versioned["objects"].push_back(makeRecord(
+        "v2-parent", nullptr, objPath.string(), {100.0f, 0.0f, 0.0f},
+        {0.0f, 0.0f, 0.0f}, {100.0f, 100.0f, 100.0f}));
+    versioned["objects"].push_back(makeRecord(
+        "v2-child", "v2-parent", "", {200.0f, 0.0f, 0.0f},
+        {0.0f, 0.0f, 0.0f}, {2.0f, 3.0f, 4.0f}));
+    EmptyScene v2Candidate;
+    SceneLoadData v2Load;
+    result = apply(versioned, v2Candidate, v2Load);
+    const GameObject* v2Parent = v2Candidate.findGameObject("v2-parent");
+    const GameObject* v2Child = v2Candidate.findGameObject("v2-child");
+    passed &= expect(
+        result && v2Parent && v2Child && v2Child->parent() == v2Parent &&
+            sameVector(v2Parent->position, {1.0f, 0.0f, 0.0f}) &&
+            sameVector(v2Parent->scale, {1.0f, 1.0f, 1.0f}) &&
+            sameVector(v2Child->position, {200.0f, 0.0f, 0.0f}) &&
+            sameVector(v2Child->scale, {200.0f, 300.0f, 400.0f}) &&
+            sameVector(transformedPoint(v2Child->worldTransformMatrix(),
+                                        {0.0f, 0.0f, 0.0f}),
+                       {201.0f, 0.0f, 0.0f}),
+        "v2 did not combine world-distance and immediate-parent compensation");
+
+    nlohmann::json v1Document = versioned;
+    v1Document["formatVersion"] = 1;
+    EmptyScene v1Candidate;
+    SceneLoadData v1Load;
+    result = apply(v1Document, v1Candidate, v1Load);
+    const GameObject* v1Parent = v1Candidate.findGameObject("v2-parent");
+    const GameObject* v1Child = v1Candidate.findGameObject("v2-child");
+    passed &= expect(
+        result && v1Parent && v1Child && v1Parent->parent() == nullptr &&
+            v1Child->parent() == nullptr &&
+            sameVector(v1Parent->position, {1.0f, 0.0f, 0.0f}) &&
+            sameVector(v1Parent->scale, {1.0f, 1.0f, 1.0f}) &&
+            sameVector(v1Child->position, {2.0f, 0.0f, 0.0f}) &&
+            sameVector(v1Child->scale, {2.0f, 3.0f, 4.0f}),
+        "v1 loading invented parent compensation without saved hierarchy data");
+
+    nlohmann::json v4Document = makeDocument(4);
+    v4Document["objects"].push_back(makeRecord(
+        "v4-parent", nullptr, objPath.string(), {4.0f, 0.0f, 0.0f},
+        {0.0f, 30.0f, 0.0f}, {100.0f, 100.0f, 100.0f}));
+    v4Document["objects"].push_back(makeRecord(
+        "v4-child", "v4-parent", "", {2.0f, 3.0f, 4.0f},
+        {10.0f, 20.0f, 30.0f}, {2.0f, 3.0f, 4.0f}));
+    EmptyScene v4Candidate;
+    SceneLoadData v4Load;
+    result = apply(v4Document, v4Candidate, v4Load);
+    const GameObject* v4Parent = v4Candidate.findGameObject("v4-parent");
+    const GameObject* v4Child = v4Candidate.findGameObject("v4-child");
+    passed &= expect(
+        result && v4Parent && v4Child && v4Child->parent() == v4Parent &&
+            sameVector(v4Parent->scale, {100.0f, 100.0f, 100.0f}) &&
+            sameVector(v4Child->position, {2.0f, 3.0f, 4.0f}) &&
+            sameVector(v4Child->scale, {2.0f, 3.0f, 4.0f}),
+        "v4 loading changed hierarchy transforms through legacy migration");
+
+    // Unknown parent factors stay at an effective factor of one. A known
+    // parent still compensates an unknown child's transform without guessing
+    // the child's own asset conversion.
+    nlohmann::json unknownParentDocument = makeDocument(3);
+    unknownParentDocument["objects"].push_back(makeRecord(
+        "unknown-parent", nullptr, fbxInvalidScalePath.string(),
+        {1.0f, 2.0f, 3.0f}, {7.0f, 11.0f, 19.0f},
+        {2.0f, 3.0f, 4.0f}));
+    unknownParentDocument["objects"].push_back(makeRecord(
+        "unknown-parent-child", "unknown-parent", "", {2.0f, 3.0f, 4.0f},
+        {5.0f, 9.0f, 12.0f}, {1.5f, 2.0f, 0.5f}));
+    const glm::mat4 oldUnknownParentWorld = transform_math::makeModelMatrix(
+        {1.0f, 2.0f, 3.0f}, {7.0f, 11.0f, 19.0f}, {2.0f, 3.0f, 4.0f});
+    const glm::mat4 oldUnknownParentChildWorld = oldUnknownParentWorld *
+        transform_math::makeModelMatrix(
+            {2.0f, 3.0f, 4.0f}, {5.0f, 9.0f, 12.0f},
+            {1.5f, 2.0f, 0.5f});
+    EmptyScene unknownParentCandidate;
+    SceneLoadData unknownParentLoad;
+    result = apply(unknownParentDocument, unknownParentCandidate,
+                   unknownParentLoad);
+    const GameObject* unknownParent =
+        unknownParentCandidate.findGameObject("unknown-parent");
+    const GameObject* unknownParentChild =
+        unknownParentCandidate.findGameObject("unknown-parent-child");
+    passed &= expect(
+        result && unknownParent && unknownParentChild &&
+            !unknownParentLoad.warnings.empty() &&
+            sameVector(unknownParent->scale, {2.0f, 3.0f, 4.0f}) &&
+            sameMatrix(unknownParentChild->worldTransformMatrix(),
+                       oldUnknownParentChildWorld, 1.0e-3f),
+        "unknown parent asset metadata caused guessed hierarchy compensation");
+
+    nlohmann::json unknownChildDocument = makeDocument(3);
+    unknownChildDocument["objects"].push_back(makeRecord(
+        "known-parent", nullptr, objPath.string(), {3.0f, 2.0f, 1.0f},
+        {15.0f, 25.0f, 35.0f}, {100.0f, 50.0f, 25.0f}));
+    unknownChildDocument["objects"].push_back(makeRecord(
+        "unknown-child", "known-parent", fbxInvalidScalePath.string(),
+        {2.0f, 3.0f, 4.0f}, {5.0f, 9.0f, 12.0f},
+        {1.5f, 2.0f, 0.5f}));
+    const glm::mat4 oldKnownParentWorld = transform_math::makeModelMatrix(
+        {3.0f, 2.0f, 1.0f}, {15.0f, 25.0f, 35.0f},
+        {100.0f, 50.0f, 25.0f});
+    const glm::mat4 oldUnknownChildWorld = oldKnownParentWorld *
+        transform_math::makeModelMatrix(
+            {2.0f, 3.0f, 4.0f}, {5.0f, 9.0f, 12.0f},
+            {1.5f, 2.0f, 0.5f});
+    EmptyScene unknownChildCandidate;
+    SceneLoadData unknownChildLoad;
+    result = apply(unknownChildDocument, unknownChildCandidate,
+                   unknownChildLoad);
+    const GameObject* unknownChild =
+        unknownChildCandidate.findGameObject("unknown-child");
+    passed &= expect(
+        result && unknownChild && !unknownChildLoad.warnings.empty() &&
+            sameMatrix(unknownChild->worldTransformMatrix(),
+                       oldUnknownChildWorld, 1.0e-3f),
+        "known parent factor was not applied safely to an unknown child asset");
+
+    nlohmann::json malformedHierarchy = makeDocument(3);
+    malformedHierarchy["objects"].push_back(makeRecord(
+        "malformed-parent", nullptr, objPath.string(), {0.0f, 0.0f, 0.0f},
+        {0.0f, 0.0f, 0.0f}, {100.0f, 100.0f, 100.0f}));
+    malformedHierarchy["objects"].push_back(makeRecord(
+        "malformed-child", "missing-parent", "", {1.0f, 0.0f, 0.0f},
+        {0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}));
+    EmptyScene malformedCandidate;
+    SceneLoadData malformedLoad;
+    result = apply(malformedHierarchy, malformedCandidate, malformedLoad);
+    passed &= expect(!result &&
+                         result.error().find("malformed-child") !=
+                             std::string::npos &&
+                         result.error().find("missing-parent") !=
+                             std::string::npos,
+                     "legacy migration hid an invalid parentId reference");
+
+    // A finite but extreme metadata factor that overflows a transformed
+    // position is rejected before a nonfinite transform reaches the scene.
+    nlohmann::json overflowDocument = makeDocument(3);
+    overflowDocument["objects"].push_back(makeRecord(
+        "extreme-parent", nullptr, objPath.string(),
+        {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f},
+        {100.0f, 100.0f, 100.0f}));
+    overflowDocument["objects"].push_back(makeRecord(
+        "overflow-child", "extreme-parent", "", {1.0e38f, 0.0f, 0.0f},
+        {0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}));
+    EmptyScene overflowCandidate;
+    SceneLoadData overflowLoad;
+    result = apply(overflowDocument, overflowCandidate, overflowLoad);
+    passed &= expect(!result &&
+                         result.error().find("nonfinite") != std::string::npos,
+                     "overflowing hierarchy compensation produced a scene transform");
+
+    std::error_code fixtureError;
+    std::filesystem::remove_all(fixtureDirectory, fixtureError);
+    return passed;
+}
+
 bool managerDirtyTests() {
     bool passed = true;
     SceneManager manager;
@@ -1785,6 +2280,7 @@ int main() {
     passed &= runtimeHierarchyTests();
     passed &= characterPersistenceTests();
     passed &= sceneUnitMigrationTests();
+    passed &= legacyAssetHierarchyMigrationTests();
     passed &= managerDirtyTests();
     passed &= managerV1MigrationTests();
     passed &= managerSavePathTests();

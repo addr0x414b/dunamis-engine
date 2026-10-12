@@ -1,6 +1,7 @@
 #include "scene_serializer.h"
 
 #include "../assets/model_import_policy.h"
+#include "../math/transform_math.h"
 
 #include <algorithm>
 #include <cmath>
@@ -150,9 +151,10 @@ Result migrateLegacyWorldDocument(nlohmann::json& document,
     return Result::success();
 }
 
-Result migrateLegacyAssetScaleObjectRecord(
-    nlohmann::json& record, const TypeRegistry& registry,
-    std::vector<std::string>& warnings) {
+Result inspectLegacyAssetScaleObjectRecord(
+    const nlohmann::json& record, const TypeRegistry& registry,
+    std::vector<std::string>& warnings, float& scaleFactor) {
+    scaleFactor = 1.0f;
     if (!record.is_object() || !record.contains("type") ||
         !record.at("type").is_string() ||
         !record.contains("properties") ||
@@ -173,17 +175,9 @@ Result migrateLegacyAssetScaleObjectRecord(
 
     auto& properties = record.at("properties");
     const auto modelPath = properties.find("modelPath");
-    const auto scale = properties.find("scale");
     if (modelPath == properties.end() || !modelPath->is_string() ||
-        modelPath->get<std::string>().empty() || scale == properties.end()) {
+        modelPath->get<std::string>().empty()) {
         return Result::success();
-    }
-
-    glm::vec3 value{};
-    Result result = authored_property::decode(scale.value(), value);
-    if (!result) {
-        return Result::failure("Cannot migrate scale on object '" + objectId +
-                               "': " + result.error());
     }
 
     const std::string modelPathString = modelPath->get<std::string>();
@@ -196,24 +190,183 @@ Result migrateLegacyAssetScaleObjectRecord(
         return Result::success();
     }
 
-    value *= migration.scaleFactor;
-    result = authored_property::encode(value, scale.value());
-    if (!result) {
-        return Result::failure("Cannot migrate scale on object '" + objectId +
-                               "': " + result.error());
+    if (!std::isfinite(migration.scaleFactor) ||
+        migration.scaleFactor <= 0.0f) {
+        warnings.push_back(
+            "Preserving legacy scale on object '" + objectId +
+            "' for asset '" + modelPathString +
+            "': migration produced a nonfinite or nonpositive compatibility factor");
+        return Result::success();
+    }
+
+    scaleFactor = migration.scaleFactor;
+    return Result::success();
+}
+
+Result migrateLegacyAssetScaleObjectRecord(
+    nlohmann::json& record, const TypeRegistry& registry,
+    float selfScaleFactor, float parentScaleFactor) {
+    if (!record.is_object() || !record.contains("type") ||
+        !record.at("type").is_string() ||
+        !record.contains("properties") ||
+        !record.at("properties").is_object()) {
+        return Result::success();
+    }
+
+    std::string objectId = "<unknown>";
+    if (record.contains("id") && record.at("id").is_string()) {
+        objectId = record.at("id").get<std::string>();
+    }
+    const TypeDescriptor* type =
+        registry.find(record.at("type").get<std::string>());
+    if (!type || !registry.isA(*type, "GameObject")) {
+        return Result::success();
+    }
+
+    const bool hasPosition =
+        registry.findProperty(*type, "position") != nullptr;
+    const bool hasScale = registry.findProperty(*type, "scale") != nullptr;
+    if (!hasPosition && !hasScale) return Result::success();
+
+    auto& properties = record.at("properties");
+    const auto positionProperty = properties.find("position");
+    const auto scaleProperty = properties.find("scale");
+    if (selfScaleFactor == 1.0f && parentScaleFactor == 1.0f) {
+        return Result::success();
+    }
+
+    glm::vec3 position(0.0f);
+    if (hasPosition && positionProperty != properties.end()) {
+        Result result = authored_property::decode(
+            positionProperty.value(), position);
+        if (!result) {
+            return Result::failure(
+                "Cannot migrate position on object '" + objectId +
+                "': " + result.error());
+        }
+    }
+
+    glm::vec3 scale(1.0f);
+    if (hasScale && scaleProperty != properties.end()) {
+        Result result = authored_property::decode(scaleProperty.value(), scale);
+        if (!result) {
+            return Result::failure("Cannot migrate scale on object '" + objectId +
+                                   "': " + result.error());
+        }
+    }
+
+    // localTransformMatrix() is T * R * S and worldTransformMatrix() left-
+    // multiplies each ancestor. Write F(f) for a homogeneous uniform scale
+    // with unchanged translation. The migrated parent local matrix is
+    // P' = P * F(f_parent), and this local matrix is
+    // C' = T(p/f_parent) * R * S * F(f_self/f_parent). Thus P' * C' has
+    // the old translated origin and its old linear basis multiplied only by
+    // f_self: the uniform parent factors cancel across the child rotation,
+    // including when P has nonuniform authored scale. Repeating this identity
+    // down the hierarchy gives each node only its own factor in the world
+    // linear basis. Model-less nodes therefore keep their complete world
+    // matrix, while model nodes compensate their normalized vertex basis.
+    if (!std::isfinite(selfScaleFactor) || selfScaleFactor <= 0.0f ||
+        !std::isfinite(parentScaleFactor) || parentScaleFactor <= 0.0f) {
+        return Result::failure(
+            "Cannot safely migrate transforms on object '" + objectId +
+            "': compatibility factors must be finite and positive");
+    }
+    const float localScaleFactor = selfScaleFactor / parentScaleFactor;
+    if (!std::isfinite(localScaleFactor) || localScaleFactor <= 0.0f) {
+        return Result::failure(
+            "Cannot safely migrate transforms on object '" + objectId +
+            "': compatibility factors produced an invalid scale divisor");
+    }
+    const glm::vec3 originalPosition = position;
+    const glm::vec3 originalScale = scale;
+    if (hasPosition) position /= parentScaleFactor;
+    if (hasScale) scale *= localScaleFactor;
+    if ((hasPosition && !transform_math::isFiniteVector(position)) ||
+        (hasScale && !transform_math::isFiniteVector(scale))) {
+        return Result::failure(
+            "Cannot safely migrate transforms on object '" + objectId +
+            "': compatibility adjustment produced nonfinite values");
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+        if ((hasPosition && originalPosition[axis] != 0.0f &&
+             position[axis] == 0.0f) ||
+            (hasScale && originalScale[axis] != 0.0f &&
+             scale[axis] == 0.0f)) {
+            return Result::failure(
+                "Cannot safely migrate transforms on object '" + objectId +
+                "': compatibility adjustment underflowed a nonzero component");
+        }
+    }
+
+    if (hasPosition && (positionProperty != properties.end() ||
+                        position != glm::vec3(0.0f))) {
+        Result result = authored_property::encode(
+            position, properties["position"]);
+        if (!result) {
+            return Result::failure("Cannot migrate position on object '" + objectId +
+                                   "': " + result.error());
+        }
+    }
+    if (hasScale && (scaleProperty != properties.end() ||
+                     scale != glm::vec3(1.0f))) {
+        Result result = authored_property::encode(scale, properties["scale"]);
+        if (!result) {
+            return Result::failure("Cannot migrate scale on object '" + objectId +
+                                   "': " + result.error());
+        }
     }
     return Result::success();
 }
 
 Result migrateLegacyAssetScaleDocument(
     nlohmann::json& document, const TypeRegistry& registry,
-    std::vector<std::string>& warnings) {
+    std::vector<std::string>& warnings, bool hasSavedHierarchy) {
     if (!document.contains("objects") || !document.at("objects").is_array()) {
         return Result::success();
     }
-    for (auto& record : document.at("objects")) {
+
+    auto& objects = document.at("objects");
+    std::vector<float> selfScaleFactors(objects.size(), 1.0f);
+    std::unordered_map<std::string, std::size_t> idCounts;
+    for (const auto& record : objects) {
+        if (record.is_object() && record.contains("id") &&
+            record.at("id").is_string() &&
+            !record.at("id").get<std::string>().empty()) {
+            ++idCounts[record.at("id").get<std::string>()];
+        }
+    }
+
+    std::unordered_map<std::string, float> uniqueScaleFactors;
+    uniqueScaleFactors.reserve(objects.size());
+    for (std::size_t index = 0; index < objects.size(); ++index) {
+        Result result = inspectLegacyAssetScaleObjectRecord(
+            objects[index], registry, warnings, selfScaleFactors[index]);
+        if (!result) return result;
+        if (objects[index].is_object() && objects[index].contains("id") &&
+            objects[index].at("id").is_string()) {
+            const std::string id = objects[index].at("id").get<std::string>();
+            if (!id.empty() && idCounts[id] == 1) {
+                uniqueScaleFactors.emplace(id, selfScaleFactors[index]);
+            }
+        }
+    }
+
+    for (std::size_t index = 0; index < objects.size(); ++index) {
+        float parentScaleFactor = 1.0f;
+        if (hasSavedHierarchy && objects[index].is_object() &&
+            objects[index].contains("parentId") &&
+            objects[index].at("parentId").is_string()) {
+            const auto parent = uniqueScaleFactors.find(
+                objects[index].at("parentId").get<std::string>());
+            if (parent != uniqueScaleFactors.end()) {
+                parentScaleFactor = parent->second;
+            }
+        }
+
         Result result = migrateLegacyAssetScaleObjectRecord(
-            record, registry, warnings);
+            objects[index], registry, selfScaleFactors[index],
+            parentScaleFactor);
         if (!result) return result;
     }
     return Result::success();
@@ -622,7 +775,8 @@ Result SceneSerializer::applyDocument(const nlohmann::json& document,
         }
         if (sourceVersion != formatVersion) {
             Result migration = migrateLegacyAssetScaleDocument(
-                migratedDocument, registry, loadData.warnings);
+                migratedDocument, registry, loadData.warnings,
+                sourceVersion == 2 || sourceVersion == 3);
             if (!migration) {
                 return Result::failure("Scene asset-basis migration failed: " +
                                        migration.error());
