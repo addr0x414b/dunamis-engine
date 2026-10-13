@@ -15,10 +15,20 @@ struct PhysicsWorldPose {
     glm::vec3 rotation{0.0f};
 };
 
-// B2.3A rigid-body hierarchy policy. The object itself may have an authored
-// scale for collider cooking, but every ancestor must be a non-physics object
-// with identity scale.
+// Static shapes are cooked in object-local space while their Jolt bodies stay
+// rigid. This result keeps the inherited uniform geometry scale separate from
+// the scale-free world pose.
+struct ResolvedStaticPhysicsTransform {
+    PhysicsWorldPose rigidWorldPose;
+    glm::vec3 effectiveShapeScale{1.0f};
+};
+
+// Static bodies support positive approximately uniform non-physics ancestor
+// scale. Dynamic bodies continue to require identity-scaled ancestry.
 [[nodiscard]] Result validatePhysicsHierarchy(const GameObject& object);
+
+[[nodiscard]] Result resolveStaticPhysicsTransform(
+    const GameObject& object, ResolvedStaticPhysicsTransform& transform);
 
 [[nodiscard]] Result derivePhysicsWorldPose(const GameObject& object,
                                             PhysicsWorldPose& pose);

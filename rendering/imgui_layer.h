@@ -101,7 +101,7 @@ private:
     void stopNativeFileDialog() noexcept;
     void drawSceneHierarchy(Scene* scene, bool disabled);
     void drawSceneHierarchyNode(Scene* scene, GameObject* object);
-    void drawInspector(Scene* scene, bool disabled);
+    void drawInspector(Scene* scene, bool disabled, SceneRunState runState);
     void updateSceneInteractionAreaHovered() noexcept;
     void processGizmoShortcuts(Scene* scene,
                                SceneRunState runState) noexcept;

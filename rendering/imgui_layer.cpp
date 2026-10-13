@@ -22,6 +22,7 @@
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -73,6 +74,55 @@ struct HierarchyDragPayload {
     Scene* scene = nullptr;
     GameObject* object = nullptr;
 };
+
+Result validateRuntimeScaleCandidate(GameObject& changedObject,
+                                     const glm::vec3& candidateScale) {
+    struct RestoreScale {
+        GameObject& object;
+        glm::vec3 original;
+        ~RestoreScale() { object.scale = original; }
+    } restore{changedObject, changedObject.scale};
+
+    changedObject.scale = candidateScale;
+    std::vector<const GameObject*> pending{&changedObject};
+    std::unordered_set<const GameObject*> visited;
+    while (!pending.empty()) {
+        const GameObject* current = pending.back();
+        pending.pop_back();
+        if (current == nullptr || !visited.insert(current).second) continue;
+        if (const auto* character = dynamic_cast<const Character*>(current)) {
+            const Result result =
+                physics::validateCharacterPhysicsHierarchy(*character);
+            if (!result) {
+                return Result::failure(
+                    "Runtime scale edit would invalidate Character physics: " +
+                    result.error());
+            }
+        } else if (current->physics.enabled) {
+            const Result result =
+                physics::validatePhysicsHierarchy(*current);
+            if (!result) {
+                return Result::failure(
+                    "Runtime scale edit would invalidate physics for '" +
+                    current->name + "': " + result.error());
+            }
+        }
+        for (const GameObject* child : current->children()) {
+            pending.push_back(child);
+        }
+    }
+    return Result::success();
+}
+
+Result applyEditorScale(GameObject& object, const glm::vec3& scale,
+                        SceneRunState runState) {
+    if (runState == SceneRunState::Simulating && scale != object.scale) {
+        const Result validation =
+            validateRuntimeScaleCandidate(object, scale);
+        if (!validation) return validation;
+    }
+    return editor_mutation::applyScale(object, scale);
+}
 
 std::string formatMemoryBytes(std::size_t bytes) {
     constexpr double kibibyte = 1024.0;
@@ -567,7 +617,7 @@ void ImGuiLayer::drawEditor(Scene* scene, const glm::mat4& view,
         drawCameraVisualizations(scene, view, projection, runState);
         drawTransformGizmo(scene, view, projection, runState);
         processWorldSelection(scene, view, projection, runState);
-        drawInspector(scene, disabled);
+        drawInspector(scene, disabled, runState);
     }
     if (!inspectorScaleWidgetSeen_) {
         clearInspectorScaleDrag();
@@ -965,8 +1015,15 @@ bool ImGuiLayer::isPhysicsDebugScalePreviewActive(
             editorTransformSnapshot_, scene, object)) {
         return true;
     }
-    return inspectorScaleDragActive_ && inspectorScaleDragScene_ == scene &&
-           inspectorScaleDragObject_ == object;
+    if (!inspectorScaleDragActive_ || inspectorScaleDragScene_ != scene ||
+        inspectorScaleDragObject_ == nullptr) {
+        return false;
+    }
+    for (const GameObject* current = object; current != nullptr;
+         current = current->parent()) {
+        if (current == inspectorScaleDragObject_) return true;
+    }
+    return false;
 }
 
 void ImGuiLayer::finishRuntimeTransformDrag() noexcept {
@@ -1316,10 +1373,14 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
         operation = ImGuizmo::TRANSLATE;
         break;
     case TransformTool::Scale:
-        if (runState == SceneRunState::Simulating && selected->physics.enabled) {
+        if (runState == SceneRunState::Simulating &&
+            selected->physics.enabled &&
+            selected->physics.motionType ==
+                GameObject::PhysicsMotionType::Dynamic) {
             cancelEditorTransformDrag();
             gizmoDragActive_ = false;
-            inspectorError_ = "Runtime Scale is unavailable for physics bodies.";
+            inspectorError_ =
+                "Runtime Scale is unavailable for dynamic physics bodies.";
             drawList->PopClipRect();
             return;
         }
@@ -1476,8 +1537,8 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
                     *selected, localTransform.rotation);
                 break;
             case TransformTool::Scale:
-                result = editor_mutation::applyScale(
-                    *selected, localTransform.scale);
+                result = applyEditorScale(*selected, localTransform.scale,
+                                          runState);
                 break;
             }
         }
@@ -2031,7 +2092,8 @@ void ImGuiLayer::processWorldSelection(Scene* scene, const glm::mat4& view,
                      selectionOperationForModifiers(io.KeyCtrl, io.KeyShift));
 }
 
-void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
+void ImGuiLayer::drawInspector(Scene* scene, bool disabled,
+                               SceneRunState runState) {
     ImGui::SetNextWindowSize(ImVec2(340.0f, 500.0f),
                              ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Inspector")) {
@@ -2121,7 +2183,7 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled) {
     }
     if (scaleChanged) {
         const Result result =
-            editor_mutation::applyScale(*selectedGameObject, scale);
+            applyEditorScale(*selectedGameObject, scale, runState);
         if (result) {
             // Diagnostics were prepared before this widget was evaluated and
             // therefore may describe the previous exact scale.

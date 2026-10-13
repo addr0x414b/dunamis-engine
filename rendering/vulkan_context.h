@@ -399,6 +399,7 @@ private:
 
         Type type = Type::Mesh;
         std::string modelIdentity;
+        std::uint64_t geometryIdentity = 0;
         std::array<std::uint32_t, 3> scaleBits{};
         std::uint32_t radiusBits = 0;
         std::uint32_t heightBits = 0;
@@ -407,6 +408,7 @@ private:
             const PhysicsDebugShapeSignature& other) const noexcept {
             return type == other.type &&
                    modelIdentity == other.modelIdentity &&
+                   geometryIdentity == other.geometryIdentity &&
                    scaleBits == other.scaleBits &&
                    radiusBits == other.radiusBits &&
                    heightBits == other.heightBits;

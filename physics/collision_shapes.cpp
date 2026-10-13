@@ -16,6 +16,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include "physics_units.h"
+#include "physics_transforms.h"
 #include "../assets/model_asset.h"
 #include "../math/transform_math.h"
 #include "../scene/character.h"
@@ -164,12 +165,13 @@ void setStats(const JPH::Shape& shape, ShapeDiagnostics& diagnostics) {
     diagnostics.joltBytes = stats.mSizeBytes;
 }
 
-Result cookMesh(const GameObject& object, CookedShape& output) {
+Result cookMesh(const GameObject& object, const glm::vec3& shapeScale,
+                CookedShape& output) {
     using Clock = std::chrono::steady_clock;
     const Clock::time_point geometryStart = Clock::now();
     ScaledLocalTriangleMesh mesh;
     Result result = buildScaledLocalTriangleMesh(
-        object.modelRenderable().meshInstances(), object.scale, mesh);
+        object.modelRenderable().meshInstances(), shapeScale, mesh);
     if (!result) return result;
 
     JPH::TriangleList triangles;
@@ -204,12 +206,13 @@ Result cookMesh(const GameObject& object, CookedShape& output) {
     return Result::success();
 }
 
-Result cookConvexHull(const GameObject& object, CookedShape& output) {
+Result cookConvexHull(const GameObject& object, const glm::vec3& shapeScale,
+                      CookedShape& output) {
     using Clock = std::chrono::steady_clock;
     const Clock::time_point geometryStart = Clock::now();
     LocalConvexHull hull;
     Result result = buildScaledLocalConvexHull(
-        object.modelRenderable().meshInstances(), object.scale, hull);
+        object.modelRenderable().meshInstances(), shapeScale, hull);
     if (!result) return result;
 
     JPH::Array<JPH::Vec3> points;
@@ -332,9 +335,9 @@ Result buildGameObjectShape(const GameObject& object, CookedShape& output) {
     if (!object.physics.enabled) return Result::failure("physics is disabled");
     switch (object.physics.colliderType) {
     case GameObject::PhysicsColliderType::Mesh:
-        return cookMesh(object, output);
+        return cookMesh(object, object.scale, output);
     case GameObject::PhysicsColliderType::ConvexHull:
-        return cookConvexHull(object, output);
+        return cookConvexHull(object, object.scale, output);
     case GameObject::PhysicsColliderType::Sphere:
         if (!(object.physics.sphereRadius > 0.0f) ||
             !std::isfinite(object.physics.sphereRadius)) {
@@ -355,6 +358,32 @@ Result buildGameObjectShape(const GameObject& object, CookedShape& output) {
         return Result::success();
     }
     return Result::failure("unsupported collider type");
+}
+
+Result buildStaticGameObjectShape(
+    const GameObject& object,
+    const ResolvedStaticPhysicsTransform& transform,
+    CookedShape& output) {
+    output = {};
+    if (!object.physics.enabled ||
+        object.physics.motionType != GameObject::PhysicsMotionType::Static) {
+        return Result::failure(
+            "static collision cooking requires an enabled static body");
+    }
+    if (!transform_math::isFiniteVector(transform.effectiveShapeScale)) {
+        return Result::failure(
+            "effective static collision scale must be finite");
+    }
+    switch (object.physics.colliderType) {
+    case GameObject::PhysicsColliderType::Mesh:
+        return cookMesh(object, transform.effectiveShapeScale, output);
+    case GameObject::PhysicsColliderType::ConvexHull:
+        return cookConvexHull(object, transform.effectiveShapeScale, output);
+    case GameObject::PhysicsColliderType::Sphere:
+        return Result::failure(
+            "static physics requires a mesh or convex-hull collider");
+    }
+    return Result::failure("unsupported static collider type");
 }
 
 Result buildCharacterShape(const Character& character, CookedShape& output) {

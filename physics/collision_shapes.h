@@ -17,6 +17,8 @@ class GameObject;
 
 namespace physics {
 
+struct ResolvedStaticPhysicsTransform;
+
 struct ShapeBuildTimings {
     std::chrono::steady_clock::duration geometryConversion{};
     std::chrono::steady_clock::duration joltCooking{};
@@ -35,6 +37,10 @@ struct CookedShape {
 // shapes and transforms returned here are in Jolt meters.
 [[nodiscard]] Result buildGameObjectShape(const GameObject& object,
                                           CookedShape& output);
+[[nodiscard]] Result buildStaticGameObjectShape(
+    const GameObject& object,
+    const ResolvedStaticPhysicsTransform& transform,
+    CookedShape& output);
 [[nodiscard]] Result buildCharacterShape(const Character& character,
                                          CookedShape& output);
 [[nodiscard]] JPH::RVec3 toJoltPosition(const glm::vec3& position) noexcept;

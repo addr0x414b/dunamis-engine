@@ -3,6 +3,7 @@
 #include "editor/editor_session.h"
 #include "physics/collision_shapes.h"
 #include "scene/character.h"
+#include "scene/model_renderable.h"
 #include "scene/scene.h"
 
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
@@ -17,6 +18,10 @@
 
 class VulkanContextTestAccess {
 public:
+    [[nodiscard]] static auto signature(const GameObject& object) {
+        return VulkanContext::makePhysicsDebugShapeSignature(object);
+    }
+
     [[nodiscard]] static bool shouldAcquire(
         const GameObject& object, bool character, bool renderColliderEnabled) {
         return VulkanContext::shouldAcquirePhysicsDebugShape(
@@ -238,6 +243,67 @@ void testScalePreviewCompatibility() {
            "compatibility probing mutated the stale cache entry");
 }
 
+void testUniformAncestorScaleInvalidatesDebugShape() {
+    TestScene scene;
+    auto parentOwner = std::make_unique<GameObject>();
+    GameObject* parent = parentOwner.get();
+    auto childOwner = std::make_unique<GameObject>();
+    GameObject* child = childOwner.get();
+    configurePhysicsObject(*child);
+    expect(static_cast<bool>(scene.addGameObject(std::move(parentOwner))) &&
+               static_cast<bool>(scene.addGameObject(std::move(childOwner))) &&
+               static_cast<bool>(scene.reparentGameObject(
+                   *child, parent, Scene::ReparentMode::PreserveLocal)),
+           "failed to create debug shape hierarchy fixture");
+
+    VulkanContext context;
+    expect(VulkanContextTestAccess::cacheMesh(context, *child, true),
+           "failed to seed unscaled child debug geometry");
+    const auto unscaledSignature =
+        VulkanContextTestAccess::signature(*child);
+    parent->scale = glm::vec3(4.0f);
+    const auto scaledSignature =
+        VulkanContextTestAccess::signature(*child);
+    expect(unscaledSignature != scaledSignature,
+           "ancestor scale did not invalidate the child debug shape signature");
+
+    glm::vec3 previewScale;
+    expect(VulkanContextTestAccess::previewMesh(
+               context, *child, previewScale) != nullptr &&
+               glm::length(previewScale - glm::vec3(4.0f)) <= 1.0e-5f,
+           "ancestor scale change did not produce a correct cached debug preview");
+}
+
+void testDebugShapeSignatureIncludesGeometryIdentity() {
+    const std::string sourceIdentity = "shared-import-source";
+    GameObject first;
+    GameObject second;
+    configurePhysicsObject(first);
+    configurePhysicsObject(second);
+    first.modelPath = sourceIdentity.c_str();
+    second.modelPath = sourceIdentity.c_str();
+    MeshInstance firstGeometry;
+    firstGeometry.mesh.vertices = {
+        {{0.0f, 0.0f, 0.0f}, {}, {}, {}, {}},
+        {{1.0f, 0.0f, 0.0f}, {}, {}, {}, {}},
+        {{0.0f, 0.0f, 1.0f}, {}, {}, {}, {}}};
+    firstGeometry.mesh.indices = {0, 1, 2};
+    MeshInstance secondGeometry = firstGeometry;
+    secondGeometry.mesh.vertices[1].pos.x = 2.0f;
+    expect(static_cast<bool>(first.modelRenderable().addMeshInstance(
+               std::move(firstGeometry))) &&
+               static_cast<bool>(second.modelRenderable().addMeshInstance(
+                   std::move(secondGeometry))),
+           "failed to create distinct debug geometry fixtures");
+    const auto firstSignature = VulkanContextTestAccess::signature(first);
+    const auto secondSignature = VulkanContextTestAccess::signature(second);
+    expect(firstSignature.modelIdentity == secondSignature.modelIdentity &&
+               firstSignature.geometryIdentity !=
+                   secondSignature.geometryIdentity &&
+               firstSignature != secondSignature,
+           "debug shape identity aliased distinct geometry from one source");
+}
+
 void testConvexScalePreview() {
     VulkanContext context;
     GameObject object;
@@ -409,6 +475,8 @@ int main() {
     testScaleAcquisitionDeferralPolicy();
     testMatchingProbeAndRetention();
     testScalePreviewCompatibility();
+    testUniformAncestorScaleInvalidatesDebugShape();
+    testDebugShapeSignatureIncludesGeometryIdentity();
     testConvexScalePreview();
     testRelativeScaleMath();
     testScalePreviewMembership();

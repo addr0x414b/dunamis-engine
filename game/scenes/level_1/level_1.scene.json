@@ -1,0 +1,3049 @@
+{
+  "activeCamera": {
+    "kind": "attached",
+    "ownerId": "edd4a884-e1b1-4dab-8054-e932785fca2d"
+  },
+  "editor": {
+    "camera": {
+      "farClip": 10000.0,
+      "front": [
+        -0.13044607639312744,
+        -0.22835087776184082,
+        0.9648003578186035
+      ],
+      "nearClip": 0.10000000149011612,
+      "position": [
+        0.5641562342643738,
+        8.438443183898926,
+        -17.23692512512207
+      ],
+      "up": [
+        0.0,
+        1.0,
+        0.0
+      ]
+    },
+    "renderColliders": []
+  },
+  "formatVersion": 4,
+  "objects": [
+    {
+      "id": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "parentId": null,
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "City",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": false,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          9.101033210754395,
+          -0.07502293586730957,
+          0.4715803861618042
+        ],
+        "rotation": [
+          -0.0,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          4.0,
+          4.0,
+          4.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 0,
+      "type": "Group"
+    },
+    {
+      "id": "35972500-4100-4ef9-abf0-4179f79065fb",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/0:8:Cube.001",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cube.001",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          31.859466552734375,
+          0.0,
+          -2.4973833560943604
+        ],
+        "rotation": [
+          -90.0000228881836,
+          7.165099676770259e-12,
+          179.99998474121094
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 0,
+      "type": "GameObject"
+    },
+    {
+      "id": "11bf0e43-155f-4773-a550-b617240a622a",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/1:8:Cube.002",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cube.002",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          26.426733016967773,
+          1.1681177616119385,
+          -1.4850214719772339
+        ],
+        "rotation": [
+          -90.0,
+          -1.3660377589985728e-05,
+          89.99999237060547
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 1,
+      "type": "GameObject"
+    },
+    {
+      "id": "cdfc0466-73ce-45df-90be-a9fc6adce1fe",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/2:8:Cube.003",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cube.003",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          35.519954681396484,
+          0.03167920187115669,
+          -2.759363889694214
+        ],
+        "rotation": [
+          90.00000762939453,
+          1.0313299693420763e-12,
+          180.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 2,
+      "type": "GameObject"
+    },
+    {
+      "id": "f1f5a543-655f-4134-97a4-854dcccc91a9",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/3:8:Cube.004",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cube.004",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -7.386948585510254,
+          1.1681177616119385,
+          -2.534895420074463
+        ],
+        "rotation": [
+          -90.0000228881836,
+          7.979321196838196e-12,
+          179.99998474121094
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 3,
+      "type": "GameObject"
+    },
+    {
+      "id": "e7ab3509-923f-4f85-af59-34402a0baf15",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/4:8:Cube.005",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cube.005",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -1.5999008417129517,
+          0.0,
+          -12.180872917175293
+        ],
+        "rotation": [
+          -90.0,
+          3.73863622371573e-06,
+          -146.8132781982422
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 4,
+      "type": "GameObject"
+    },
+    {
+      "id": "6d03ed7f-9e72-44fe-8494-3a6be40fb463",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/5:8:Cube.006",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cube.006",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          0.31200969219207764,
+          0.031679198145866394,
+          -13.825021743774414
+        ],
+        "rotation": [
+          89.99998474121094,
+          1.1215907761652488e-05,
+          146.8132781982422
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 5,
+      "type": "GameObject"
+    },
+    {
+      "id": "fbe01d0a-81fa-4ae2-94e0-61f257efe26c",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/6:8:Cube.007",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cube.007",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -6.712181091308594,
+          1.1681177616119385,
+          -6.104977130889893
+        ],
+        "rotation": [
+          -90.0,
+          -7.907316899036232e-07,
+          157.84405517578125
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 6,
+      "type": "GameObject"
+    },
+    {
+      "id": "7d196d3e-d66c-4bb3-90c5-36ef0f3a8a8f",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/7:8:Cube.008",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cube.008",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          6.437892913818359,
+          0.0,
+          -6.686882019042969
+        ],
+        "rotation": [
+          -90.00000762939453,
+          1.3281066458148416e-05,
+          123.58163452148438
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 7,
+      "type": "GameObject"
+    },
+    {
+      "id": "d1aed919-0ff9-4dcc-9132-694a264552a9",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/8:8:Cube.009",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cube.009",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          2.3870437145233154,
+          0.0,
+          5.767652988433838
+        ],
+        "rotation": [
+          -90.0,
+          0.0,
+          90.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 8,
+      "type": "GameObject"
+    },
+    {
+      "id": "e8d713cc-d154-478a-916f-80bb912e6655",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/9:8:Cube.010",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cube.010",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          2.7162327766418457,
+          0.031679198145866394,
+          8.308008193969727
+        ],
+        "rotation": [
+          90.0,
+          1.3660377589985728e-05,
+          -90.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 9,
+      "type": "GameObject"
+    },
+    {
+      "id": "ff535dab-8f34-4d08-b7f5-445109b16b00",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/10:8:Cube.011",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cube.011",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -4.440554141998291,
+          1.1681177616119385,
+          -9.115891456604004
+        ],
+        "rotation": [
+          -90.0,
+          4.806078322872054e-06,
+          129.334228515625
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 10,
+      "type": "GameObject"
+    },
+    {
+      "id": "1beb7b62-f2bd-456c-ad2e-b4469f974e05",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/11:8:Cube.012",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cube.012",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -9.170923233032227,
+          4.944267749786377,
+          -11.148609161376953
+        ],
+        "rotation": [
+          -90.0,
+          2.9927257401141105e-06,
+          54.25243377685547
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 11,
+      "type": "GameObject"
+    },
+    {
+      "id": "511699eb-2759-4e70-8c24-c7ce121ca2e3",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/12:8:Cube.013",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cube.013",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -1.6153593063354492,
+          3.6075901985168457,
+          -20.349111557006836
+        ],
+        "rotation": [
+          -89.99999237060547,
+          2.425291086183279e-06,
+          12.01148796081543
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 12,
+      "type": "GameObject"
+    },
+    {
+      "id": "9a73e168-16f6-4cd5-acb7-6028fc1c2971",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/13:8:Cube.014",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cube.014",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          4.7190399169921875,
+          3.9579195976257324,
+          5.183456897735596
+        ],
+        "rotation": [
+          -89.99999237060547,
+          -6.819698319304734e-05,
+          90.82125854492188
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 13,
+      "type": "GameObject"
+    },
+    {
+      "id": "9350310c-bfb0-45a4-bb8d-2a1eff15081b",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/14:8:Cube.015",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cube.015",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -8.763494491577148,
+          0.031679198145866394,
+          10.969121932983398
+        ],
+        "rotation": [
+          90.00001525878906,
+          -0.0008878380176611245,
+          90.5351333618164
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 14,
+      "type": "GameObject"
+    },
+    {
+      "id": "7ad0f8e2-af20-4f1d-ae8d-d38a81840ab8",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/15:8:Cube.016",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cube.016",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -12.735042572021484,
+          4.944267749786377,
+          12.596131324768066
+        ],
+        "rotation": [
+          -90.0,
+          0.0005190944648347795,
+          89.62779235839844
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 15,
+      "type": "GameObject"
+    },
+    {
+      "id": "272fbdcf-8c37-4b6c-9137-61f931be5ce9",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/16:8:Cube.017",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cube.017",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -5.924622535705566,
+          0.031679198145866394,
+          13.759604454040527
+        ],
+        "rotation": [
+          90.00001525878906,
+          -0.0008878380176611245,
+          90.5351333618164
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 16,
+      "type": "GameObject"
+    },
+    {
+      "id": "608acb55-6333-4bc9-9f57-0a65a224479f",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/17:8:Cube.018",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cube.018",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -2.984266996383667,
+          0.031679198145866394,
+          13.798498153686523
+        ],
+        "rotation": [
+          90.00001525878906,
+          -0.0008878380176611245,
+          90.5351333618164
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 17,
+      "type": "GameObject"
+    },
+    {
+      "id": "37183ec1-e642-4b6d-9491-bafc124c85ab",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/18:8:Cube.019",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cube.019",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          4.7190399169921875,
+          3.9579195976257324,
+          15.707759857177734
+        ],
+        "rotation": [
+          -90.0,
+          -1.0622911759128328e-06,
+          51.529232025146484
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 18,
+      "type": "GameObject"
+    },
+    {
+      "id": "7b26728a-c3fa-4e28-8685-2896ca87b7a3",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/19:8:Cylinder",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cylinder",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -0.24359168112277985,
+          0.02169869840145111,
+          1.1833360195159912
+        ],
+        "rotation": [
+          -90.00000762939453,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 19,
+      "type": "GameObject"
+    },
+    {
+      "id": "08568b83-aeaa-416f-96a0-a5cf0c1f5030",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/20:12:Cylinder.001",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cylinder.001",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -5.889163017272949,
+          0.02169869840145111,
+          1.429423213005066
+        ],
+        "rotation": [
+          -90.00000762939453,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 20,
+      "type": "GameObject"
+    },
+    {
+      "id": "61ea5c50-bba9-478b-8c5e-aed69857638b",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/21:12:Cylinder.002",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cylinder.002",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -5.776221752166748,
+          0.02169869840145111,
+          8.270428657531738
+        ],
+        "rotation": [
+          -90.00000762939453,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 21,
+      "type": "GameObject"
+    },
+    {
+      "id": "ab3e693f-778d-4cba-9621-c5e96a898a32",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/22:12:Cylinder.003",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cylinder.003",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -5.124843120574951,
+          0.02169869840145111,
+          4.99513578414917
+        ],
+        "rotation": [
+          -90.00000762939453,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 22,
+      "type": "GameObject"
+    },
+    {
+      "id": "60f95f42-1963-48fa-ae59-4e9f8e175c4f",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/23:12:Cylinder.004",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cylinder.004",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -5.133848667144775,
+          0.02169869840145111,
+          4.819525718688965
+        ],
+        "rotation": [
+          -90.00000762939453,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 23,
+      "type": "GameObject"
+    },
+    {
+      "id": "3332e1c1-89a0-49cf-ab4e-193d5a163e30",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/24:12:Cylinder.005",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cylinder.005",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -4.466020107269287,
+          0.02169869840145111,
+          -6.881697177886963
+        ],
+        "rotation": [
+          -90.00000762939453,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 24,
+      "type": "GameObject"
+    },
+    {
+      "id": "6edae0b2-a7b1-4999-80cc-4e38a4906826",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/25:12:Cylinder.006",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cylinder.006",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -0.03227424621582031,
+          0.02169869840145111,
+          -10.01258659362793
+        ],
+        "rotation": [
+          -90.00000762939453,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 25,
+      "type": "GameObject"
+    },
+    {
+      "id": "b8f048c4-cbc9-4cde-8b83-ef9652625625",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/26:12:Cylinder.007",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cylinder.007",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          4.335644245147705,
+          0.02169869840145111,
+          -5.50526762008667
+        ],
+        "rotation": [
+          -90.00000762939453,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 26,
+      "type": "GameObject"
+    },
+    {
+      "id": "a30c87a0-2421-468c-86b7-f5fc4b974055",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/27:12:Cylinder.008",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cylinder.008",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          2.8022258281707764,
+          0.02169869840145111,
+          -10.500494003295898
+        ],
+        "rotation": [
+          -90.00000762939453,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 27,
+      "type": "GameObject"
+    },
+    {
+      "id": "2ee52416-3bc9-42d7-8717-14bbb19643f4",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/28:12:Cylinder.009",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cylinder.009",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          7.379246711730957,
+          0.02169869840145111,
+          -7.712461471557617
+        ],
+        "rotation": [
+          -90.00000762939453,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 28,
+      "type": "GameObject"
+    },
+    {
+      "id": "7e87b26e-1d74-45b4-a76b-903d7f5c269d",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/29:12:Cylinder.010",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cylinder.010",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -3.435338020324707,
+          0.056015387177467346,
+          -5.494489669799805
+        ],
+        "rotation": [
+          -90.00000762939453,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 29,
+      "type": "GameObject"
+    },
+    {
+      "id": "1210ac24-0a2b-450b-9438-e9329acaf125",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/30:12:Cylinder.011",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cylinder.011",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -0.9029297232627869,
+          0.056015387177467346,
+          0.13487625122070313
+        ],
+        "rotation": [
+          -90.00000762939453,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 30,
+      "type": "GameObject"
+    },
+    {
+      "id": "177ffb78-f747-44b6-9330-64a0bb5d92df",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/31:12:Cylinder.012",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Cylinder.012",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -4.7418670654296875,
+          0.056015387177467346,
+          8.71603012084961
+        ],
+        "rotation": [
+          -90.00000762939453,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 31,
+      "type": "GameObject"
+    },
+    {
+      "id": "1696f50a-949a-49c0-a549-1ea1b5e8d623",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/32:5:Plane",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -2.8275041580200195,
+          -0.012091527692973614,
+          9.389144897460938
+        ],
+        "rotation": [
+          -90.00000762939453,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 32,
+      "type": "GameObject"
+    },
+    {
+      "id": "bd42bcd3-f9a2-46cc-a59a-547e9066d7b1",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/33:9:Plane.001",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.001",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          23.26357078552246,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          -0.0,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 33,
+      "type": "GameObject"
+    },
+    {
+      "id": "9e33c393-f528-46c7-8260-0c7ffc24a926",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/34:9:Plane.002",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.002",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          18.754302978515625,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          -90.00000762939453,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 34,
+      "type": "GameObject"
+    },
+    {
+      "id": "9ffb6ce2-4762-4ea5-b770-073428f15956",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/35:9:Plane.003",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.003",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -2.8275041580200195,
+          0.06325853615999222,
+          9.389144897460938
+        ],
+        "rotation": [
+          -90.00000762939453,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 35,
+      "type": "GameObject"
+    },
+    {
+      "id": "cd5a5065-3b13-4a66-b682-5e60792f12aa",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/36:9:Plane.004",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.004",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          29.77581787109375,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          -0.0,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 36,
+      "type": "GameObject"
+    },
+    {
+      "id": "1ed31a84-ce55-4ab5-8574-789fb44a2788",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/37:9:Plane.005",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.005",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -2.8275041580200195,
+          0.07023723423480988,
+          9.389144897460938
+        ],
+        "rotation": [
+          -90.00000762939453,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 37,
+      "type": "GameObject"
+    },
+    {
+      "id": "c31222a8-6c8c-451d-a590-c88259f8490a",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/38:9:Plane.006",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.006",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -2.8275041580200195,
+          -0.5981289744377136,
+          9.389144897460938
+        ],
+        "rotation": [
+          -90.00000762939453,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 38,
+      "type": "GameObject"
+    },
+    {
+      "id": "d9a07584-ea7b-43cb-bfeb-3c0e22a54b20",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/39:9:Plane.007",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.007",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -2.8275041580200195,
+          -0.3506741225719452,
+          9.389144897460938
+        ],
+        "rotation": [
+          -90.00000762939453,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 39,
+      "type": "GameObject"
+    },
+    {
+      "id": "42c85c0a-7072-47ab-a8da-07d22c215169",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/40:9:Plane.008",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.008",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          21.607816696166992,
+          0.0,
+          -0.7694835662841797
+        ],
+        "rotation": [
+          -0.0,
+          89.99998474121094,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 40,
+      "type": "GameObject"
+    },
+    {
+      "id": "cf9a2f77-6afa-4a93-bb30-baa84df5043e",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/41:9:Plane.009",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.009",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -6.0074286460876465,
+          0.0,
+          0.21328634023666382
+        ],
+        "rotation": [
+          -0.0,
+          89.99998474121094,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 41,
+      "type": "GameObject"
+    },
+    {
+      "id": "1b72c3e8-6d62-473b-a500-81eb20d4ec6e",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/42:9:Plane.010",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.010",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -6.083704471588135,
+          0.0,
+          3.594486951828003
+        ],
+        "rotation": [
+          -90.0,
+          -1.3660377589985728e-05,
+          89.99999237060547
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 42,
+      "type": "GameObject"
+    },
+    {
+      "id": "791dba72-cdca-4053-bed6-94be05cabb53",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/43:9:Plane.011",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.011",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -1.338225245475769,
+          0.0,
+          -9.577582359313965
+        ],
+        "rotation": [
+          -0.0,
+          33.18668746948242,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 43,
+      "type": "GameObject"
+    },
+    {
+      "id": "40b114f0-1015-4534-a757-4a96705c183e",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/44:9:Plane.012",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.012",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -7.006439208984375,
+          0.0,
+          1.247414469718933
+        ],
+        "rotation": [
+          180.0,
+          2.2311800421448424e-05,
+          180.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 44,
+      "type": "GameObject"
+    },
+    {
+      "id": "5eee4380-3fa7-4f8f-a58c-f78c912dccb0",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/45:9:Plane.013",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.013",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -6.07436990737915,
+          0.0,
+          5.050657749176025
+        ],
+        "rotation": [
+          -90.0,
+          -1.3660377589985728e-05,
+          89.99999237060547
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 45,
+      "type": "GameObject"
+    },
+    {
+      "id": "e8196f56-aa43-4e97-bbd9-eb122af39a91",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/46:9:Plane.014",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.014",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -5.891293048858643,
+          0.0,
+          7.065264701843262
+        ],
+        "rotation": [
+          -0.0,
+          89.99998474121094,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 46,
+      "type": "GameObject"
+    },
+    {
+      "id": "8f80ead9-9ced-4c8d-be73-aa486c597904",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/47:9:Plane.015",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.015",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -6.0074286460876465,
+          1.5746934413909912,
+          0.21328634023666382
+        ],
+        "rotation": [
+          -0.0,
+          89.99998474121094,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 47,
+      "type": "GameObject"
+    },
+    {
+      "id": "6c6f9ebe-da35-45ec-b053-5541fe4326ed",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/48:9:Plane.016",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.016",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -5.891293048858643,
+          1.5746934413909912,
+          7.065264701843262
+        ],
+        "rotation": [
+          -0.0,
+          89.99998474121094,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 48,
+      "type": "GameObject"
+    },
+    {
+      "id": "caaced8f-91a6-46ff-804d-dce74c1e0ca7",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/49:9:Plane.017",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.017",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -6.711190700531006,
+          1.5746934413909912,
+          2.469680070877075
+        ],
+        "rotation": [
+          -0.0,
+          89.99998474121094,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 49,
+      "type": "GameObject"
+    },
+    {
+      "id": "816ff479-a594-418d-a735-c2a53fd20b74",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/50:9:Plane.018",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.018",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -6.711190700531006,
+          1.5746934413909912,
+          4.772171974182129
+        ],
+        "rotation": [
+          -0.0,
+          89.99998474121094,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 50,
+      "type": "GameObject"
+    },
+    {
+      "id": "f401d0b7-8925-4002-bf01-1fdeb6af3cf7",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/51:9:Plane.019",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.019",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -6.0074286460876465,
+          3.1471872329711914,
+          0.21328634023666382
+        ],
+        "rotation": [
+          -0.0,
+          89.99998474121094,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 51,
+      "type": "GameObject"
+    },
+    {
+      "id": "15c327a3-786e-4afe-ac6d-fafb35a9fd55",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/52:9:Plane.020",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.020",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -0.05989503860473633,
+          0.0,
+          -0.03365882858633995
+        ],
+        "rotation": [
+          -0.0,
+          -88.91714477539063,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 52,
+      "type": "GameObject"
+    },
+    {
+      "id": "0140296f-5b58-4bb5-bd34-7a50fcef9441",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/53:9:Plane.021",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.021",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          7.059211730957031,
+          0.0,
+          -7.101362705230713
+        ],
+        "rotation": [
+          -90.00000762939453,
+          -8.794369023235049e-06,
+          -143.9134979248047
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 53,
+      "type": "GameObject"
+    },
+    {
+      "id": "8088842b-b0f8-4580-882d-b8d9952489d3",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/54:9:Plane.022",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.022",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -0.01624876819550991,
+          0.0,
+          4.593551158905029
+        ],
+        "rotation": [
+          -0.0,
+          -89.99998474121094,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 54,
+      "type": "GameObject"
+    },
+    {
+      "id": "b57903eb-4265-4e03-a45c-b11773b43a2e",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/55:9:Plane.023",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.023",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          3.511611223220825,
+          0.0,
+          -3.6212751865386963
+        ],
+        "rotation": [
+          -0.0,
+          -55.464988708496094,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 55,
+      "type": "GameObject"
+    },
+    {
+      "id": "cf0ebe59-74e6-4ba4-8aa6-0cbe8fed541d",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/56:9:Plane.024",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.024",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -0.01624876819550991,
+          0.0,
+          2.3488056659698486
+        ],
+        "rotation": [
+          -0.0,
+          -89.99998474121094,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 56,
+      "type": "GameObject"
+    },
+    {
+      "id": "794a0427-3a17-488a-95dc-c65138dd5fb8",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/57:9:Plane.025",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.025",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          0.5039573907852173,
+          0.0,
+          -2.207963705062866
+        ],
+        "rotation": [
+          180.0,
+          -62.24849319458008,
+          180.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 57,
+      "type": "GameObject"
+    },
+    {
+      "id": "611742ee-0e97-4f70-be9d-26d34f3f3fed",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/58:9:Plane.026",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.026",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          2.0638771057128906,
+          0.0,
+          -3.824188709259033
+        ],
+        "rotation": [
+          180.0,
+          -33.012935638427734,
+          180.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 58,
+      "type": "GameObject"
+    },
+    {
+      "id": "31f1bd27-e9e5-4ee9-9240-73aab23478a4",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/59:9:Plane.027",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.027",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -10.888401985168457,
+          7.024534702301025,
+          0.9151108264923096
+        ],
+        "rotation": [
+          -0.0,
+          88.79777526855469,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 59,
+      "type": "GameObject"
+    },
+    {
+      "id": "4f5b1d0b-b3b6-4ceb-a2df-09b775d5c8b8",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/60:9:Plane.028",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.028",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          13.663548469543457,
+          7.024534702301025,
+          -3.384948253631592
+        ],
+        "rotation": [
+          -0.0,
+          39.89108657836914,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 60,
+      "type": "GameObject"
+    },
+    {
+      "id": "67385322-3ddd-4339-9954-1e587ffd4f98",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/61:9:Plane.029",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.029",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -8.94660758972168,
+          5.249724388122559,
+          -20.14875030517578
+        ],
+        "rotation": [
+          -0.0,
+          41.80534744262695,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 61,
+      "type": "GameObject"
+    },
+    {
+      "id": "ef9cdd35-faa9-475f-a951-facc5d77cb2b",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/62:9:Plane.030",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Plane.030",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -8.544690132141113,
+          7.024534702301025,
+          23.869230270385742
+        ],
+        "rotation": [
+          -0.0,
+          -28.031892776489258,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 62,
+      "type": "GameObject"
+    },
+    {
+      "id": "308a9b11-8018-40f2-8e34-9987ebe3e0ce",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/63:6:node_0",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "node_0",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -0.9183986186981201,
+          0.08292018622159958,
+          -0.004320141859352589
+        ],
+        "rotation": [
+          -0.0,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 63,
+      "type": "GameObject"
+    },
+    {
+      "id": "b8c19d40-7a1d-45c6-af74-341045803e0c",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/64:10:node_0.001",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "node_0.001",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -0.6931166052818298,
+          0.08292018622159958,
+          -2.654475450515747
+        ],
+        "rotation": [
+          -0.0,
+          -15.66303825378418,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 64,
+      "type": "GameObject"
+    },
+    {
+      "id": "4486ddc7-a9cf-4b90-9c8e-13bd78f267fb",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/65:10:node_0.002",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "node_0.002",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          0.8166494369506836,
+          0.08292018622159958,
+          -4.338445663452148
+        ],
+        "rotation": [
+          -0.0,
+          -49.567291259765625,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 65,
+      "type": "GameObject"
+    },
+    {
+      "id": "29a8a2ed-3a2f-431f-87f8-70f99f2a7dcd",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/66:10:node_0.003",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "node_0.003",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          3.5651979446411133,
+          0.08292018622159958,
+          -6.099839210510254
+        ],
+        "rotation": [
+          -0.0,
+          -49.567291259765625,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 66,
+      "type": "GameObject"
+    },
+    {
+      "id": "24f21914-4ecf-4ed5-83bf-2ead27c6a729",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/67:10:node_0.004",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "node_0.004",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -4.8437910079956055,
+          0.08292018622159958,
+          8.798778533935547
+        ],
+        "rotation": [
+          180.0,
+          2.2311800421448424e-05,
+          180.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 67,
+      "type": "GameObject"
+    },
+    {
+      "id": "49c268e2-e775-4987-8c04-8527f9d88a1e",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/68:10:node_0.005",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "node_0.005",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -4.550869941711426,
+          0.08292018622159958,
+          -3.0846080780029297
+        ],
+        "rotation": [
+          180.0,
+          14.196202278137207,
+          180.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 68,
+      "type": "GameObject"
+    },
+    {
+      "id": "cbc91da8-af0a-4952-9083-c5272d56f4d7",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/69:10:node_0.006",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "node_0.006",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -1.6743568181991577,
+          0.08292018622159958,
+          -7.197752475738525
+        ],
+        "rotation": [
+          180.0,
+          44.03660202026367,
+          180.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 69,
+      "type": "GameObject"
+    },
+    {
+      "id": "3f89b800-610b-4bc4-b348-492f1f53e488",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/70:10:node_0.007",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "node_0.007",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -3.5158629417419434,
+          0.08292018622159958,
+          -5.383129596710205
+        ],
+        "rotation": [
+          180.0,
+          36.50474548339844,
+          180.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 70,
+      "type": "GameObject"
+    },
+    {
+      "id": "25ef6b5c-9ee2-458d-87cd-06a0cb9d2c59",
+      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "root:8:RootNode/71:10:node_0.008",
+          "sourcePath": "game/assets/city-scene/source/city.fbx",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "node_0.008",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          1.5785224437713623,
+          0.08292018622159958,
+          -9.1467924118042
+        ],
+        "rotation": [
+          180.0,
+          54.03349685668945,
+          180.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 71,
+      "type": "GameObject"
+    },
+    {
+      "id": "130721d7-1f14-4354-ad7d-4ff69227ac36",
+      "parentId": null,
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "",
+          "sourcePath": "",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "game/assets/models/glTF-Sample-Assets/Models/Fox/glTF/Fox.gltf",
+        "name": "Fox",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          2.3397369384765625,
+          0.0,
+          -0.6643532514572144
+        ],
+        "rotation": [
+          -0.0,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          0.009999999776482582,
+          0.009999999776482582,
+          0.009999999776482582
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 1,
+      "type": "GameObject"
+    },
+    {
+      "id": "c3f0c0d6-0c5a-4d7b-9281-7bcb60881e56",
+      "parentId": null,
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "",
+          "sourcePath": "",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "game/assets/models/glTF-Sample-Assets/Models/PotOfCoals/glTF/PotOfCoals.gltf",
+        "name": "Pot",
+        "physics": {
+          "colliderType": "convexHull",
+          "enabled": true,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          0.1462869644165039,
+          0.0,
+          -2.817254066467285
+        ],
+        "rotation": [
+          -0.0,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          7.5,
+          7.5,
+          7.5
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 2,
+      "type": "GameObject"
+    },
+    {
+      "id": "045c2510-5fa0-4e32-afff-afe65f8b7cfc",
+      "parentId": null,
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "",
+          "sourcePath": "",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "game/assets/models/glTF-Sample-Assets/Models/BrainStem/glTF/BrainStem.gltf",
+        "name": "Brah",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": false,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          3.2200000286102295,
+          0.0,
+          -1.2200000286102295
+        ],
+        "rotation": [
+          -90.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 3,
+      "type": "GameObject"
+    },
+    {
+      "id": "fdfd257d-def9-47a5-915a-37dac0b8945c",
+      "parentId": null,
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "",
+          "sourcePath": "",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "game/assets/models/Avocado.glb",
+        "name": "Physics Test Avocado",
+        "physics": {
+          "colliderType": "convexHull",
+          "enabled": true,
+          "motionType": "dynamic",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          0.0,
+          3.0,
+          -1.75
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          5.0,
+          5.0,
+          5.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 4,
+      "type": "GameObject"
+    },
+    {
+      "id": "41f09d2b-cdf6-4300-ac07-989b98947267",
+      "parentId": null,
+      "properties": {
+        "color": [
+          0.19824105501174927,
+          0.5392156839370728,
+          0.31858497858047485
+        ],
+        "importedAsset": {
+          "nodeIdentity": "",
+          "sourcePath": "",
+          "textureFallbackPath": ""
+        },
+        "intensity": 12.100000381469727,
+        "modelPath": "",
+        "name": "Direc Light",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": false,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -2.410853862762451,
+          0.19999974966049194,
+          -4.517597198486328
+        ],
+        "rotation": [
+          -123.55107116699219,
+          4.0188374519348145,
+          167.53036499023438
+        ],
+        "scale": [
+          200.0,
+          200.0,
+          200.0
+        ],
+        "shadowFarPlane": 200.0,
+        "shadowFocus": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "shadowHalfExtent": 50.0,
+        "shadowLightDistance": 100.0,
+        "shadowNearPlane": 0.10000000149011612,
+        "texturePath": ""
+      },
+      "siblingIndex": 5,
+      "type": "DirectionalLight"
+    },
+    {
+      "id": "87babdd0-00cc-46f5-9bd9-5cc8d3820d99",
+      "parentId": null,
+      "properties": {
+        "color": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "importedAsset": {
+          "nodeIdentity": "",
+          "sourcePath": "",
+          "textureFallbackPath": ""
+        },
+        "intensity": 1.0,
+        "modelPath": "",
+        "name": "Point Light",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": false,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          4.3843770027160645,
+          3.8890912532806396,
+          1.0
+        ],
+        "rotation": [
+          -0.0,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          500.0,
+          500.0,
+          500.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 6,
+      "type": "PointLight"
+    },
+    {
+      "attachedCamera": {
+        "farClip": 10000.0,
+        "fov": 60.0,
+        "front": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "nearClip": 0.10000000149011612,
+        "position": [
+          -0.28684115409851074,
+          1.5,
+          0.11121070384979248
+        ],
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "id": "edd4a884-e1b1-4dab-8054-e932785fca2d",
+      "parentId": null,
+      "properties": {
+        "capsuleHeight": 1.7999999523162842,
+        "capsuleRadius": 0.3499999940395355,
+        "importedAsset": {
+          "nodeIdentity": "",
+          "sourcePath": "",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "",
+        "name": "Player",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": false,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          -0.28684115409851074,
+          0.0,
+          0.11121070384979248
+        ],
+        "rotation": [
+          -0.0,
+          0.0,
+          -0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 7,
+      "type": "Player"
+    }
+  ],
+  "scene": {
+    "ambientColor": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "ambientIntensity": 0.10000000149011612,
+    "backgroundColor": [
+      0.6389999985694885,
+      0.9649999737739563,
+      1.0,
+      1.0
+    ],
+    "name": "Level 1"
+  }
+}

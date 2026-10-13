@@ -276,7 +276,8 @@ struct PhysicsServer::Impl {
         }
     };
 
-    static StaticShapeKey makeStaticShapeKey(const GameObject& object) {
+    static StaticShapeKey makeStaticShapeKey(
+        const GameObject& object, const glm::vec3& effectiveShapeScale) {
         const auto normalizedBits = [](float value) {
             const float normalized = value == 0.0f ? 0.0f : value;
             std::uint32_t bits = 0;
@@ -298,8 +299,9 @@ struct PhysicsServer::Impl {
         key.modelIdentity =
             model_loading::normalizedFilesystemIdentity(modelPath);
         key.scaleBits = std::array<std::uint32_t, 3>{
-            normalizedBits(object.scale.x), normalizedBits(object.scale.y),
-            normalizedBits(object.scale.z)};
+            normalizedBits(effectiveShapeScale.x),
+            normalizedBits(effectiveShapeScale.y),
+            normalizedBits(effectiveShapeScale.z)};
         key.collider = object.physics.colliderType;
         key.geometryFingerprint =
             physics::makeStaticMeshInMemoryGeometryIdentity(
@@ -308,7 +310,9 @@ struct PhysicsServer::Impl {
     }
 
     [[nodiscard]] Result acquireStaticShape(
-        const GameObject& object, physics::CookedShape& output,
+        const GameObject& object,
+        const physics::ResolvedStaticPhysicsTransform& transform,
+        physics::CookedShape& output,
         StaticShapeAcquisitionStats* stats);
 
     struct RuntimeBody {
@@ -318,6 +322,8 @@ struct PhysicsServer::Impl {
         bool editorOverride = false;
         physics::PhysicsWorldPose submittedWorldPose;
         bool hasSubmittedWorldPose = false;
+        glm::vec3 submittedEffectiveShapeScale{1.0f};
+        bool hasSubmittedEffectiveShapeScale = false;
     };
 
     struct RuntimeCharacter {
@@ -369,25 +375,69 @@ void PhysicsServer::Impl::synchronizeStaticBodies() {
             continue;
         }
 
-        physics::PhysicsWorldPose currentPose;
-        const Result result =
-            physics::derivePhysicsWorldPose(*body.object, currentPose);
+        physics::ResolvedStaticPhysicsTransform currentTransform;
+        const Result result = physics::resolveStaticPhysicsTransform(
+            *body.object, currentTransform);
         if (!result) {
             spdlog::error(
                 "Static physics body synchronization failed for {}: {}",
                 objectDescription(*body.object), result.error());
             continue;
         }
+
+        bool shapeChanged = !body.hasSubmittedEffectiveShapeScale;
+        for (int axis = 0; axis < 3 && !shapeChanged; ++axis) {
+            shapeChanged = body.submittedEffectiveShapeScale[axis] !=
+                           currentTransform.effectiveShapeScale[axis];
+        }
+        if (shapeChanged) {
+            physics::CookedShape replacement;
+            const Result shapeResult =
+                body.object->physics.colliderType ==
+                        GameObject::PhysicsColliderType::Mesh
+                    ? acquireStaticShape(*body.object, currentTransform,
+                                         replacement, nullptr)
+                    : physics::buildStaticGameObjectShape(
+                          *body.object, currentTransform, replacement);
+            if (!shapeResult || replacement.shape == nullptr) {
+                spdlog::error(
+                    "Static physics shape replacement failed for {}: {}",
+                    objectDescription(*body.object),
+                    shapeResult ? "Jolt produced no shape" : shapeResult.error());
+                continue;
+            }
+            bodies.SetShape(body.id, replacement.shape.GetPtr(), true,
+                            JPH::EActivation::DontActivate);
+            // Shape COM may change when geometry is recooked. Reassert the
+            // authored rigid body origin so the object remains anchored at
+            // the same hierarchy-derived world pose.
+            bodies.SetPositionAndRotation(
+                body.id,
+                physics::toJoltPosition(
+                    currentTransform.rigidWorldPose.position),
+                physics::toJoltRotation(
+                    currentTransform.rigidWorldPose.rotation),
+                JPH::EActivation::DontActivate);
+            body.submittedWorldPose = currentTransform.rigidWorldPose;
+            body.hasSubmittedWorldPose = true;
+            body.submittedEffectiveShapeScale =
+                currentTransform.effectiveShapeScale;
+            body.hasSubmittedEffectiveShapeScale = true;
+            staticBodyMoved = true;
+        }
+
         if (body.hasSubmittedWorldPose &&
-            samePhysicsWorldPose(body.submittedWorldPose, currentPose)) {
+            samePhysicsWorldPose(body.submittedWorldPose,
+                                 currentTransform.rigidWorldPose)) {
             continue;
         }
 
         bodies.SetPositionAndRotation(
-            body.id, physics::toJoltPosition(currentPose.position),
-            physics::toJoltRotation(currentPose.rotation),
+            body.id,
+            physics::toJoltPosition(currentTransform.rigidWorldPose.position),
+            physics::toJoltRotation(currentTransform.rigidWorldPose.rotation),
             JPH::EActivation::DontActivate);
-        body.submittedWorldPose = currentPose;
+        body.submittedWorldPose = currentTransform.rigidWorldPose;
         body.hasSubmittedWorldPose = true;
         staticBodyMoved = true;
     }
@@ -421,7 +471,9 @@ Result validateRigidBodyConfiguration(const GameObject& object) {
 }
 
 Result PhysicsServer::Impl::acquireStaticShape(
-    const GameObject& object, physics::CookedShape& output,
+    const GameObject& object,
+    const physics::ResolvedStaticPhysicsTransform& transform,
+    physics::CookedShape& output,
     StaticShapeAcquisitionStats* stats) {
     output = {};
     if (!object.physics.enabled) {
@@ -432,7 +484,8 @@ Result PhysicsServer::Impl::acquireStaticShape(
         return Result::failure("shared static shape acquisition requires a static mesh collider");
     }
 
-    const StaticShapeKey key = makeStaticShapeKey(object);
+    const StaticShapeKey key =
+        makeStaticShapeKey(object, transform.effectiveShapeScale);
     const auto cached = staticShapeCache.find(key);
     if (cached != staticShapeCache.end()) {
         if (stats != nullptr) ++stats->ramHits;
@@ -446,7 +499,8 @@ Result PhysicsServer::Impl::acquireStaticShape(
     const physics::StaticMeshShapeCacheKey diskKey =
         physics::makeStaticMeshShapeCacheKey(
             key.modelIdentity, object.modelRenderable().meshInstances(),
-            object.scale, static_cast<std::uint8_t>(key.collider));
+            transform.effectiveShapeScale,
+            static_cast<std::uint8_t>(key.collider));
     if (stats != nullptr) {
         stats->geometryFingerprint += Clock::now() - fingerprintStart;
     }
@@ -484,7 +538,8 @@ Result PhysicsServer::Impl::acquireStaticShape(
     }
 
     physics::CookedShape cooked;
-    const Result buildResult = physics::buildGameObjectShape(object, cooked);
+    const Result buildResult =
+        physics::buildStaticGameObjectShape(object, transform, cooked);
     if (!buildResult) return buildResult;
     if (stats != nullptr) {
         stats->meshConversion += cooked.timings.geometryConversion;
@@ -580,8 +635,18 @@ Result PhysicsServer::acquireCollisionShape(const GameObject& object,
     }
     try {
         if (object.physics.motionType == GameObject::PhysicsMotionType::Static &&
-            object.physics.colliderType == GameObject::PhysicsColliderType::Mesh) {
-            return impl_->acquireStaticShape(object, output, nullptr);
+            object.physics.enabled) {
+            physics::ResolvedStaticPhysicsTransform transform;
+            const Result transformResult =
+                physics::resolveStaticPhysicsTransform(object, transform);
+            if (!transformResult) return transformResult;
+            if (object.physics.colliderType ==
+                GameObject::PhysicsColliderType::Mesh) {
+                return impl_->acquireStaticShape(object, transform, output,
+                                                nullptr);
+            }
+            return physics::buildStaticGameObjectShape(object, transform,
+                                                       output);
         }
         return physics::buildGameObjectShape(object, output);
     } catch (const std::exception& exception) {
@@ -662,8 +727,13 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
             const GameObject::PhysicsBodySettings& settings = object.physics;
 
             physics::PhysicsWorldPose worldPose;
-            const Result worldPoseResult =
-                physics::derivePhysicsWorldPose(object, worldPose);
+            physics::ResolvedStaticPhysicsTransform staticTransform;
+            const bool isStatic =
+                settings.motionType == GameObject::PhysicsMotionType::Static;
+            const Result worldPoseResult = isStatic
+                ? physics::resolveStaticPhysicsTransform(object,
+                                                         staticTransform)
+                : physics::derivePhysicsWorldPose(object, worldPose);
             if (!worldPoseResult) {
                 endRuntimeSession();
                 return Result::failure(
@@ -671,15 +741,18 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
                     objectDescription(object) + ": " +
                     worldPoseResult.error());
             }
+            if (isStatic) worldPose = staticTransform.rigidWorldPose;
 
             JPH::BodyID bodyId;
             if (settings.motionType == GameObject::PhysicsMotionType::Static) {
                 physics::CookedShape cooked;
                 const Result shapeResult =
                     settings.colliderType == GameObject::PhysicsColliderType::Mesh
-                        ? impl_->acquireStaticShape(object, cooked,
-                                                    &staticShapeStats)
-                        : physics::buildGameObjectShape(object, cooked);
+                        ? impl_->acquireStaticShape(
+                              object, staticTransform, cooked,
+                              &staticShapeStats)
+                        : physics::buildStaticGameObjectShape(
+                              object, staticTransform, cooked);
                 if (!shapeResult) {
                     endRuntimeSession();
                     return Result::failure("Failed to build static collision for " +
@@ -735,8 +808,18 @@ Result PhysicsServer::beginRuntimeSession(Scene& runtimeScene) {
             }
             const bool isDynamic =
                 settings.motionType == GameObject::PhysicsMotionType::Dynamic;
-            impl_->runtimeBodies.push_back(
-                {bodyId, &object, isDynamic, false, worldPose, !isDynamic});
+            Impl::RuntimeBody runtimeBody;
+            runtimeBody.id = bodyId;
+            runtimeBody.object = &object;
+            runtimeBody.isDynamic = isDynamic;
+            runtimeBody.submittedWorldPose = worldPose;
+            runtimeBody.hasSubmittedWorldPose = !isDynamic;
+            if (!isDynamic) {
+                runtimeBody.submittedEffectiveShapeScale =
+                    staticTransform.effectiveShapeScale;
+                runtimeBody.hasSubmittedEffectiveShapeScale = true;
+            }
+            impl_->runtimeBodies.push_back(std::move(runtimeBody));
         }
         const Clock::time_point broadPhaseStart = Clock::now();
         impl_->physicsSystem->OptimizeBroadPhase();

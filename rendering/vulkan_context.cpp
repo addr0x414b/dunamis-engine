@@ -4,6 +4,7 @@
 #include "renderer_configuration.h"
 #include "../editor/editor_session.h"
 #include "../physics/physics_server.h"
+#include "../physics/physics_shape_cache.h"
 #include "../physics/physics_transforms.h"
 #include "../scene/model_renderable.h"
 #include "../scene/character.h"
@@ -5589,22 +5590,42 @@ Result VulkanContext::ensurePhysicsDebugBatch(const PhysicsDebugRenderer::BatchD
 VulkanContext::PhysicsDebugShapeSignature
 VulkanContext::makePhysicsDebugShapeSignature(const GameObject& object) {
     PhysicsDebugShapeSignature signature;
+    glm::vec3 shapeScale = object.scale;
+    if (object.physics.motionType == GameObject::PhysicsMotionType::Static &&
+        (object.physics.colliderType == GameObject::PhysicsColliderType::Mesh ||
+         object.physics.colliderType ==
+             GameObject::PhysicsColliderType::ConvexHull)) {
+        physics::ResolvedStaticPhysicsTransform transform;
+        if (physics::resolveStaticPhysicsTransform(object, transform)) {
+            shapeScale = transform.effectiveShapeScale;
+        } else {
+            // A failed hierarchy resolution must never match an older valid
+            // cooked shape. Zero is outside the supported ancestor scale range.
+            shapeScale = glm::vec3(0.0f);
+        }
+    }
     switch (object.physics.colliderType) {
     case GameObject::PhysicsColliderType::Mesh:
         signature.type = PhysicsDebugShapeSignature::Type::Mesh;
         signature.modelIdentity = physicsDebugModelIdentity(object);
+        signature.geometryIdentity =
+            physics::makeStaticMeshInMemoryGeometryIdentity(
+                object.modelRenderable().meshInstances());
         signature.scaleBits = {
-            physicsDebugFloatBits(object.scale.x),
-            physicsDebugFloatBits(object.scale.y),
-            physicsDebugFloatBits(object.scale.z)};
+            physicsDebugFloatBits(shapeScale.x),
+            physicsDebugFloatBits(shapeScale.y),
+            physicsDebugFloatBits(shapeScale.z)};
         break;
     case GameObject::PhysicsColliderType::ConvexHull:
         signature.type = PhysicsDebugShapeSignature::Type::ConvexHull;
         signature.modelIdentity = physicsDebugModelIdentity(object);
+        signature.geometryIdentity =
+            physics::makeStaticMeshInMemoryGeometryIdentity(
+                object.modelRenderable().meshInstances());
         signature.scaleBits = {
-            physicsDebugFloatBits(object.scale.x),
-            physicsDebugFloatBits(object.scale.y),
-            physicsDebugFloatBits(object.scale.z)};
+            physicsDebugFloatBits(shapeScale.x),
+            physicsDebugFloatBits(shapeScale.y),
+            physicsDebugFloatBits(shapeScale.z)};
         break;
     case GameObject::PhysicsColliderType::Sphere:
         signature.type = PhysicsDebugShapeSignature::Type::Sphere;
@@ -5719,6 +5740,7 @@ VulkanContext::findPhysicsDebugScalePreview(
     // preview path and leaves the cache entry read-only.
     if (cached.signature.type != signature.type ||
         cached.signature.modelIdentity != signature.modelIdentity ||
+        cached.signature.geometryIdentity != signature.geometryIdentity ||
         cached.signature.radiusBits != signature.radiusBits ||
         cached.signature.heightBits != signature.heightBits ||
         cached.signature.scaleBits == signature.scaleBits ||
@@ -5855,6 +5877,16 @@ const physics::CookedShape* VulkanContext::ensurePhysicsDebugShape(
                         "PhysicsServer is unavailable for static collider debug acquisition");
                 }
                 return physicsServer_->acquireCollisionShape(object, cooked);
+            }
+            if (object.physics.motionType ==
+                    GameObject::PhysicsMotionType::Static &&
+                object.physics.enabled) {
+                physics::ResolvedStaticPhysicsTransform transform;
+                const Result transformResult =
+                    physics::resolveStaticPhysicsTransform(object, transform);
+                if (!transformResult) return transformResult;
+                return physics::buildStaticGameObjectShape(
+                    object, transform, cooked);
             }
             return physics::buildGameObjectShape(object, cooked);
         }();

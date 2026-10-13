@@ -18,6 +18,9 @@ namespace {
 
 constexpr float identityScaleTolerance = 1.0e-4f;
 constexpr float rigidTransformTolerance = 2.0e-3f;
+constexpr float uniformScaleRelativeTolerance = 1.0e-4f;
+constexpr float minimumAncestorScale = 1.0e-6f;
+constexpr float accumulatedUniformTransformTolerance = 5.0e-4f;
 
 std::string objectDescription(const GameObject& object) {
     return "object '" + object.name + "' (persistentId '" +
@@ -80,10 +83,44 @@ Result validateObjectTransform(const GameObject& object,
     return Result::success();
 }
 
-Result makeValidatedParentWorld(const GameObject& object,
-                                glm::mat4& parentWorld) {
-    parentWorld = glm::mat4(1.0f);
-    std::vector<const GameObject*> ancestors;
+Result validateStaticAncestorScale(const GameObject& ancestor) {
+    const glm::vec3& scale = ancestor.scale;
+    if (scale.x <= 0.0f || scale.y <= 0.0f || scale.z <= 0.0f) {
+        if (scale.x < 0.0f || scale.y < 0.0f || scale.z < 0.0f) {
+            return Result::failure(
+                "Static physics ancestor " + objectDescription(ancestor) +
+                " has negative scale (" + std::to_string(scale.x) + ", " +
+                std::to_string(scale.y) + ", " + std::to_string(scale.z) +
+                "); reflections are unsupported");
+        }
+        return Result::failure(
+            "Static physics ancestor " + objectDescription(ancestor) +
+            " has invalid zero scale");
+    }
+    if (scale.x < minimumAncestorScale ||
+        scale.y < minimumAncestorScale ||
+        scale.z < minimumAncestorScale) {
+        return Result::failure(
+            "Static physics ancestor " + objectDescription(ancestor) +
+            " has near-zero scale; ancestor scale must be safely nonzero");
+    }
+
+    const float maximum = std::max({scale.x, scale.y, scale.z});
+    const float minimum = std::min({scale.x, scale.y, scale.z});
+    if (maximum - minimum > uniformScaleRelativeTolerance * maximum) {
+        return Result::failure(
+            "Static physics ancestor " + objectDescription(ancestor) +
+            " has nonuniform scale (" + std::to_string(scale.x) + ", " +
+            std::to_string(scale.y) + ", " + std::to_string(scale.z) +
+            "); only positive uniform ancestor scale is supported");
+    }
+    return Result::success();
+}
+
+Result collectPhysicsAncestors(const GameObject& object,
+                               bool allowUniformStaticScale,
+                               std::vector<const GameObject*>& ancestors) {
+    ancestors.clear();
     std::unordered_set<const GameObject*> visited;
     for (const GameObject* ancestor = object.parent(); ancestor != nullptr;
          ancestor = ancestor->parent()) {
@@ -109,13 +146,28 @@ Result makeValidatedParentWorld(const GameObject& object,
                 "Physics hierarchy ancestor " + objectDescription(*ancestor) +
                 " has physics enabled; physics ancestor/descendant bodies are unsupported");
         }
-        if (!isIdentityScale(ancestor->scale)) {
+        if (allowUniformStaticScale) {
+            const Result scaleResult = validateStaticAncestorScale(*ancestor);
+            if (!scaleResult) return scaleResult;
+        } else if (!isIdentityScale(ancestor->scale)) {
             return Result::failure(
                 "Physics hierarchy ancestor " + objectDescription(*ancestor) +
-                " has non-identity scale; scaled physics ancestry is unsupported");
+                " has scaled ancestry; scaled ancestors are supported only "
+                "for static physics bodies");
         }
         ancestors.push_back(ancestor);
     }
+
+    return Result::success();
+}
+
+Result makeValidatedParentWorld(const GameObject& object,
+                                glm::mat4& parentWorld) {
+    parentWorld = glm::mat4(1.0f);
+    std::vector<const GameObject*> ancestors;
+    const Result ancestorsResult =
+        collectPhysicsAncestors(object, false, ancestors);
+    if (!ancestorsResult) return ancestorsResult;
 
     for (auto ancestor = ancestors.rbegin(); ancestor != ancestors.rend();
          ++ancestor) {
@@ -134,6 +186,129 @@ Result makeValidatedParentWorld(const GameObject& object,
                 " produces a non-representable world rigid transform");
         }
     }
+    return Result::success();
+}
+
+Result makeValidatedStaticTransform(
+    const GameObject& object, const glm::vec3& localPosition,
+    const glm::vec3& localRotation,
+    ResolvedStaticPhysicsTransform& transform) {
+    transform = {};
+    if (object.physics.motionType != GameObject::PhysicsMotionType::Static) {
+        return Result::failure(
+            "Static transform resolution requires a static physics body for " +
+            objectDescription(object));
+    }
+    const Result objectResult =
+        validateObjectTransform(object, localPosition, localRotation);
+    if (!objectResult) return objectResult;
+
+    std::vector<const GameObject*> ancestors;
+    const Result ancestorsResult =
+        collectPhysicsAncestors(object, true, ancestors);
+    if (!ancestorsResult) return ancestorsResult;
+
+    glm::mat4 parentWorld(1.0f);
+    glm::mat4 parentRotation(1.0f);
+    double inheritedScale = 1.0;
+    for (auto ancestor = ancestors.rbegin(); ancestor != ancestors.rend();
+         ++ancestor) {
+        const GameObject& current = **ancestor;
+        const double uniformScale =
+            (static_cast<double>(current.scale.x) + current.scale.y +
+             current.scale.z) /
+            3.0;
+        inheritedScale *= uniformScale;
+        if (!std::isfinite(inheritedScale) ||
+            inheritedScale < minimumAncestorScale ||
+            inheritedScale > std::numeric_limits<float>::max()) {
+            return Result::failure(
+                "Accumulated static physics ancestor scale for " +
+                objectDescription(object) +
+                " is outside the safely representable range");
+        }
+
+        parentWorld *= transform_math::makeModelMatrix(
+            current.position, current.rotation, current.scale);
+        parentRotation *= transform_math::makeRotationMatrix(current.rotation);
+        if (!transform_math::isFiniteMatrix(parentWorld) ||
+            !isRigidTransform(parentRotation)) {
+            return Result::failure(
+                "Static physics hierarchy for " + objectDescription(object) +
+                " produces a non-finite or non-rigid ancestor transform");
+        }
+    }
+
+    const float inheritedScaleFloat = static_cast<float>(inheritedScale);
+    const float matrixComparisonTolerance =
+        accumulatedUniformTransformTolerance * inheritedScaleFloat;
+    for (int column = 0; column < 3; ++column) {
+        for (int row = 0; row < 3; ++row) {
+            const float expected =
+                parentRotation[column][row] * inheritedScaleFloat;
+            if (std::fabs(parentWorld[column][row] - expected) >
+                matrixComparisonTolerance) {
+                return Result::failure(
+                    "Static physics hierarchy for " +
+                    objectDescription(object) +
+                    " contains unsupported shear or accumulated nonuniform scale");
+            }
+        }
+    }
+
+    const glm::vec4 worldPosition4 =
+        parentWorld * glm::vec4(localPosition, 1.0f);
+    if (!transform_math::isFiniteVector(glm::vec3(worldPosition4)) ||
+        !std::isfinite(worldPosition4.w) ||
+        std::fabs(worldPosition4.w) <= std::numeric_limits<float>::epsilon()) {
+        return Result::failure(
+            "Static physics world position for " + objectDescription(object) +
+            " is not representable");
+    }
+
+    glm::mat4 rigidWorld =
+        parentRotation * transform_math::makeRotationMatrix(localRotation);
+    rigidWorld[3] = glm::vec4(glm::vec3(worldPosition4) / worldPosition4.w,
+                              1.0f);
+    if (!isRigidTransform(rigidWorld)) {
+        return Result::failure(
+            "Static physics hierarchy for " + objectDescription(object) +
+            " produces a non-representable rigid world transform");
+    }
+
+    transform_math::DecomposedTransform decomposition;
+    const Result decompositionResult = transform_math::decomposeModelMatrix(
+        rigidWorld, glm::vec3(1.0f), decomposition);
+    if (!decompositionResult || !isIdentityScale(decomposition.scale)) {
+        return Result::failure(
+            "Static physics world transform for " + objectDescription(object) +
+            " cannot be represented as a rigid pose");
+    }
+
+    const glm::vec3 effectiveShapeScale(
+        static_cast<float>(inheritedScale * object.scale.x),
+        static_cast<float>(inheritedScale * object.scale.y),
+        static_cast<float>(inheritedScale * object.scale.z));
+    if (!transform_math::isFiniteVector(effectiveShapeScale)) {
+        return Result::failure(
+            "Effective static collision scale for " +
+            objectDescription(object) + " is not finite");
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+        const double effective = inheritedScale * object.scale[axis];
+        if (!std::isfinite(effective) ||
+            std::fabs(effective) > std::numeric_limits<float>::max() ||
+            std::fabs(effective) < minimumAncestorScale) {
+            return Result::failure(
+                "Effective static collision scale for " +
+                objectDescription(object) +
+                " is outside the safely representable range");
+        }
+    }
+
+    transform.effectiveShapeScale = effectiveShapeScale;
+    transform.rigidWorldPose.position = decomposition.position;
+    transform.rigidWorldPose.rotation = decomposition.rotation;
     return Result::success();
 }
 
@@ -283,12 +458,24 @@ Result deriveLocalPoseFromWorldMatrixImpl(const GameObject& object,
 }  // namespace
 
 Result validatePhysicsHierarchy(const GameObject& object) {
+    if (dynamic_cast<const Character*>(&object) == nullptr &&
+        object.physics.motionType == GameObject::PhysicsMotionType::Static) {
+        ResolvedStaticPhysicsTransform transform;
+        return makeValidatedStaticTransform(object, object.position,
+                                            object.rotation, transform);
+    }
     glm::mat4 worldMatrix;
     const Result result = makePhysicsWorldMatrix(
         object, object.position, object.rotation, worldMatrix);
     if (!result) return result;
     PhysicsWorldPose pose;
     return extractPhysicsWorldPose(object, worldMatrix, pose);
+}
+
+Result resolveStaticPhysicsTransform(
+    const GameObject& object, ResolvedStaticPhysicsTransform& transform) {
+    return makeValidatedStaticTransform(object, object.position,
+                                        object.rotation, transform);
 }
 
 Result derivePhysicsWorldPose(const GameObject& object,
@@ -302,6 +489,15 @@ Result derivePhysicsWorldPose(const GameObject& object,
                               const glm::vec3& localRotation,
                               PhysicsWorldPose& pose) {
     pose = {};
+    if (dynamic_cast<const Character*>(&object) == nullptr &&
+        object.physics.motionType == GameObject::PhysicsMotionType::Static) {
+        ResolvedStaticPhysicsTransform transform;
+        const Result result = makeValidatedStaticTransform(
+            object, localPosition, localRotation, transform);
+        if (!result) return result;
+        pose = transform.rigidWorldPose;
+        return Result::success();
+    }
     glm::mat4 worldMatrix;
     const Result result = makePhysicsWorldMatrix(
         object, localPosition, localRotation, worldMatrix);

@@ -866,9 +866,9 @@ bool runLevel1FailurePropagationTest() {
     std::error_code error;
     std::filesystem::remove_all(missingAssetDirectory, error);
     return expect(!result && !initialized &&
-                      result.error().find("Failed to load Sponza") !=
+                      result.error().find("Failed to import City hierarchy") !=
                           std::string::npos,
-                  "Level1 did not propagate a required model-load failure");
+                  "Level1 did not propagate a required model-import failure");
 }
 
 bool runLevel1JsonLifecycleTests() {

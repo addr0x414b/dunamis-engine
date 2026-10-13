@@ -270,14 +270,14 @@ void testPhysicsHierarchyPoseHelpers() {
            "physics ancestor was not rejected clearly");
 
     const glm::vec3 rejectedScales[] = {
-        {2.0f, 1.0f, 1.0f}, {2.0f, 2.0f, 2.0f}, {-1.0f, 1.0f, 1.0f},
-        {0.0f, 1.0f, 1.0f}};
+        {4.0f, 2.0f, 1.0f}, {-4.0f, -4.0f, -4.0f},
+        {0.0f, 0.0f, 0.0f}, {1.0e-8f, 1.0e-8f, 1.0e-8f},
+        {std::numeric_limits<float>::quiet_NaN(), 1.0f, 1.0f}};
     for (const glm::vec3& rejectedScale : rejectedScales) {
         TestScene scaleScene;
         auto scaleParentOwner = std::make_unique<GameObject>();
         GameObject* scaleParent = scaleParentOwner.get();
         scaleParent->name = "Scaled Physics Ancestor";
-        scaleParent->scale = rejectedScale;
         auto scaleChildOwner = std::make_unique<GameObject>();
         GameObject* scaleChild = scaleChildOwner.get();
         scaleChild->name = "Scaled Physics Child";
@@ -291,10 +291,41 @@ void testPhysicsHierarchyPoseHelpers() {
         expect(static_cast<bool>(scaleScene.reparentGameObject(
                    *scaleChild, scaleParent, Scene::ReparentMode::PreserveLocal)),
                "scene rejected legal scaled physics fixture hierarchy");
+        scaleParent->scale = rejectedScale;
         const Result result = physics::validatePhysicsHierarchy(*scaleChild);
-        expect(!result && result.error().find("scale") != std::string::npos,
+        expect(!result,
                "unsupported scaled physics ancestor was not rejected");
     }
+
+    TestScene accumulatedScaleScene;
+    auto accumulatedRootOwner = std::make_unique<GameObject>();
+    GameObject* accumulatedRoot = accumulatedRootOwner.get();
+    auto accumulatedParentOwner = std::make_unique<GameObject>();
+    GameObject* accumulatedParent = accumulatedParentOwner.get();
+    auto accumulatedChildOwner = std::make_unique<GameObject>();
+    GameObject* accumulatedChild = accumulatedChildOwner.get();
+    accumulatedChild->physics.enabled = true;
+    expect(static_cast<bool>(accumulatedScaleScene.addGameObject(
+               std::move(accumulatedRootOwner))) &&
+               static_cast<bool>(accumulatedScaleScene.addGameObject(
+                   std::move(accumulatedParentOwner))) &&
+               static_cast<bool>(accumulatedScaleScene.addGameObject(
+                   std::move(accumulatedChildOwner))) &&
+               static_cast<bool>(accumulatedScaleScene.reparentGameObject(
+                   *accumulatedParent, accumulatedRoot,
+                   Scene::ReparentMode::PreserveLocal)) &&
+               static_cast<bool>(accumulatedScaleScene.reparentGameObject(
+                   *accumulatedChild, accumulatedParent,
+                   Scene::ReparentMode::PreserveLocal)),
+           "failed to build accumulated-scale rejection fixture");
+    accumulatedRoot->scale = glm::vec3(1.0e-4f);
+    accumulatedParent->scale = glm::vec3(1.0e-4f);
+    const Result accumulatedResult =
+        physics::validatePhysicsHierarchy(*accumulatedChild);
+    expect(!accumulatedResult &&
+               accumulatedResult.error().find("Accumulated") !=
+                   std::string::npos,
+           "unusable accumulated static ancestor scale was accepted");
 }
 
 void testCharacterPhysicsHierarchyHelpers() {
@@ -467,6 +498,189 @@ void shutdownJoltForShapeTests() {
     JPH::Factory::sInstance = nullptr;
 }
 
+void testScaledStaticPhysicsHierarchyResolution() {
+    TestScene scene;
+    auto parentOwner = std::make_unique<GameObject>();
+    GameObject* parent = parentOwner.get();
+    parent->name = "Uniform Static Parent";
+    parent->position = {10.0f, 0.0f, 0.0f};
+    parent->scale = glm::vec3(4.0f);
+    auto childOwner = std::make_unique<GameObject>();
+    GameObject* child = childOwner.get();
+    child->name = "Static Mesh Child";
+    child->position = {2.0f, 0.0f, 0.0f};
+    child->physics.enabled = true;
+    child->physics.motionType = GameObject::PhysicsMotionType::Static;
+    child->physics.colliderType = GameObject::PhysicsColliderType::Mesh;
+    expect(static_cast<bool>(child->modelRenderable().addMeshInstance(
+               triangleInstance({1.0f, 0.0f, 0.0f}))),
+           "failed to create scaled static mesh geometry");
+    expect(static_cast<bool>(scene.addGameObject(std::move(parentOwner))) &&
+               static_cast<bool>(scene.addGameObject(std::move(childOwner))) &&
+               static_cast<bool>(scene.reparentGameObject(
+                   *child, parent, Scene::ReparentMode::PreserveLocal)),
+           "failed to construct scaled static hierarchy");
+
+    physics::ResolvedStaticPhysicsTransform resolved;
+    expect(static_cast<bool>(physics::resolveStaticPhysicsTransform(
+               *child, resolved)),
+           "positive uniformly scaled static ancestry was rejected");
+    expect(glm::length(resolved.rigidWorldPose.position -
+                       glm::vec3(18.0f, 0.0f, 0.0f)) <= 1.0e-4f,
+           "scaled ancestor did not scale the child's world translation");
+    expect(glm::length(resolved.effectiveShapeScale - glm::vec3(4.0f)) <=
+               1.0e-5f,
+           "static child did not inherit the parent geometry scale");
+    expect(static_cast<bool>(physics::validatePhysicsHierarchy(*child)),
+           "static hierarchy validation rejected a supported uniform scale");
+
+    parent->scale = glm::vec3(0.5f);
+    expect(static_cast<bool>(physics::resolveStaticPhysicsTransform(
+               *child, resolved)) &&
+               glm::length(resolved.effectiveShapeScale -
+                           glm::vec3(0.5f)) <= 1.0e-5f &&
+               glm::length(resolved.rigidWorldPose.position -
+                           glm::vec3(11.0f, 0.0f, 0.0f)) <= 1.0e-4f,
+           "positive sub-unit ancestor scale was not resolved correctly");
+    parent->scale = glm::vec3(4.0f);
+    expect(static_cast<bool>(physics::resolveStaticPhysicsTransform(
+               *child, resolved)),
+           "failed to restore the scale-four static transform");
+
+    initializeJoltForShapeTests();
+    physics::CookedShape cooked;
+    expect(static_cast<bool>(physics::buildStaticGameObjectShape(
+               *child, resolved, cooked)),
+           "static mesh cooking failed with inherited uniform scale");
+    const JPH::AABox meshBounds = cooked.shape->GetLocalBounds();
+    expect(near(meshBounds.mMin.GetX(), 0.0f, 2.0e-3f) &&
+               near(meshBounds.mMin.GetY(), 0.0f, 2.0e-3f) &&
+               near(meshBounds.mMin.GetZ(), 0.0f, 2.0e-3f) &&
+               near(meshBounds.mMax.GetX(), 4.0f, 2.0e-3f) &&
+               near(meshBounds.mMax.GetY(), 4.0f, 2.0e-3f) &&
+               near(meshBounds.mMax.GetZ(), 4.0f, 2.0e-3f),
+           "cooked static mesh bounds omitted inherited scale");
+
+    child->scale = {2.0f, 3.0f, 1.0f};
+    expect(static_cast<bool>(physics::resolveStaticPhysicsTransform(
+               *child, resolved)),
+           "nonuniform child scale under a uniform parent was rejected");
+    expect(glm::length(resolved.effectiveShapeScale -
+                       glm::vec3(8.0f, 12.0f, 4.0f)) <= 1.0e-5f,
+           "effective static shape scale did not combine parent and child scale");
+    expect(static_cast<bool>(physics::buildStaticGameObjectShape(
+               *child, resolved, cooked)),
+           "static mesh cooking failed with nonuniform child scale");
+    const JPH::AABox nonuniformChildBounds = cooked.shape->GetLocalBounds();
+    expect(near(nonuniformChildBounds.mMax.GetX(), 8.0f, 2.0e-3f) &&
+               near(nonuniformChildBounds.mMax.GetY(), 12.0f, 2.0e-3f) &&
+               near(nonuniformChildBounds.mMax.GetZ(), 4.0f, 2.0e-3f),
+           "cooked static mesh did not preserve nonuniform child dimensions");
+
+    parent->rotation = {17.0f, -29.0f, 38.0f};
+    child->rotation = {-11.0f, 24.0f, 7.0f};
+    child->position = {2.0f, 1.0f, -1.0f};
+    expect(static_cast<bool>(physics::resolveStaticPhysicsTransform(
+               *child, resolved)),
+           "rotated static hierarchy did not resolve");
+    const glm::mat4 bodyRigid = transform_math::makeModelMatrix(
+        resolved.rigidWorldPose.position, resolved.rigidWorldPose.rotation,
+        glm::vec3(1.0f));
+    const glm::mat4 renderedWorld = child->worldTransformMatrix();
+    const auto& vertices = child->modelRenderable().meshInstances()[0]
+                               .mesh.vertexData();
+    for (const Vertex& vertex : vertices) {
+        const glm::vec3 rendered = glm::vec3(
+            renderedWorld * glm::vec4(vertex.pos, 1.0f));
+        const glm::vec3 physicsPoint = glm::vec3(
+            bodyRigid * glm::vec4(resolved.effectiveShapeScale * vertex.pos,
+                                  1.0f));
+        expect(glm::length(rendered - physicsPoint) <= 2.0e-3f,
+               "rendered vertex and rigid-pose collision vertex diverged");
+    }
+
+    TestScene nestedScene;
+    auto rootOwner = std::make_unique<GameObject>();
+    GameObject* root = rootOwner.get();
+    root->position = {1.0f, 0.0f, 0.0f};
+    root->scale = glm::vec3(2.0f);
+    auto intermediateOwner = std::make_unique<GameObject>();
+    GameObject* intermediate = intermediateOwner.get();
+    intermediate->position = {2.0f, 0.0f, 0.0f};
+    intermediate->scale = glm::vec3(3.0f);
+    auto nestedChildOwner = std::make_unique<GameObject>();
+    GameObject* nestedChild = nestedChildOwner.get();
+    nestedChild->position = {1.0f, 0.0f, 0.0f};
+    nestedChild->physics.enabled = true;
+    nestedChild->physics.motionType = GameObject::PhysicsMotionType::Static;
+    expect(static_cast<bool>(nestedChild->modelRenderable().addMeshInstance(
+               triangleInstance({1.0f, 0.0f, 0.0f}))),
+           "failed to create nested static mesh geometry");
+    expect(static_cast<bool>(nestedScene.addGameObject(std::move(rootOwner))) &&
+               static_cast<bool>(nestedScene.addGameObject(
+                   std::move(intermediateOwner))) &&
+               static_cast<bool>(nestedScene.addGameObject(
+                   std::move(nestedChildOwner))) &&
+               static_cast<bool>(nestedScene.reparentGameObject(
+                   *intermediate, root, Scene::ReparentMode::PreserveLocal)) &&
+               static_cast<bool>(nestedScene.reparentGameObject(
+                   *nestedChild, intermediate,
+                   Scene::ReparentMode::PreserveLocal)),
+           "failed to construct nested uniform-scale hierarchy");
+    expect(static_cast<bool>(physics::resolveStaticPhysicsTransform(
+               *nestedChild, resolved)),
+           "nested uniform static ancestry was rejected");
+    expect(glm::length(resolved.effectiveShapeScale - glm::vec3(6.0f)) <=
+               1.0e-5f &&
+               glm::length(resolved.rigidWorldPose.position -
+                           glm::vec3(11.0f, 0.0f, 0.0f)) <= 1.0e-4f,
+           "nested scale or translation did not compose correctly");
+
+    auto hullParentOwner = std::make_unique<GameObject>();
+    GameObject* hullParent = hullParentOwner.get();
+    hullParent->scale = glm::vec3(4.0f);
+    auto hullChildOwner = std::make_unique<GameObject>();
+    GameObject* hullChild = hullChildOwner.get();
+    hullChild->physics.enabled = true;
+    hullChild->physics.motionType = GameObject::PhysicsMotionType::Static;
+    hullChild->physics.colliderType =
+        GameObject::PhysicsColliderType::ConvexHull;
+    hullChild->scale = {2.0f, 3.0f, 1.0f};
+    MeshInstance tetrahedron;
+    tetrahedron.mesh.vertices = {
+        {{0.0f, 0.0f, 0.0f}, {}, {}, {}, {}},
+        {{1.0f, 0.0f, 0.0f}, {}, {}, {}, {}},
+        {{0.0f, 1.0f, 0.0f}, {}, {}, {}, {}},
+        {{0.0f, 0.0f, 1.0f}, {}, {}, {}, {}}};
+    tetrahedron.mesh.indices = {0, 1, 2, 0, 3, 1, 0, 2, 3, 1, 3, 2};
+    expect(static_cast<bool>(hullChild->modelRenderable().addMeshInstance(
+               std::move(tetrahedron))),
+           "failed to create convex static geometry");
+    expect(static_cast<bool>(nestedScene.addGameObject(
+               std::move(hullParentOwner))) &&
+               static_cast<bool>(nestedScene.addGameObject(
+                   std::move(hullChildOwner))) &&
+               static_cast<bool>(nestedScene.reparentGameObject(
+                   *hullChild, hullParent,
+                   Scene::ReparentMode::PreserveLocal)),
+           "failed to construct convex static hierarchy");
+    expect(static_cast<bool>(physics::resolveStaticPhysicsTransform(
+               *hullChild, resolved)) &&
+               static_cast<bool>(physics::buildStaticGameObjectShape(
+                   *hullChild, resolved, cooked)),
+           "scaled static convex hull failed to resolve or cook");
+    const JPH::AABox hullBounds = cooked.shape->GetLocalBounds();
+    const JPH::Vec3 hullCenter = cooked.shape->GetCenterOfMass();
+    expect(near(hullCenter.GetX() + hullBounds.mMin.GetX(), 0.0f, 2.0e-3f) &&
+               near(hullCenter.GetY() + hullBounds.mMin.GetY(), 0.0f, 2.0e-3f) &&
+               near(hullCenter.GetZ() + hullBounds.mMin.GetZ(), 0.0f, 2.0e-3f) &&
+               near(hullCenter.GetX() + hullBounds.mMax.GetX(), 8.0f, 2.0e-3f) &&
+               near(hullCenter.GetY() + hullBounds.mMax.GetY(), 12.0f, 2.0e-3f) &&
+               near(hullCenter.GetZ() + hullBounds.mMax.GetZ(), 4.0f, 2.0e-3f),
+           "cooked static convex hull omitted inherited scale");
+    shutdownJoltForShapeTests();
+}
+
 void testShapeCenterOfMassTransform() {
     initializeJoltForShapeTests();
 
@@ -612,6 +826,138 @@ void testPhysicsServerStaticShapeSharing() {
             editingObject.scale);
     std::error_code error;
     std::filesystem::remove(cache.pathFor(key), error);
+}
+
+void testStaticHierarchyShapeCacheAndRuntimeLifecycle() {
+    TestScene scene;
+    const std::string modelIdentity =
+        "__dunamis_static_hierarchy_cache_" +
+        std::to_string(reinterpret_cast<std::uintptr_t>(&scene));
+
+    auto addStatic = [&](const char* name, float parentScale, float ownScale,
+                         bool distinctGeometry) {
+        auto parentOwner = std::make_unique<GameObject>();
+        GameObject* parent = parentOwner.get();
+        parent->name = std::string(name) + " Group";
+        parent->scale = glm::vec3(parentScale);
+        auto childOwner = std::make_unique<GameObject>();
+        GameObject* child = childOwner.get();
+        child->name = name;
+        child->modelPath = modelIdentity.c_str();
+        child->scale = glm::vec3(ownScale);
+        child->physics.enabled = true;
+        child->physics.motionType = GameObject::PhysicsMotionType::Static;
+        child->physics.colliderType = GameObject::PhysicsColliderType::Mesh;
+        expect(static_cast<bool>(child->modelRenderable().addMeshInstance(
+                   triangleInstance(distinctGeometry
+                                        ? glm::vec3(2.0f, 0.0f, 0.0f)
+                                        : glm::vec3(1.0f, 0.0f, 0.0f)))),
+               "failed to create hierarchy cache mesh");
+        expect(static_cast<bool>(scene.addGameObject(std::move(parentOwner))) &&
+                   static_cast<bool>(scene.addGameObject(
+                       std::move(childOwner))) &&
+                   static_cast<bool>(scene.reparentGameObject(
+                       *child, parent, Scene::ReparentMode::PreserveLocal)),
+               "failed to add hierarchy cache fixture");
+        return std::pair<GameObject*, GameObject*>{parent, child};
+    };
+
+    const auto [parentA, childA] = addStatic("Scale Four A", 4.0f, 1.0f, false);
+    const auto [parentB, childB] = addStatic("Scale One", 1.0f, 1.0f, false);
+    const auto [parentC, childC] = addStatic("Equivalent Scale", 2.0f, 2.0f, false);
+    const auto [parentD, childD] = addStatic("Distinct Geometry", 4.0f, 1.0f, true);
+
+    PhysicsServer server;
+    expect(static_cast<bool>(server.initialize()),
+           "failed to initialize scaled hierarchy cache server");
+    physics::CookedShape shapeA;
+    physics::CookedShape shapeB;
+    physics::CookedShape shapeC;
+    physics::CookedShape shapeD;
+    expect(static_cast<bool>(server.acquireCollisionShape(*childA, shapeA)) &&
+               static_cast<bool>(server.acquireCollisionShape(*childB, shapeB)) &&
+               static_cast<bool>(server.acquireCollisionShape(*childC, shapeC)) &&
+               static_cast<bool>(server.acquireCollisionShape(*childD, shapeD)),
+           "failed to acquire scaled hierarchy collision shapes");
+    expect(shapeA.shape.GetPtr() != shapeB.shape.GetPtr(),
+           "different effective scales incorrectly shared a static shape");
+    expect(shapeA.shape.GetPtr() == shapeC.shape.GetPtr(),
+           "equivalent effective scales did not reuse the cooked shape");
+    expect(shapeA.shape.GetPtr() != shapeD.shape.GetPtr(),
+           "distinct geometry from one model identity shared a shape");
+    const float boundsA = shapeA.shape->GetLocalBounds().mMax.GetX();
+    const float boundsB = shapeB.shape->GetLocalBounds().mMax.GetX();
+    expect(near(boundsA, 4.0f, 2.0e-3f) &&
+               near(boundsB, 1.0f, 2.0e-3f),
+           "cached shapes do not contain their effective geometry scale");
+
+    parentA->scale = glm::vec3(1.0f);
+    physics::CookedShape unscaledAgain;
+    expect(static_cast<bool>(server.acquireCollisionShape(*childA,
+                                                          unscaledAgain)) &&
+               unscaledAgain.shape.GetPtr() == shapeB.shape.GetPtr(),
+           "changing an ancestor scale returned a stale static cache entry");
+    parentA->scale = glm::vec3(4.0f);
+    physics::CookedShape rescaledAgain;
+    expect(static_cast<bool>(server.acquireCollisionShape(*childA,
+                                                          rescaledAgain)) &&
+               rescaledAgain.shape.GetPtr() == shapeA.shape.GetPtr(),
+           "restoring an effective scale did not reuse its valid cache entry");
+
+    const glm::vec3 authoredChildScale = childA->scale;
+    expect(static_cast<bool>(server.beginRuntimeSession(scene)) &&
+               server.runtimeSessionActive(),
+           "runtime physics failed to start with uniformly scaled static parents");
+    parentA->scale = glm::vec3(3.0f);
+    TimeTestAccess::initialize();
+    TimeTestAccess::update();
+    server.update();
+    expect(parentA->scale == glm::vec3(3.0f) &&
+               childA->scale == authoredChildScale,
+           "live static shape replacement rewrote authored object scales");
+    server.endRuntimeSession();
+    expect(!server.runtimeSessionActive() &&
+               parentA->scale == glm::vec3(3.0f) &&
+               childA->scale == authoredChildScale,
+           "runtime physics teardown changed the runtime scene hierarchy state");
+    server.shutdown();
+
+    physics::ResolvedStaticPhysicsTransform transformA;
+    physics::ResolvedStaticPhysicsTransform transformB;
+    physics::ResolvedStaticPhysicsTransform transformC;
+    physics::ResolvedStaticPhysicsTransform transformD;
+    expect(static_cast<bool>(physics::resolveStaticPhysicsTransform(
+               *childA, transformA)) &&
+               static_cast<bool>(physics::resolveStaticPhysicsTransform(
+                   *childB, transformB)) &&
+               static_cast<bool>(physics::resolveStaticPhysicsTransform(
+                   *childC, transformC)) &&
+               static_cast<bool>(physics::resolveStaticPhysicsTransform(
+                   *childD, transformD)),
+           "failed to resolve cache test effective scales");
+    physics::PhysicsShapeCache cache;
+    const auto keyA = physics::makeStaticMeshShapeCacheKey(
+        modelIdentity, childA->modelRenderable().meshInstances(),
+        glm::vec3(4.0f));
+    const auto keyB = physics::makeStaticMeshShapeCacheKey(
+        modelIdentity, childB->modelRenderable().meshInstances(),
+        glm::vec3(1.0f));
+    const auto keyC = physics::makeStaticMeshShapeCacheKey(
+        modelIdentity, childC->modelRenderable().meshInstances(),
+        transformC.effectiveShapeScale);
+    const auto keyD = physics::makeStaticMeshShapeCacheKey(
+        modelIdentity, childD->modelRenderable().meshInstances(),
+        glm::vec3(4.0f));
+    expect(keyA == keyC && !(keyA == keyB) && !(keyA == keyD),
+           "persistent cache identity did not follow effective scale and geometry");
+    const auto keyRuntimeScale = physics::makeStaticMeshShapeCacheKey(
+        modelIdentity, childA->modelRenderable().meshInstances(),
+        glm::vec3(3.0f));
+    std::error_code error;
+    std::filesystem::remove(cache.pathFor(keyA), error);
+    std::filesystem::remove(cache.pathFor(keyB), error);
+    std::filesystem::remove(cache.pathFor(keyD), error);
+    std::filesystem::remove(cache.pathFor(keyRuntimeScale), error);
 }
 
 void testShapeDiagnostics() {
@@ -1279,6 +1625,59 @@ void advanceRuntimePhysics(PhysicsServer& server, int frameCount) {
     }
 }
 
+void testStaticShapeReplacementDuringSimulation() {
+    TestScene scene;
+    const std::string modelIdentity =
+        "__dunamis_runtime_static_shape_replacement_" +
+        std::to_string(reinterpret_cast<std::uintptr_t>(&scene));
+    auto parentOwner = std::make_unique<GameObject>();
+    GameObject* parent = parentOwner.get();
+    auto floorOwner = std::make_unique<GameObject>();
+    GameObject* floor = floorOwner.get();
+    floor->modelPath = modelIdentity.c_str();
+    floor->physics.enabled = true;
+    floor->physics.motionType = GameObject::PhysicsMotionType::Static;
+    floor->physics.colliderType = GameObject::PhysicsColliderType::Mesh;
+    expect(static_cast<bool>(floor->modelRenderable().addMeshInstance(
+               upwardSmallFloorInstance())),
+           "failed to create runtime scale replacement floor");
+    auto sphereOwner = std::make_unique<GameObject>();
+    GameObject* sphere = sphereOwner.get();
+    sphere->position = {0.3f, 2.0f, 0.0f};
+    sphere->physics.enabled = true;
+    sphere->physics.motionType = GameObject::PhysicsMotionType::Dynamic;
+    sphere->physics.colliderType = GameObject::PhysicsColliderType::Sphere;
+    sphere->physics.sphereRadius = 0.05f;
+    expect(static_cast<bool>(scene.addGameObject(std::move(parentOwner))) &&
+               static_cast<bool>(scene.addGameObject(std::move(floorOwner))) &&
+               static_cast<bool>(scene.addGameObject(std::move(sphereOwner))) &&
+               static_cast<bool>(scene.reparentGameObject(
+                   *floor, parent, Scene::ReparentMode::PreserveLocal)),
+           "failed to construct runtime shape replacement scene");
+
+    PhysicsServer server;
+    expect(static_cast<bool>(server.initialize()) &&
+               static_cast<bool>(server.beginRuntimeSession(scene)),
+           "failed to start runtime static shape replacement scene");
+    parent->scale = glm::vec3(4.0f);
+    TimeTestAccess::initialize();
+    TimeTestAccess::update();
+    server.update();
+    advanceRuntimePhysics(server, 120);
+    expect(sphere->position.y >= 0.0f && sphere->position.y < 0.3f,
+           "dynamic body did not land on the enlarged live static collider");
+
+    server.endRuntimeSession();
+    server.shutdown();
+    physics::PhysicsShapeCache cache;
+    const physics::StaticMeshShapeCacheKey key =
+        physics::makeStaticMeshShapeCacheKey(
+            modelIdentity, floor->modelRenderable().meshInstances(),
+            glm::vec3(4.0f));
+    std::error_code error;
+    std::filesystem::remove(cache.pathFor(key), error);
+}
+
 void testPhysicsServerHierarchyStaticFollow() {
     TestScene scene;
     const std::string modelIdentity =
@@ -1437,11 +1836,12 @@ void testPhysicsServerRejectsUnsupportedHierarchy() {
            "unsupported hierarchy left a partial runtime physics session");
 
     parent->physics.enabled = false;
-    parent->scale = {2.0f, 1.0f, 1.0f};
+    parent->scale = {2.0f, 2.0f, 2.0f};
     const Result scaledResult = server.beginRuntimeSession(scene);
-    expect(!scaledResult && scaledResult.error().find("scale") !=
-               std::string::npos,
-           "runtime session did not reject a scaled physics ancestor");
+    expect(!scaledResult &&
+               scaledResult.error().find("only for static physics bodies") !=
+                   std::string::npos,
+           "runtime session did not preserve dynamic scaled-ancestor restrictions");
     expect(!server.runtimeSessionActive(),
            "scaled hierarchy left a partial runtime physics session");
     server.shutdown();
@@ -1573,7 +1973,7 @@ void testPhysicsServerRejectsUnsupportedCharacterHierarchy() {
     auto scaledParentOwner = std::make_unique<GameObject>();
     GameObject* scaledParent = scaledParentOwner.get();
     scaledParent->name = "Scaled Character Parent";
-    scaledParent->scale = {2.0f, 1.0f, 1.0f};
+    scaledParent->scale = {2.0f, 2.0f, 2.0f};
     auto scaledCharacterOwner = std::make_unique<Character>();
     Character* scaledCharacter = scaledCharacterOwner.get();
     scaledCharacter->name = "Scaled Character Child";
@@ -1927,6 +2327,7 @@ int main() {
     testPhysicsUnits();
     testPhysicsHierarchyPoseHelpers();
     testCharacterPhysicsHierarchyHelpers();
+    testScaledStaticPhysicsHierarchyResolution();
     testScaledLocalTriangleMesh();
     testConvexHullInputAndRotation();
     testShapeCenterOfMassTransform();
@@ -1934,12 +2335,14 @@ int main() {
     testShapeDiagnostics();
     testCookedShapeCache();
     testPhysicsServerStaticShapeSharing();
+    testStaticHierarchyShapeCacheAndRuntimeLifecycle();
     testPhysicsServerColliderCombinations();
     testOffOriginBodyPivot();
     testDynamicConvexRotationIntegration();
     testFloorSphere();
     testPhysicsServerEditorRelease();
     testPhysicsServerHierarchyStaticFollow();
+    testStaticShapeReplacementDuringSimulation();
     testPhysicsServerHierarchyDynamicWritebackAndEdit();
     testPhysicsServerRejectsUnsupportedHierarchy();
     testPhysicsServerCharacterHierarchy();
