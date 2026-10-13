@@ -4,6 +4,7 @@
 
 #include "../core/time.h"
 #include "../scene/type_registry.h"
+#include "../scene/model_importer.h"
 
 namespace {
 
@@ -65,7 +66,7 @@ void Level1::buildDefaults() {
     requireSuccess(test3->loadModel(), "Failed to load Sponza");
     requireSuccess(addGameObject(std::move(test3)), "Failed to add Sponza");*/
 
-    auto test3 = std::make_unique<GameObject>();
+    /*auto test3 = std::make_unique<GameObject>();
     //test3->persistentId = "sponza";
     test3->name = "City";
     test3->scale = glm::vec3(1.0f, 1.0f, 1.0f);
@@ -75,7 +76,29 @@ void Level1::buildDefaults() {
     test3->modelPath = "game/assets/city-scene/source/city.fbx";
     //test3->modelPath = "game/assets/test/source/Mobile Ready City Road.fbx";
     requireSuccess(test3->loadModel(), "Failed to load Sponza");
-    requireSuccess(addGameObject(std::move(test3)), "Failed to add Sponza");
+    requireSuccess(addGameObject(std::move(test3)), "Failed to add Sponza");*/
+
+
+
+    model_import::Options options;
+    options.rootName = "City";
+    options.generateStaticColliders = true;
+    
+    model_import::ImportResult imported;
+    
+    requireSuccess(
+        model_import::importHierarchy(
+            *this,
+            "game/assets/city-scene/source/city.fbx",
+            options,
+            imported),
+        "Failed to import City hierarchy");
+    
+    spdlog::info(
+        "City hierarchy: {} objects, {} source nodes, {} mesh references",
+        imported.objectCount,
+        imported.sourceNodeCount,
+        imported.meshReferenceCount);
 
     auto test8 = std::make_unique<GameObject>();
     //test8->persistentId = "sponzaaaa";
