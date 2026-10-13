@@ -529,6 +529,148 @@ Result Scene::addGameObjectInternal(
     return Result::success();
 }
 
+Result Scene::addImportedHierarchy(
+    std::vector<std::unique_ptr<GameObject>> objects,
+    const std::vector<std::size_t>& parentIndices, GameObject*& root) {
+    root = nullptr;
+    if (active_) {
+        return Result::failure(
+            "Hierarchical model importing is supported only while a scene is inactive");
+    }
+    constexpr std::size_t noParent =
+        std::numeric_limits<std::size_t>::max();
+    if (objects.empty() || objects.size() != parentIndices.size() ||
+        parentIndices.front() != noParent) {
+        return Result::failure(
+            "Imported hierarchy must contain one detached root and matching parent indices");
+    }
+
+    std::vector<std::size_t> childCounts(objects.size(), 0);
+    std::size_t rootCount = 0;
+    std::size_t incomingPointLights = 0;
+    std::size_t incomingDirectionalLights = 0;
+    std::unordered_set<std::string> candidateIds;
+    candidateIds.reserve(objects.size());
+    for (std::size_t index = 0; index < objects.size(); ++index) {
+        if (!objects[index]) {
+            return Result::failure(
+                "Imported hierarchy contains a null game object");
+        }
+        if (objects[index]->parent_ != nullptr ||
+            !objects[index]->children_.empty()) {
+            return Result::failure(
+                "Imported hierarchy objects must be detached before insertion");
+        }
+        if (parentIndices[index] == noParent) {
+            ++rootCount;
+            if (index != 0) {
+                return Result::failure(
+                    "Imported hierarchy root must be the first object");
+            }
+        } else {
+            if (parentIndices[index] >= index) {
+                return Result::failure(
+                    "Imported hierarchy parent order is invalid or cyclic");
+            }
+            ++childCounts[parentIndices[index]];
+        }
+        if (dynamic_cast<PointLight*>(objects[index].get()) != nullptr) {
+            ++incomingPointLights;
+        }
+        if (dynamic_cast<DirectionalLight*>(objects[index].get()) != nullptr) {
+            ++incomingDirectionalLights;
+        }
+        if (!objects[index]->persistentId.empty()) {
+            if (findGameObject(objects[index]->persistentId) != nullptr ||
+                !candidateIds.insert(objects[index]->persistentId).second) {
+                return Result::failure(
+                    "Imported hierarchy contains a duplicate persistent ID");
+            }
+        }
+    }
+    if (rootCount != 1 ||
+        pointLightCount_ + incomingPointLights > pointLightIndices_.size() ||
+        (directionalLightIndex_.has_value() && incomingDirectionalLights != 0) ||
+        incomingDirectionalLights > 1) {
+        return Result::failure(
+            "Imported hierarchy violates scene root or light-count constraints");
+    }
+    if (objects.size() > gameObjects_.max_size() - gameObjects_.size() ||
+        rootObjects_.size() == rootObjects_.max_size()) {
+        return Result::failure(
+            "Imported hierarchy exceeds available scene storage capacity");
+    }
+
+    for (const auto& object : objects) {
+        if (object->persistentId.empty()) {
+            bool foundUniqueId = false;
+            for (std::size_t attempt = 0; attempt < 64; ++attempt) {
+                std::string generatedId;
+                try {
+                    generatedId = persistent_id::generate();
+                } catch (const std::exception& exception) {
+                    return Result::failure(
+                        "Failed to generate an imported object ID: " +
+                        std::string(exception.what()));
+                }
+                if (!generatedId.empty() &&
+                    findGameObject(generatedId) == nullptr &&
+                    candidateIds.insert(generatedId).second) {
+                    object->persistentId = std::move(generatedId);
+                    foundUniqueId = true;
+                    break;
+                }
+            }
+            if (!foundUniqueId) {
+                return Result::failure(
+                    "Failed to generate unique IDs for the imported hierarchy");
+            }
+        }
+    }
+
+    for (const auto& object : objects) {
+        const Result validation = validateGameObjectInsertion(*object);
+        if (!validation) {
+            return Result::failure(
+                "Imported hierarchy cannot be inserted: " +
+                validation.error());
+        }
+    }
+
+    try {
+        gameObjects_.reserve(gameObjects_.size() + objects.size());
+        rootObjects_.reserve(rootObjects_.size() + 1);
+        for (std::size_t index = 0; index < objects.size(); ++index) {
+            objects[index]->children_.reserve(childCounts[index]);
+        }
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "Failed to reserve scene storage for imported hierarchy: " +
+            std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "Failed to reserve scene storage for imported hierarchy");
+    }
+
+    const std::size_t firstObjectIndex = gameObjects_.size();
+    GameObject* insertedRoot = objects.front().get();
+    for (auto& object : objects) {
+        gameObjects_.push_back(std::move(object));
+    }
+    for (std::size_t candidateIndex = 1;
+         candidateIndex < parentIndices.size(); ++candidateIndex) {
+        const std::size_t parentIndex = parentIndices[candidateIndex];
+        GameObject* child =
+            gameObjects_[firstObjectIndex + candidateIndex].get();
+        GameObject* parent = gameObjects_[firstObjectIndex + parentIndex].get();
+        child->parent_ = parent;
+        parent->children_.push_back(child);
+    }
+    rootObjects_.push_back(insertedRoot);
+    root = insertedRoot;
+    return Result::success();
+}
+
 Result Scene::validateGameObjectInsertion(
     const GameObject& gameObject) const {
 

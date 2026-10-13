@@ -223,8 +223,8 @@ physics::ShapeDiagnostics makeStaticMeshDiagnostics(
         physics::ShapeDiagnostics::Representation::TriangleMesh;
     for (const MeshInstance& instance :
          object.modelRenderable().meshInstances()) {
-        diagnostics.inputVertices += instance.mesh.vertices.size();
-        diagnostics.inputTriangles += instance.mesh.indices.size() / 3;
+        diagnostics.inputVertices += instance.mesh.vertexData().size();
+        diagnostics.inputTriangles += instance.mesh.indexData().size() / 3;
     }
     const JPH::Shape::Stats stats = shape.GetStats();
     diagnostics.joltTriangles = stats.mNumTriangles;
@@ -249,12 +249,15 @@ Result makeCachedStaticMeshShape(const CachedStaticShape& cached,
 struct PhysicsServer::Impl {
     struct StaticShapeKey {
         std::string modelIdentity;
+        std::uint64_t geometryFingerprint = 0;
         std::array<std::uint32_t, 3> scaleBits{};
         GameObject::PhysicsColliderType collider =
             GameObject::PhysicsColliderType::Mesh;
 
         bool operator==(const StaticShapeKey& other) const noexcept {
-            return modelIdentity == other.modelIdentity && scaleBits == other.scaleBits &&
+            return modelIdentity == other.modelIdentity &&
+                   geometryFingerprint == other.geometryFingerprint &&
+                   scaleBits == other.scaleBits &&
                    collider == other.collider;
         }
     };
@@ -266,6 +269,7 @@ struct PhysicsServer::Impl {
                 result ^= value + static_cast<std::size_t>(0x9e3779b9) +
                           (result << 6) + (result >> 2);
             };
+            combine(std::hash<std::uint64_t>{}(key.geometryFingerprint));
             for (std::uint32_t value : key.scaleBits) combine(value);
             combine(static_cast<std::size_t>(key.collider));
             return result;
@@ -280,12 +284,26 @@ struct PhysicsServer::Impl {
             return bits;
         };
         StaticShapeKey key;
-        key.modelIdentity = model_loading::normalizedFilesystemIdentity(
-            object.modelPath ? object.modelPath : "");
+        std::string modelPath = object.modelPath ? object.modelPath : "";
+        if (modelPath.empty()) {
+            for (const MeshInstance& instance :
+                 object.modelRenderable().meshInstances()) {
+                if (instance.mesh.modelPath != nullptr &&
+                    instance.mesh.modelPath[0] != '\0') {
+                    modelPath = instance.mesh.modelPath;
+                    break;
+                }
+            }
+        }
+        key.modelIdentity =
+            model_loading::normalizedFilesystemIdentity(modelPath);
         key.scaleBits = std::array<std::uint32_t, 3>{
             normalizedBits(object.scale.x), normalizedBits(object.scale.y),
             normalizedBits(object.scale.z)};
         key.collider = object.physics.colliderType;
+        key.geometryFingerprint =
+            physics::makeStaticMeshInMemoryGeometryIdentity(
+                object.modelRenderable().meshInstances());
         return key;
     }
 

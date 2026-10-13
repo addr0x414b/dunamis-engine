@@ -54,6 +54,28 @@ struct Vertex {
     }
 };
 
+struct ImportedAssetReference {
+    // Source asset and structural node identity are persisted together so
+    // property application cannot briefly load the complete legacy model.
+    std::string sourcePath;
+    std::string nodeIdentity;
+    std::string textureFallbackPath;
+
+    [[nodiscard]] bool empty() const noexcept {
+        return sourcePath.empty() && nodeIdentity.empty() &&
+               textureFallbackPath.empty();
+    }
+
+    bool operator==(const ImportedAssetReference& other) const noexcept {
+        return sourcePath == other.sourcePath &&
+               nodeIdentity == other.nodeIdentity &&
+               textureFallbackPath == other.textureFallbackPath;
+    }
+    bool operator!=(const ImportedAssetReference& other) const noexcept {
+        return !(*this == other);
+    }
+};
+
 namespace std {
 template <>
 struct hash<Vertex> {
@@ -68,15 +90,40 @@ struct hash<Vertex> {
 };
 }  // namespace std
 
+struct MeshBounds {
+    glm::vec3 minimum{0.0f};
+    glm::vec3 maximum{0.0f};
+    bool valid = false;
+};
+
+struct MeshGeometry {
+    std::vector<Vertex> vertices;
+    std::vector<std::uint32_t> indices;
+    MeshBounds bounds;
+    // Stable within an imported asset and across scene instances.
+    std::string assetIdentity;
+    // Filled when immutable imported geometry is cooked into the asset. RAM
+    // physics-cache lookups can reuse it without hashing every vertex again.
+    std::uint64_t collisionFingerprint = 0;
+};
+
 struct Mesh {
     const char* modelPath = nullptr;
     std::vector<Vertex> vertices;
     std::vector<std::uint32_t> indices;
-    struct Bounds {
-        glm::vec3 minimum{0.0f};
-        glm::vec3 maximum{0.0f};
-        bool valid = false;
-    } bounds;
+    using Bounds = MeshBounds;
+    Bounds bounds;
+    // Legacy mutable whole-model meshes continue to own vectors above.
+    // Hierarchical imports instead share this immutable geometry resource.
+    std::shared_ptr<const MeshGeometry> sharedGeometry;
+    std::string assetIdentity;
+
+    [[nodiscard]] const std::vector<Vertex>& vertexData() const noexcept {
+        return sharedGeometry ? sharedGeometry->vertices : vertices;
+    }
+    [[nodiscard]] const std::vector<std::uint32_t>& indexData() const noexcept {
+        return sharedGeometry ? sharedGeometry->indices : indices;
+    }
 };
 
 inline void calculateMeshBounds(Mesh& mesh) noexcept {
@@ -84,7 +131,7 @@ inline void calculateMeshBounds(Mesh& mesh) noexcept {
     bool foundFinitePosition = false;
     glm::vec3 minimum(0.0f);
     glm::vec3 maximum(0.0f);
-    for (const Vertex& vertex : mesh.vertices) {
+    for (const Vertex& vertex : mesh.vertexData()) {
         const glm::vec3& position = vertex.pos;
         if (!std::isfinite(position.x) || !std::isfinite(position.y) ||
             !std::isfinite(position.z)) {

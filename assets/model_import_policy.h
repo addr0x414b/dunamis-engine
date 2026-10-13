@@ -13,6 +13,7 @@ namespace model_loading {
 // in-process cache does not need a key field: the policy is fixed for the
 // lifetime of an engine process. Increment it if import semantics change.
 inline constexpr std::uint32_t importedGeometryPolicyVersion = 1;
+inline constexpr std::uint32_t hierarchicalGeometryPolicyVersion = 1;
 
 // Before the meter migration, legacy scene transforms interpreted numeric
 // asset coordinates as Dunamis units with 100 units per meter.
@@ -30,6 +31,16 @@ constexpr unsigned int meterNormalizedImportFlags() noexcept {
            aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace |
            aiProcess_GlobalScale | aiProcess_PreTransformVertices |
            aiProcess_FindInvalidData;
+}
+
+// Unlike the backwards-compatible whole-model policy above, this keeps
+// Assimp's node-local transforms and source mesh references available for
+// independent scene objects. GlobalScale remains before application-side
+// transform normalization, matching the legacy asset-to-meter boundary.
+constexpr unsigned int hierarchyPreservingImportFlags() noexcept {
+    return aiProcess_Triangulate | aiProcess_FlipUVs |
+           aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace |
+           aiProcess_GlobalScale | aiProcess_FindInvalidData;
 }
 
 struct LegacyAssetScaleMigration {

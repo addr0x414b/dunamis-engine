@@ -17,6 +17,7 @@
 #include <nlohmann/json.hpp>
 
 #include "../core/result.h"
+#include "../assets/model_asset.h"
 #include "game_object.h"
 
 namespace authored_property {
@@ -26,6 +27,7 @@ inline constexpr bool is_supported_v =
     std::is_same_v<T, bool> || std::is_same_v<T, std::string> ||
     std::is_integral_v<T> || std::is_floating_point_v<T> ||
     std::is_same_v<T, GameObject::PhysicsBodySettings> ||
+    std::is_same_v<T, ImportedAssetReference> ||
     std::is_same_v<T, glm::vec2> || std::is_same_v<T, glm::vec3> ||
     std::is_same_v<T, glm::vec4>;
 
@@ -70,6 +72,11 @@ Result encode(const T& value, nlohmann::json& output) {
                   {"motionType", motionType},
                   {"colliderType", colliderType},
                   {"sphereRadius", value.sphereRadius}};
+        return Result::success();
+    } else if constexpr (std::is_same_v<T, ImportedAssetReference>) {
+        output = {{"sourcePath", value.sourcePath},
+                  {"nodeIdentity", value.nodeIdentity},
+                  {"textureFallbackPath", value.textureFallbackPath}};
         return Result::success();
     } else if constexpr (std::is_same_v<T, glm::vec2> ||
                          std::is_same_v<T, glm::vec3> ||
@@ -170,6 +177,26 @@ Result decode(const nlohmann::json& input, T& value) {
             result = decode(input.at("sphereRadius"), decoded.sphereRadius);
             if (!result) return result;
             value = decoded;
+        } else if constexpr (std::is_same_v<T, ImportedAssetReference>) {
+            if (!input.is_object() || !input.contains("sourcePath") ||
+                !input.contains("nodeIdentity") ||
+                !input.contains("textureFallbackPath")) {
+                return Result::failure(
+                    "expected a complete imported asset reference object");
+            }
+            ImportedAssetReference decoded;
+            Result result = decode(input.at("sourcePath"), decoded.sourcePath);
+            if (!result) return result;
+            result = decode(input.at("nodeIdentity"), decoded.nodeIdentity);
+            if (!result) return result;
+            result = decode(input.at("textureFallbackPath"),
+                            decoded.textureFallbackPath);
+            if (!result) return result;
+            if (decoded.sourcePath.empty() != decoded.nodeIdentity.empty()) {
+                return Result::failure(
+                    "imported asset source path and node identity must both be empty or nonempty");
+            }
+            value = std::move(decoded);
         } else if constexpr (std::is_same_v<T, glm::vec2> ||
                              std::is_same_v<T, glm::vec3> ||
                              std::is_same_v<T, glm::vec4>) {

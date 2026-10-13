@@ -24,6 +24,9 @@ class SceneTestAccess;
 namespace editor {
 class EditorObjectCoordinator;
 }
+namespace model_import {
+class HierarchyImporter;
+}
 
 class Scene {
 public:
@@ -78,6 +81,7 @@ private:
     friend class VisualServer;
     friend class SceneTestAccess;
     friend class editor::EditorObjectCoordinator;
+    friend class model_import::HierarchyImporter;
 
     [[nodiscard]] Result validateEditorGameObjectInsertion(
         const GameObject& gameObject) const;
@@ -94,6 +98,10 @@ private:
     [[nodiscard]] Result addGameObjectInternal(
         std::unique_ptr<GameObject> gameObject, bool allowActive,
         GameObject*& inserted);
+    [[nodiscard]] Result addImportedHierarchy(
+        std::vector<std::unique_ptr<GameObject>> objects,
+        const std::vector<std::size_t>& parentIndices,
+        GameObject*& root);
     [[nodiscard]] Result validateReparentGameObject(
         const GameObject& child, GameObject* newParent, ReparentMode mode,
         std::optional<std::size_t> destinationIndex) const;

@@ -64,16 +64,49 @@ void addMeshGeometry(Fnv1a64& hash,
     hash.add(meshCount);
     for (const MeshInstance& instance : meshInstances) {
         const Mesh& mesh = instance.mesh;
-        const std::uint64_t vertexCount = mesh.vertices.size();
-        const std::uint64_t indexCount = mesh.indices.size();
+        const auto& vertices = mesh.vertexData();
+        const auto& indices = mesh.indexData();
+        const std::uint64_t vertexCount = vertices.size();
+        const std::uint64_t indexCount = indices.size();
         hash.add(vertexCount);
         hash.add(indexCount);
-        for (const Vertex& vertex : mesh.vertices) {
+        for (const Vertex& vertex : vertices) {
             hash.add(normalizedFloatBits(vertex.pos.x));
             hash.add(normalizedFloatBits(vertex.pos.y));
             hash.add(normalizedFloatBits(vertex.pos.z));
         }
-        for (const std::uint32_t index : mesh.indices) hash.add(index);
+        for (const std::uint32_t index : indices) hash.add(index);
+    }
+}
+
+void addInMemoryGeometryIdentity(
+    Fnv1a64& hash, const std::vector<MeshInstance>& meshInstances) noexcept {
+    const std::uint64_t meshCount = meshInstances.size();
+    hash.add(meshCount);
+    for (const MeshInstance& instance : meshInstances) {
+        const Mesh& mesh = instance.mesh;
+        const bool hasImmutableFingerprint =
+            mesh.sharedGeometry &&
+            mesh.sharedGeometry->collisionFingerprint != 0;
+        const std::uint8_t identityKind = hasImmutableFingerprint ? 1 : 0;
+        hash.add(identityKind);
+        if (hasImmutableFingerprint) {
+            hash.add(mesh.sharedGeometry->collisionFingerprint);
+            continue;
+        }
+
+        const auto& vertices = mesh.vertexData();
+        const auto& indices = mesh.indexData();
+        const std::uint64_t vertexCount = vertices.size();
+        const std::uint64_t indexCount = indices.size();
+        hash.add(vertexCount);
+        hash.add(indexCount);
+        for (const Vertex& vertex : vertices) {
+            hash.add(normalizedFloatBits(vertex.pos.x));
+            hash.add(normalizedFloatBits(vertex.pos.y));
+            hash.add(normalizedFloatBits(vertex.pos.z));
+        }
+        for (const std::uint32_t index : indices) hash.add(index);
     }
 }
 
@@ -210,6 +243,13 @@ StaticMeshShapeCacheKey makeStaticMeshShapeCacheKey(
     addIdentity(identityHash, key);
     key.stableHash = identityHash.value();
     return key;
+}
+
+std::uint64_t makeStaticMeshInMemoryGeometryIdentity(
+    const std::vector<MeshInstance>& meshInstances) {
+    Fnv1a64 geometryIdentity;
+    addInMemoryGeometryIdentity(geometryIdentity, meshInstances);
+    return geometryIdentity.value();
 }
 
 PhysicsShapeCache::PhysicsShapeCache(std::filesystem::path directory)

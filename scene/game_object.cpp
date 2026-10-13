@@ -46,6 +46,22 @@ Result GameObject::setAuthoredTexturePath(std::string path) {
     return result;
 }
 
+ImportedAssetReference GameObject::importedAssetReference() const {
+    return modelRenderable().importedAssetReference();
+}
+
+Result GameObject::setImportedAssetReference(
+    ImportedAssetReference reference) {
+    ModelRenderable& renderable = modelRenderable();
+    renderable.modelPath = modelPath;
+    renderable.texturePath = texturePath;
+    const Result result =
+        renderable.setImportedAssetReference(std::move(reference));
+    modelPath = renderable.modelPath;
+    texturePath = renderable.texturePath;
+    return result;
+}
+
 Result GameObject::loadModel() {
     ModelRenderable& renderable = modelRenderable();
     renderable.modelPath = modelPath;

@@ -2,7 +2,9 @@
 #include "loading_cache_key.h"
 
 #include "../assets/model_asset.h"
+#include "../assets/imported_model_asset.h"
 #include "../assets/model_import_policy.h"
+#include "../math/transform_math.h"
 
 #include <spdlog/spdlog.h>
 #define STB_IMAGE_IMPLEMENTATION
@@ -19,18 +21,23 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstring>
 #include <exception>
 #include <filesystem>
+#include <iomanip>
 #include <iterator>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <sstream>
 #include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+
+#include <glm/gtc/matrix_inverse.hpp>
 
 namespace model_loading {
 
@@ -103,8 +110,23 @@ struct ModelAssetCache {
     std::size_t misses = 0;
 };
 
+struct ImportedModelAssetCache {
+    std::mutex mutex;
+    std::unordered_map<ModelAssetCacheKey,
+                       std::weak_ptr<const model_loading::ImportedModelAsset>,
+                       ModelAssetCacheKeyHash>
+        entries;
+    std::size_t hits = 0;
+    std::size_t misses = 0;
+};
+
 ModelAssetCache& modelAssetCache() {
     static ModelAssetCache cache;
+    return cache;
+}
+
+ImportedModelAssetCache& importedModelAssetCache() {
+    static ImportedModelAssetCache cache;
     return cache;
 }
 
@@ -914,23 +936,25 @@ bool normalizeVector(const glm::vec3& input, glm::vec3& output) {
 Result validateIncomingMeshInstance(const MeshInstance& instance) {
     const auto& mesh = instance.mesh;
     const auto& material = instance.material;
+    const auto& vertices = mesh.vertexData();
+    const auto& indices = mesh.indexData();
 
-    if (!mesh.indices.empty() && mesh.vertices.empty()) {
+    if (!indices.empty() && vertices.empty()) {
         return Result::failure(
             "MeshInstance indexed geometry has no vertices");
     }
-    if (!mesh.indices.empty() && mesh.indices.size() % 3 != 0) {
+    if (!indices.empty() && indices.size() % 3 != 0) {
         return Result::failure(
             "MeshInstance index count is not a complete triangle list");
     }
-    for (const Vertex& vertex : mesh.vertices) {
+    for (const Vertex& vertex : vertices) {
         if (!isFiniteVector(vertex.pos)) {
             return Result::failure(
                 "MeshInstance contains a non-finite vertex position");
         }
     }
-    for (uint32_t index : mesh.indices) {
-        if (index >= mesh.vertices.size()) {
+    for (uint32_t index : indices) {
+        if (index >= vertices.size()) {
             return Result::failure("MeshInstance contains an out-of-range index");
         }
     }
@@ -1121,7 +1145,878 @@ void logLoadSummary(const LoadModelProfile& profile,
         profile.cacheHits, profile.cacheMisses);
 }
 
+bool isFiniteMatrix(const glm::mat4& matrix) {
+    return transform_math::isFiniteMatrix(matrix);
+}
+
+glm::mat4 convertAssimpMatrix(const aiMatrix4x4& input) {
+    // aiMatrix4x4 transforms column vectors using row-major named fields;
+    // GLM indexes matrix[column][row]. Assign explicitly to preserve both
+    // translation placement and multiplication order.
+    glm::mat4 output(1.0f);
+    output[0][0] = input.a1; output[1][0] = input.a2;
+    output[2][0] = input.a3; output[3][0] = input.a4;
+    output[0][1] = input.b1; output[1][1] = input.b2;
+    output[2][1] = input.b3; output[3][1] = input.b4;
+    output[0][2] = input.c1; output[1][2] = input.c2;
+    output[2][2] = input.c3; output[3][2] = input.c4;
+    output[0][3] = input.d1; output[1][3] = input.d2;
+    output[2][3] = input.d3; output[3][3] = input.d4;
+    return output;
+}
+
+Result extractRigidWorldTransform(const glm::mat4& sourceWorld,
+                                  glm::mat4& rigidWorld) {
+    rigidWorld = glm::mat4(1.0f);
+    if (!isFiniteMatrix(sourceWorld) ||
+        std::fabs(sourceWorld[0][3]) > 1.0e-5f ||
+        std::fabs(sourceWorld[1][3]) > 1.0e-5f ||
+        std::fabs(sourceWorld[2][3]) > 1.0e-5f ||
+        std::fabs(sourceWorld[3][3] - 1.0f) > 1.0e-5f) {
+        return Result::failure(
+            "Source node transform is non-finite or non-affine");
+    }
+
+    const glm::mat3 linear(sourceWorld);
+    const float determinant = glm::determinant(linear);
+    float maximum = 0.0f;
+    for (int column = 0; column < 3; ++column) {
+        for (int row = 0; row < 3; ++row) {
+            maximum = std::max(maximum, std::fabs(linear[column][row]));
+        }
+    }
+    const float tolerance =
+        128.0f * std::numeric_limits<float>::epsilon() * maximum * maximum * maximum;
+    if (!std::isfinite(determinant) || !std::isfinite(maximum) ||
+        maximum <= 0.0f || std::fabs(determinant) <= tolerance) {
+        return Result::failure(
+            "Source node transform has a singular or unusable linear part");
+    }
+
+    const glm::vec3 first = linear[0];
+    const glm::vec3 second = linear[1];
+    glm::vec3 axisX;
+    if (!normalizeVector(first, axisX)) {
+        return Result::failure("Source node transform has an unusable X axis");
+    }
+    glm::vec3 axisY;
+    if (!normalizeVector(second - glm::dot(second, axisX) * axisX, axisY)) {
+        return Result::failure("Source node transform has an unusable Y axis");
+    }
+    glm::vec3 axisZ;
+    if (!normalizeVector(glm::cross(axisX, axisY), axisZ)) {
+        return Result::failure("Source node transform has an unusable Z axis");
+    }
+
+    const glm::mat3 rotation(axisX, axisY, axisZ);
+    rigidWorld = glm::mat4(1.0f);
+    for (int column = 0; column < 3; ++column) {
+        for (int row = 0; row < 3; ++row) {
+            rigidWorld[column][row] = rotation[column][row];
+        }
+    }
+    rigidWorld[3] = glm::vec4(glm::vec3(sourceWorld[3]), 1.0f);
+    return isFiniteMatrix(rigidWorld)
+        ? Result::success()
+        : Result::failure("Source node rigid transform is non-finite");
+}
+
+glm::mat4 canonicalBakeMatrix(glm::mat4 matrix) {
+    constexpr float tolerance = 1.0e-6f;
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            float& value = matrix[column][row];
+            if (std::fabs(value) <= tolerance) value = 0.0f;
+            else if (std::fabs(value - 1.0f) <= tolerance) value = 1.0f;
+            else if (std::fabs(value + 1.0f) <= tolerance) value = -1.0f;
+        }
+    }
+    return matrix;
+}
+
+std::string bakeMatrixIdentity(const glm::mat4& matrix) {
+    std::ostringstream identity;
+    identity << std::hex << std::setfill('0');
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            std::uint32_t bits = 0;
+            std::memcpy(&bits, &matrix[column][row], sizeof(bits));
+            identity << std::setw(8) << bits;
+        }
+    }
+    return identity.str();
+}
+
+bool calculateGeometryBounds(MeshGeometry& geometry) {
+    geometry.bounds = {};
+    bool found = false;
+    for (const Vertex& vertex : geometry.vertices) {
+        if (!isFiniteVector(vertex.pos)) continue;
+        if (!found) {
+            geometry.bounds.minimum = vertex.pos;
+            geometry.bounds.maximum = vertex.pos;
+            found = true;
+        } else {
+            geometry.bounds.minimum =
+                glm::min(geometry.bounds.minimum, vertex.pos);
+            geometry.bounds.maximum =
+                glm::max(geometry.bounds.maximum, vertex.pos);
+        }
+    }
+    geometry.bounds.valid = found;
+    if (found) {
+        constexpr std::uint64_t fnvOffset = 14695981039346656037ULL;
+        constexpr std::uint64_t fnvPrime = 1099511628211ULL;
+        std::uint64_t fingerprint = fnvOffset;
+        const auto addBytes = [&fingerprint](const void* data,
+                                             std::size_t size) {
+            const auto* bytes = static_cast<const std::uint8_t*>(data);
+            for (std::size_t index = 0; index < size; ++index) {
+                fingerprint ^= bytes[index];
+                fingerprint *= fnvPrime;
+            }
+        };
+        const auto addValue = [&addBytes](const auto& value) {
+            addBytes(&value, sizeof(value));
+        };
+        const std::uint64_t vertexCount = geometry.vertices.size();
+        const std::uint64_t indexCount = geometry.indices.size();
+        addValue(vertexCount);
+        addValue(indexCount);
+        for (const Vertex& vertex : geometry.vertices) {
+            for (int axis = 0; axis < 3; ++axis) {
+                const float coordinate =
+                    vertex.pos[axis] == 0.0f ? 0.0f : vertex.pos[axis];
+                std::uint32_t bits = 0;
+                std::memcpy(&bits, &coordinate, sizeof(bits));
+                addValue(bits);
+            }
+        }
+        for (const std::uint32_t index : geometry.indices) addValue(index);
+        geometry.collisionFingerprint = fingerprint == 0 ? 1 : fingerprint;
+    }
+    return found;
+}
+
+Result bakeImportedGeometry(const CachedCpuMesh& source,
+                            const glm::mat4& bakeTransform,
+                            const std::string& identity,
+                            std::shared_ptr<const MeshGeometry>& output) {
+    output.reset();
+    if (!isFiniteMatrix(bakeTransform)) {
+        return Result::failure("Derived mesh transform is not finite");
+    }
+    const glm::mat3 linear(bakeTransform);
+    const float determinant = glm::determinant(linear);
+    if (!std::isfinite(determinant) || std::fabs(determinant) <= 1.0e-12f) {
+        return Result::failure("Derived mesh transform is singular");
+    }
+    const glm::mat3 normalMatrix = glm::transpose(glm::inverse(linear));
+    if (!std::isfinite(glm::determinant(normalMatrix))) {
+        return Result::failure("Derived mesh normal transform is invalid");
+    }
+
+    auto geometry = std::make_shared<MeshGeometry>();
+    geometry->assetIdentity = identity;
+    geometry->vertices.reserve(source.vertices.size());
+    for (const Vertex& imported : source.vertices) {
+        Vertex vertex = imported;
+        vertex.pos = glm::vec3(bakeTransform * glm::vec4(imported.pos, 1.0f));
+        if (!isFiniteVector(vertex.pos)) {
+            return Result::failure(
+                "Derived mesh contains a non-finite vertex position");
+        }
+        if (!normalizeVector(normalMatrix * imported.normal, vertex.normal)) {
+            return Result::failure(
+                "Derived mesh contains an unusable transformed normal");
+        }
+        const glm::vec3 sourceTangent(imported.tangent);
+        glm::vec3 transformedTangent = linear * sourceTangent;
+        transformedTangent -=
+            glm::dot(transformedTangent, vertex.normal) * vertex.normal;
+        if (glm::dot(sourceTangent, sourceTangent) > 1.0e-12f) {
+            if (!normalizeVector(transformedTangent, transformedTangent)) {
+                return Result::failure(
+                    "Derived mesh contains an unusable transformed tangent");
+            }
+            const glm::vec3 sourceBitangent =
+                imported.tangent.w * glm::cross(imported.normal, sourceTangent);
+            const glm::vec3 transformedBitangent = linear * sourceBitangent;
+            const float handedness =
+                glm::dot(glm::cross(vertex.normal, transformedTangent),
+                         transformedBitangent) < 0.0f
+                    ? -1.0f
+                    : 1.0f;
+            vertex.tangent = glm::vec4(transformedTangent, handedness);
+        }
+        geometry->vertices.push_back(vertex);
+    }
+
+    geometry->indices = source.indices;
+    if (determinant < 0.0f) {
+        for (std::size_t index = 0; index + 2 < geometry->indices.size();
+             index += 3) {
+            std::swap(geometry->indices[index + 1],
+                      geometry->indices[index + 2]);
+        }
+    }
+    if (!calculateGeometryBounds(*geometry)) {
+        return Result::failure("Derived mesh has no finite bounds");
+    }
+    output = std::move(geometry);
+    return Result::success();
+}
+
+struct HierarchyNodeVisit {
+    const aiNode* source = nullptr;
+    std::size_t parentIndex = model_loading::ImportedModelNode::noParent;
+    std::size_t siblingIndex = 0;
+    std::size_t depth = 0;
+    glm::mat4 parentWorld{1.0f};
+    std::string identity;
+};
+
+struct HierarchyNodeMeshes {
+    std::vector<unsigned int> sourceMeshIndices;
+    glm::mat4 bakeTransform{1.0f};
+};
+
+struct ImportedBaseMesh {
+    CachedCpuMesh geometry;
+    bool usableTangents = false;
+    Material material;
+    std::string texturePath;
+    std::size_t materialIndex = 0;
+};
+
+std::string stableNodeSegment(std::size_t siblingIndex,
+                              const std::string& sourceName) {
+    return "/" + std::to_string(siblingIndex) + ":" +
+           std::to_string(sourceName.size()) + ":" + sourceName;
+}
+
+std::string sourceNodeName(const aiNode& node) {
+    return node.mName.length == 0 ? std::string{} : node.mName.C_Str();
+}
+
+bool isAssimpGeneratedNodeName(const std::string& name) {
+    constexpr char prefix[] = "nodes[";
+    if (name.size() <= sizeof(prefix) ||
+        name.compare(0, sizeof(prefix) - 1, prefix) != 0 ||
+        name.back() != ']') {
+        return false;
+    }
+    for (std::size_t index = sizeof(prefix) - 1;
+         index + 1 < name.size(); ++index) {
+        if (name[index] < '0' || name[index] > '9') return false;
+    }
+    return name.size() >= sizeof(prefix) + 1;
+}
+
+Result convertSourceMesh(const aiMesh& mesh, const std::string& meshName,
+                         ImportedBaseMesh& output,
+                         LoadModelProfile& profile) {
+    if (mesh.mNumVertices == 0 || mesh.mVertices == nullptr) {
+        return Result::failure("Mesh " + meshName + " has no vertices");
+    }
+    if (mesh.mNumFaces == 0 || mesh.mFaces == nullptr) {
+        return Result::failure("Mesh " + meshName + " has no faces");
+    }
+    if (!mesh.HasNormals()) {
+        return Result::failure(
+            "Mesh " + meshName + " has no usable normals after import");
+    }
+    if (mesh.mNumBones != 0 || mesh.mNumAnimMeshes != 0) {
+        return Result::failure(
+            "Mesh " + meshName +
+            " uses bones or morph targets, which the static importer does not support");
+    }
+
+    const bool hasTextureCoordinates = mesh.HasTextureCoords(0);
+    const bool hasTangents = mesh.HasTangentsAndBitangents();
+    bool meshHasUsableTangents = hasTangents;
+    std::size_t faceIndexCount = 0;
+    for (unsigned int faceIndex = 0; faceIndex < mesh.mNumFaces; ++faceIndex) {
+        faceIndexCount += mesh.mFaces[faceIndex].mNumIndices;
+    }
+    output.geometry.indices.reserve(faceIndexCount);
+    output.geometry.vertices.reserve(mesh.mNumVertices);
+    std::unordered_map<Vertex, std::uint32_t> uniqueVertices;
+    uniqueVertices.reserve(mesh.mNumVertices);
+
+    for (unsigned int faceIndex = 0; faceIndex < mesh.mNumFaces; ++faceIndex) {
+        const aiFace& face = mesh.mFaces[faceIndex];
+        if (face.mNumIndices != 3 || face.mIndices == nullptr) {
+            return Result::failure(
+                "Mesh " + meshName +
+                " does not contain valid triangle-list faces after triangulation");
+        }
+        for (unsigned int corner = 0; corner < face.mNumIndices; ++corner) {
+            ++profile.totalFaceIndexCount;
+            const unsigned int sourceIndex = face.mIndices[corner];
+            if (sourceIndex >= mesh.mNumVertices) {
+                return Result::failure(
+                    "Mesh " + meshName + " contains an out-of-range index");
+            }
+            Vertex vertex{};
+            vertex.pos = {mesh.mVertices[sourceIndex].x,
+                          mesh.mVertices[sourceIndex].y,
+                          mesh.mVertices[sourceIndex].z};
+            if (!isFiniteVector(vertex.pos)) {
+                return Result::failure(
+                    "Mesh " + meshName + " contains a non-finite position");
+            }
+            vertex.texCoord = hasTextureCoordinates
+                ? glm::vec2(mesh.mTextureCoords[0][sourceIndex].x,
+                            mesh.mTextureCoords[0][sourceIndex].y)
+                : glm::vec2(0.0f);
+            if (!std::isfinite(vertex.texCoord.x) ||
+                !std::isfinite(vertex.texCoord.y)) {
+                return Result::failure(
+                    "Mesh " + meshName + " contains non-finite UV coordinates");
+            }
+            vertex.color = glm::vec3(1.0f);
+            if (!normalizeVector(
+                    {mesh.mNormals[sourceIndex].x,
+                     mesh.mNormals[sourceIndex].y,
+                     mesh.mNormals[sourceIndex].z},
+                    vertex.normal)) {
+                return Result::failure(
+                    "Mesh " + meshName + " contains an unusable normal");
+            }
+            if (hasTangents) {
+                const glm::vec3 tangentInput(mesh.mTangents[sourceIndex].x,
+                                             mesh.mTangents[sourceIndex].y,
+                                             mesh.mTangents[sourceIndex].z);
+                const glm::vec3 bitangentInput(
+                    mesh.mBitangents[sourceIndex].x,
+                    mesh.mBitangents[sourceIndex].y,
+                    mesh.mBitangents[sourceIndex].z);
+                const glm::vec3 orthogonal = tangentInput -
+                    glm::dot(tangentInput, vertex.normal) * vertex.normal;
+                glm::vec3 tangent;
+                if (normalizeVector(orthogonal, tangent) &&
+                    isFiniteVector(bitangentInput)) {
+                    const float handedness =
+                        glm::dot(glm::cross(vertex.normal, tangent),
+                                 bitangentInput) < 0.0f
+                            ? -1.0f
+                            : 1.0f;
+                    vertex.tangent = glm::vec4(tangent, handedness);
+                } else {
+                    meshHasUsableTangents = false;
+                }
+            } else {
+                meshHasUsableTangents = false;
+            }
+            const auto [found, inserted] = uniqueVertices.emplace(
+                vertex, static_cast<std::uint32_t>(
+                            output.geometry.vertices.size()));
+            if (inserted) output.geometry.vertices.push_back(vertex);
+            output.geometry.indices.push_back(found->second);
+        }
+    }
+    if (!calculateCachedMeshBounds(output.geometry)) {
+        return Result::failure("Mesh " + meshName + " has invalid bounds");
+    }
+    profile.totalUniqueVertices += output.geometry.vertices.size();
+    output.usableTangents = meshHasUsableTangents;
+    return Result::success();
+}
+
+Result buildImportedModelAsset(
+    const std::filesystem::path& sourcePath,
+    const std::filesystem::path& textureFallbackPath,
+    const ModelAssetCacheKey& cacheKey,
+    std::shared_ptr<const model_loading::ImportedModelAsset>& output) {
+    LoadModelProfile profile;
+    output.reset();
+    const std::string modelPath = sourcePath.lexically_normal().generic_string();
+    const std::string fallbackPath =
+        textureFallbackPath.lexically_normal().generic_string();
+    Assimp::Importer importer;
+    const aiScene* scene = nullptr;
+    const auto assimpStart = LoadModelProfile::Clock::now();
+    try {
+        scene = importer.ReadFile(
+            modelPath, model_loading::hierarchyPreservingImportFlags());
+    } catch (const std::exception& exception) {
+        return Result::failure("Assimp failed to read model '" + modelPath +
+                               "': " + exception.what());
+    } catch (...) {
+        return Result::failure(
+            "Assimp failed to read model '" + modelPath +
+            "' with an unknown error");
+    }
+    profile.assimpReadTime = LoadModelProfile::Clock::now() - assimpStart;
+    if (!scene || (scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE) != 0 ||
+        scene->mRootNode == nullptr || scene->mNumMeshes == 0 ||
+        scene->mMeshes == nullptr || scene->mNumMaterials == 0 ||
+        scene->mMaterials == nullptr) {
+        const char* error = importer.GetErrorString();
+        return Result::failure(
+            "Failed to load hierarchical model '" + modelPath + "': " +
+            (error != nullptr && error[0] != '\0' ? error
+                                                   : "invalid Assimp scene"));
+    }
+    if (scene->mNumAnimations != 0) {
+        return Result::failure(
+            "Hierarchical static importing does not support animation channels; " +
+            modelPath + " contains animation data");
+    }
+
+    try {
+        auto asset = std::make_shared<model_loading::ImportedModelAsset>();
+        asset->sourcePath = modelPath;
+        asset->sourceIdentity = cacheKey.modelIdentity + "|hierarchy:" +
+            std::to_string(model_loading::hierarchicalGeometryPolicyVersion);
+        if (cacheKey.hasTextureFallbackOverride) {
+            asset->sourceIdentity += "|fallback:" +
+                std::to_string(cacheKey.textureFallbackIdentity.size()) + ":" +
+                cacheKey.textureFallbackIdentity;
+        }
+
+        constexpr std::size_t maximumNodeCount = 100000;
+        constexpr std::size_t maximumHierarchyDepth = 4096;
+        constexpr std::size_t maximumMeshReferences = 1000000;
+        std::vector<HierarchyNodeVisit> pendingNodes;
+        pendingNodes.reserve(128);
+        const std::string rootSourceName = sourceNodeName(*scene->mRootNode);
+        HierarchyNodeVisit rootVisit;
+        rootVisit.source = scene->mRootNode;
+        rootVisit.identity = "root:" +
+            std::to_string(rootSourceName.size()) + ":" + rootSourceName;
+        pendingNodes.push_back(std::move(rootVisit));
+
+        std::vector<HierarchyNodeMeshes> nodeMeshes;
+        std::vector<glm::mat4> rigidWorlds;
+        std::vector<bool> usedSourceMeshes(scene->mNumMeshes, false);
+        std::unordered_set<const aiNode*> visitedNodes;
+        visitedNodes.reserve(128);
+        std::size_t totalMeshReferences = 0;
+
+        while (!pendingNodes.empty()) {
+            HierarchyNodeVisit visit = std::move(pendingNodes.back());
+            pendingNodes.pop_back();
+            if (visit.source == nullptr) {
+                return Result::failure(
+                    "Assimp hierarchy contains a null child node");
+            }
+            if (visit.depth > maximumHierarchyDepth) {
+                return Result::failure(
+                    "Assimp node hierarchy exceeds the supported depth limit");
+            }
+            if (asset->nodes.size() >= maximumNodeCount) {
+                return Result::failure(
+                    "Assimp node hierarchy exceeds the supported node limit");
+            }
+            if (!visitedNodes.insert(visit.source).second) {
+                return Result::failure(
+                    "Assimp node hierarchy contains a cycle or repeated node pointer");
+            }
+            if ((visit.source->mNumChildren != 0 &&
+                 visit.source->mChildren == nullptr) ||
+                (visit.source->mNumMeshes != 0 &&
+                 visit.source->mMeshes == nullptr)) {
+                return Result::failure(
+                    "Assimp node has a nonzero child or mesh count with a null array");
+            }
+
+            const glm::mat4 local =
+                convertAssimpMatrix(visit.source->mTransformation);
+            if (!isFiniteMatrix(local)) {
+                return Result::failure(
+                    "Assimp node '" + visit.identity +
+                    "' has a non-finite local transform");
+            }
+            const glm::mat4 sourceWorld = visit.parentWorld * local;
+            glm::mat4 rigidWorld;
+            Result rigidResult =
+                extractRigidWorldTransform(sourceWorld, rigidWorld);
+            if (!rigidResult) {
+                return Result::failure("Assimp node '" + visit.identity +
+                                       "': " + rigidResult.error());
+            }
+
+            glm::mat4 bake = glm::inverse(rigidWorld) * sourceWorld;
+            if (!isFiniteMatrix(bake)) {
+                return Result::failure(
+                    "Assimp node '" + visit.identity +
+                    "' produced a non-finite derived mesh transform");
+            }
+            bake = canonicalBakeMatrix(bake);
+
+            transform_math::DecomposedTransform localRigid;
+            glm::mat4 relativeRigid = rigidWorld;
+            if (visit.parentIndex !=
+                model_loading::ImportedModelNode::noParent) {
+                relativeRigid =
+                    glm::inverse(rigidWorlds[visit.parentIndex]) * rigidWorld;
+            }
+            const Result decomposition = transform_math::decomposeModelMatrix(
+                relativeRigid, localRigid);
+            if (!decomposition ||
+                std::fabs(localRigid.scale.x - 1.0f) > 1.0e-3f ||
+                std::fabs(localRigid.scale.y - 1.0f) > 1.0e-3f ||
+                std::fabs(localRigid.scale.z - 1.0f) > 1.0e-3f) {
+                return Result::failure(
+                    "Assimp node '" + visit.identity +
+                    "' has a rigid transform Dunamis cannot represent");
+            }
+
+            const std::size_t nodeIndex = asset->nodes.size();
+            const std::string importedName = sourceNodeName(*visit.source);
+            model_loading::ImportedModelNode node;
+            node.identity = visit.identity;
+            node.nameWasEmpty = importedName.empty() ||
+                                isAssimpGeneratedNodeName(importedName);
+            node.name = node.nameWasEmpty
+                ? "Node_" + std::to_string(nodeIndex)
+                : importedName;
+            node.parentIndex = visit.parentIndex;
+            node.position = localRigid.position;
+            node.rotation = localRigid.rotation;
+            if (!transform_math::isFiniteVector(node.position) ||
+                !transform_math::isFiniteVector(node.rotation)) {
+                return Result::failure(
+                    "Assimp node '" + visit.identity +
+                    "' produced a non-finite authored transform");
+            }
+            asset->nodeByIdentity.emplace(node.identity, nodeIndex);
+            asset->nodes.push_back(std::move(node));
+            if (visit.parentIndex !=
+                model_loading::ImportedModelNode::noParent) {
+                asset->nodes[visit.parentIndex].children.push_back(nodeIndex);
+            }
+            HierarchyNodeMeshes nodeData;
+            nodeData.bakeTransform = bake;
+            nodeData.sourceMeshIndices.reserve(visit.source->mNumMeshes);
+            for (unsigned int meshIndex = 0;
+                 meshIndex < visit.source->mNumMeshes; ++meshIndex) {
+                const unsigned int sourceMeshIndex =
+                    visit.source->mMeshes[meshIndex];
+                if (sourceMeshIndex >= scene->mNumMeshes) {
+                    return Result::failure(
+                        "Assimp node '" + visit.identity +
+                        "' references an out-of-range source mesh index");
+                }
+                if (++totalMeshReferences > maximumMeshReferences) {
+                    return Result::failure(
+                        "Assimp hierarchy exceeds the supported mesh-reference limit");
+                }
+                usedSourceMeshes[sourceMeshIndex] = true;
+                nodeData.sourceMeshIndices.push_back(sourceMeshIndex);
+            }
+            nodeMeshes.push_back(std::move(nodeData));
+            rigidWorlds.push_back(rigidWorld);
+
+            for (std::size_t childOffset = visit.source->mNumChildren;
+                 childOffset > 0; --childOffset) {
+                const std::size_t childIndex = childOffset - 1;
+                const aiNode* child = visit.source->mChildren[childIndex];
+                if (child == nullptr) {
+                    return Result::failure(
+                        "Assimp node '" + visit.identity +
+                        "' contains a null child pointer");
+                }
+                HierarchyNodeVisit childVisit;
+                childVisit.source = child;
+                childVisit.parentIndex = nodeIndex;
+                childVisit.siblingIndex = childIndex;
+                childVisit.depth = visit.depth + 1;
+                childVisit.parentWorld = sourceWorld;
+                childVisit.identity = visit.identity + stableNodeSegment(
+                    childIndex, sourceNodeName(*child));
+                pendingNodes.push_back(std::move(childVisit));
+            }
+        }
+
+        if (totalMeshReferences == 0) {
+            return Result::failure(
+                "Assimp model contains no mesh references in its node hierarchy");
+        }
+        asset->meshReferences = totalMeshReferences;
+        asset->uniqueSourceMeshes = static_cast<std::size_t>(std::count(
+            usedSourceMeshes.begin(), usedSourceMeshes.end(), true));
+
+        std::vector<PendingImportedMaterial> materialTemplates(
+            scene->mNumMaterials);
+        std::vector<unsigned int> materialOrder;
+        materialOrder.reserve(scene->mNumMaterials);
+        std::vector<TextureDecodeJob> decodeJobs;
+        decodeJobs.reserve(static_cast<std::size_t>(scene->mNumMaterials) * 3);
+        std::unordered_set<TextureCacheKey, TextureCacheKeyHash> decodeKeys;
+        decodeKeys.reserve(static_cast<std::size_t>(scene->mNumMaterials) * 3);
+        for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes;
+             ++meshIndex) {
+            if (!usedSourceMeshes[meshIndex]) continue;
+            const aiMesh* mesh = scene->mMeshes[meshIndex];
+            if (mesh == nullptr) {
+                return Result::failure(
+                    "Assimp scene contains a null referenced mesh");
+            }
+            if (mesh->mMaterialIndex >= scene->mNumMaterials ||
+                scene->mMaterials[mesh->mMaterialIndex] == nullptr) {
+                return Result::failure(
+                    "Mesh " + std::string(mesh->mName.C_Str()) +
+                    " references an invalid material");
+            }
+            PendingImportedMaterial& importedMaterial =
+                materialTemplates[mesh->mMaterialIndex];
+            if (!importedMaterial.discovered) {
+                const std::string firstMeshName = mesh->mName.length == 0
+                    ? "Mesh_" + std::to_string(meshIndex)
+                    : std::string(mesh->mName.C_Str());
+                const Result discovery = discoverImportedMaterial(
+                    scene, scene->mMaterials[mesh->mMaterialIndex],
+                    mesh->mMaterialIndex, modelPath.c_str(),
+                    fallbackPath.empty() ? nullptr : fallbackPath.c_str(),
+                    firstMeshName.c_str(),
+                    profile, importedMaterial, decodeJobs, decodeKeys);
+                if (!discovery) return discovery;
+                importedMaterial.discovered = true;
+                materialOrder.push_back(mesh->mMaterialIndex);
+            }
+        }
+
+        TextureCache textureCache;
+        textureCache.reserve(decodeJobs.size());
+        std::vector<TextureDecodeJobResult> decodeResults;
+        const Result decoded =
+            decodeTextureJobs(decodeJobs, decodeResults, profile);
+        if (!decoded) return decoded;
+        for (std::size_t index = 0; index < decodeJobs.size(); ++index) {
+            gatherDecodeResult(decodeJobs[index], std::move(decodeResults[index]),
+                               textureCache, profile);
+        }
+        for (const unsigned int materialIndex : materialOrder) {
+            const Result finalized = finalizeImportedMaterial(
+                materialTemplates[materialIndex], textureCache, profile);
+            if (!finalized) return finalized;
+        }
+
+        std::vector<std::unique_ptr<ImportedBaseMesh>> baseMeshes(
+            scene->mNumMeshes);
+        for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes;
+             ++meshIndex) {
+            if (!usedSourceMeshes[meshIndex]) continue;
+            const aiMesh& sourceMesh = *scene->mMeshes[meshIndex];
+            const std::string meshName = sourceMesh.mName.length == 0
+                ? "Mesh_" + std::to_string(meshIndex)
+                : sourceMesh.mName.C_Str();
+            auto baseMesh = std::make_unique<ImportedBaseMesh>();
+            Result converted = convertSourceMesh(
+                sourceMesh, meshName, *baseMesh, profile);
+            if (!converted) return converted;
+            PendingImportedMaterial& importedMaterial =
+                materialTemplates[sourceMesh.mMaterialIndex];
+            recordTextureReference(
+                profile, TextureUsage::BaseColor,
+                importedMaterial.baseColorIntendedSourceIdentity);
+            if (importedMaterial.baseColorSourceIdentity !=
+                importedMaterial.baseColorIntendedSourceIdentity) {
+                recordTextureReference(
+                    profile, TextureUsage::BaseColor,
+                    importedMaterial.baseColorSourceIdentity);
+            }
+            if (!importedMaterial.normalMapSourceIdentity.empty()) {
+                recordTextureReference(profile, TextureUsage::Normal,
+                                       importedMaterial.normalMapSourceIdentity);
+            }
+            if (!importedMaterial.metallicRoughnessSourceIdentity.empty()) {
+                recordTextureReference(
+                    profile, TextureUsage::MetallicRoughness,
+                    importedMaterial.metallicRoughnessSourceIdentity);
+            }
+            baseMesh->material = importedMaterial.material;
+            if (baseMesh->material.normalMapPixels) {
+                if (baseMesh->usableTangents) {
+                    baseMesh->material.normalMapEnabled = true;
+                } else {
+                    releaseStbiPixel(baseMesh->material.normalMapPixelsOwner,
+                                     baseMesh->material.normalMapPixels);
+                    baseMesh->material.normalMapWidth = 0;
+                    baseMesh->material.normalMapHeight = 0;
+                    baseMesh->material.normalMapChannels = 0;
+                    baseMesh->material.normalMapMipLevels = 0;
+                }
+            } else if (!importedMaterial.normalMapError.empty()) {
+                spdlog::warn(
+                    "Failed to load optional normal map for imported mesh {}: {}",
+                    meshName, importedMaterial.normalMapError);
+            }
+            if (!importedMaterial.metallicRoughnessError.empty()) {
+                spdlog::warn(
+                    "Failed to load optional metallic-roughness map for imported mesh {}: {}",
+                    meshName, importedMaterial.metallicRoughnessError);
+            }
+            baseMesh->texturePath = importedMaterial.texturePath;
+            baseMesh->materialIndex = sourceMesh.mMaterialIndex;
+            baseMeshes[meshIndex] = std::move(baseMesh);
+        }
+
+        std::unordered_map<std::string,
+                           std::shared_ptr<const model_loading::ImportedMeshAsset>>
+            derivedMeshCache;
+        derivedMeshCache.reserve(totalMeshReferences);
+        for (std::size_t nodeIndex = 0; nodeIndex < nodeMeshes.size();
+             ++nodeIndex) {
+            const HierarchyNodeMeshes& sourceNodeMeshes = nodeMeshes[nodeIndex];
+            auto& destinationMeshes = asset->nodes[nodeIndex].meshes;
+            destinationMeshes.reserve(sourceNodeMeshes.sourceMeshIndices.size());
+            for (const unsigned int sourceMeshIndex :
+                 sourceNodeMeshes.sourceMeshIndices) {
+                if (sourceMeshIndex >= baseMeshes.size() ||
+                    !baseMeshes[sourceMeshIndex]) {
+                    return Result::failure(
+                        "Imported node lost a referenced source mesh");
+                }
+                const std::string geometryIdentity =
+                    asset->sourceIdentity + "|mesh:" +
+                    std::to_string(sourceMeshIndex) + "|bake:" +
+                    bakeMatrixIdentity(sourceNodeMeshes.bakeTransform);
+                const auto cached = derivedMeshCache.find(geometryIdentity);
+                if (cached != derivedMeshCache.end()) {
+                    destinationMeshes.push_back(cached->second);
+                    continue;
+                }
+
+                auto importedMesh =
+                    std::make_shared<model_loading::ImportedMeshAsset>();
+                Result baked = bakeImportedGeometry(
+                    baseMeshes[sourceMeshIndex]->geometry,
+                    sourceNodeMeshes.bakeTransform, geometryIdentity,
+                    importedMesh->geometry);
+                if (!baked) {
+                    return Result::failure(
+                        "Failed to normalize source mesh " +
+                        std::to_string(sourceMeshIndex) + ": " + baked.error());
+                }
+                importedMesh->material =
+                    baseMeshes[sourceMeshIndex]->material;
+                importedMesh->texturePath =
+                    baseMeshes[sourceMeshIndex]->texturePath;
+                importedMesh->sourceMeshIndex = sourceMeshIndex;
+                importedMesh->sourceMaterialIndex =
+                    baseMeshes[sourceMeshIndex]->materialIndex;
+                importedMesh->assetIdentity = geometryIdentity + "|material:" +
+                    std::to_string(importedMesh->sourceMaterialIndex);
+                const std::shared_ptr<const model_loading::ImportedMeshAsset>
+                    immutableMesh = std::move(importedMesh);
+                derivedMeshCache.emplace(geometryIdentity, immutableMesh);
+                destinationMeshes.push_back(immutableMesh);
+                ++asset->uniqueGeometryVariants;
+            }
+        }
+
+        spdlog::info(
+            "Hierarchical Assimp import '{}': read={:.3f}ms nodes={} "
+            "uniqueMeshes={} meshReferences={} geometryVariants={} textures={}",
+            modelPath, milliseconds(profile.assimpReadTime), asset->nodes.size(),
+            asset->uniqueSourceMeshes, asset->meshReferences,
+            asset->uniqueGeometryVariants,
+            profile.baseColor.uniqueSources.size() +
+                profile.normalMap.uniqueSources.size() +
+                profile.metallicRoughness.uniqueSources.size());
+        output = std::move(asset);
+        return Result::success();
+    } catch (const std::exception& exception) {
+        return Result::failure("Failed to import model hierarchy '" + modelPath +
+                               "': " + exception.what());
+    } catch (...) {
+        return Result::failure(
+            "Failed to import model hierarchy '" + modelPath +
+            "': unknown error");
+    }
+}
+
 }  // namespace
+
+namespace model_loading {
+
+static Result loadImportedModelAssetImpl(
+    const std::filesystem::path& sourcePath,
+    const std::filesystem::path& textureFallbackPath,
+    std::shared_ptr<const ImportedModelAsset>& output) {
+    output.reset();
+    if (sourcePath.empty()) {
+        return Result::failure("Hierarchical model source path is empty");
+    }
+    const std::string sourceString = sourcePath.lexically_normal().generic_string();
+    const std::string fallbackString =
+        textureFallbackPath.lexically_normal().generic_string();
+    const ModelAssetCacheKey key = makeModelAssetCacheKey(
+        sourceString.c_str(),
+        fallbackString.empty() ? nullptr : fallbackString.c_str());
+
+    ImportedModelAssetCache& cache = importedModelAssetCache();
+    {
+        std::lock_guard<std::mutex> lock(cache.mutex);
+        const auto found = cache.entries.find(key);
+        if (found != cache.entries.end()) {
+            output = found->second.lock();
+            if (output) {
+                ++cache.hits;
+                spdlog::debug("Hierarchical CPU asset cache HIT: {}",
+                              key.modelIdentity);
+                return Result::success();
+            }
+            cache.entries.erase(found);
+        }
+        ++cache.misses;
+    }
+
+    std::shared_ptr<const ImportedModelAsset> loaded;
+    const Result result = buildImportedModelAsset(
+        sourcePath, textureFallbackPath, key, loaded);
+    if (!result) return result;
+    if (!loaded) {
+        return Result::failure(
+            "Hierarchical model import completed without an asset");
+    }
+
+    try {
+        std::lock_guard<std::mutex> lock(cache.mutex);
+        auto& entry = cache.entries[key];
+        if (std::shared_ptr<const ImportedModelAsset> concurrent = entry.lock()) {
+            output = std::move(concurrent);
+        } else {
+            entry = loaded;
+            output = std::move(loaded);
+        }
+    } catch (const std::exception& exception) {
+        spdlog::warn(
+            "Hierarchical model loaded without publishing a CPU cache entry: {}",
+            exception.what());
+        output = std::move(loaded);
+    } catch (...) {
+        spdlog::warn(
+            "Hierarchical model loaded without publishing a CPU cache entry");
+        output = std::move(loaded);
+    }
+    return Result::success();
+}
+
+Result loadImportedModelAsset(
+    const std::filesystem::path& sourcePath,
+    const std::filesystem::path& textureFallbackPath,
+    std::shared_ptr<const ImportedModelAsset>& output) {
+    try {
+        return loadImportedModelAssetImpl(sourcePath, textureFallbackPath,
+                                          output);
+    } catch (const std::exception& exception) {
+        output.reset();
+        return Result::failure(
+            "Failed to resolve hierarchical model asset '" +
+            sourcePath.string() + "': " + exception.what());
+    } catch (...) {
+        output.reset();
+        return Result::failure(
+            "Failed to resolve hierarchical model asset: unknown error");
+    }
+}
+
+}  // namespace model_loading
 
 std::string ModelRenderable::authoredModelPath() const {
     return modelPath ? std::string(modelPath) : std::string{};
@@ -1139,6 +2034,8 @@ Result ModelRenderable::setAuthoredModelPath(std::string path) {
     meshInstances_.clear();
     texturePathStorage_.clear();
     loadedModelAsset_.reset();
+    importedAssetReference_ = {};
+    importedModelAsset_.reset();
     modelPathStorage_ = std::move(path);
     modelPath = modelPathStorage_.empty() ? nullptr : modelPathStorage_.c_str();
     if (!modelPath) {
@@ -1160,11 +2057,133 @@ Result ModelRenderable::setAuthoredTexturePath(std::string path) {
     meshInstances_.clear();
     texturePathStorage_.clear();
     loadedModelAsset_.reset();
+    importedAssetReference_ = {};
+    importedModelAsset_.reset();
     authoredTexturePathStorage_ = std::move(path);
     texturePath = authoredTexturePathStorage_.empty()
                       ? nullptr
                       : authoredTexturePathStorage_.c_str();
     return modelPath ? loadModel() : Result::success();
+}
+
+ImportedAssetReference ModelRenderable::importedAssetReference() const {
+    return importedAssetReference_;
+}
+
+Result ModelRenderable::setImportedAssetReference(
+    ImportedAssetReference reference) {
+    if (!renderTopologyMutable()) {
+        return Result::failure(
+            "Cannot change an imported asset reference while render resources are attached");
+    }
+    if (reference == importedAssetReference_ &&
+        (reference.empty() || importedModelAsset_ != nullptr)) {
+        return Result::success();
+    }
+
+    if (reference.empty()) {
+        if (importedAssetReference_.empty()) return Result::success();
+        meshInstances_.clear();
+        importedAssetReference_ = {};
+        importedModelAsset_.reset();
+        importedNodeIndex_ = 0;
+        return Result::success();
+    }
+    if (reference.sourcePath.empty() || reference.nodeIdentity.empty()) {
+        return Result::failure(
+            "Imported asset reference requires both a source path and node identity");
+    }
+
+    std::shared_ptr<const model_loading::ImportedModelAsset> asset;
+    const Result loaded = model_loading::loadImportedModelAsset(
+        reference.sourcePath, reference.textureFallbackPath, asset);
+    if (!loaded) {
+        return Result::failure("Failed to resolve imported asset '" +
+                               reference.sourcePath + "': " + loaded.error());
+    }
+    const auto node = asset->nodeByIdentity.find(reference.nodeIdentity);
+    if (node == asset->nodeByIdentity.end() ||
+        node->second >= asset->nodes.size()) {
+        return Result::failure(
+            "Imported asset '" + reference.sourcePath +
+            "' no longer contains source node '" + reference.nodeIdentity + "'");
+    }
+
+    std::vector<MeshInstance> pendingMeshes;
+    try {
+        const model_loading::ImportedModelNode& importedNode =
+            asset->nodes[node->second];
+        pendingMeshes.reserve(importedNode.meshes.size());
+        for (const auto& importedMesh : importedNode.meshes) {
+            if (!importedMesh || !importedMesh->geometry ||
+                importedMesh->geometry->vertices.empty() ||
+                importedMesh->geometry->indices.empty()) {
+                return Result::failure(
+                    "Imported source node references invalid mesh geometry");
+            }
+            MeshInstance instance{};
+            instance.mesh.sharedGeometry = importedMesh->geometry;
+            instance.mesh.bounds = importedMesh->geometry->bounds;
+            instance.mesh.assetIdentity = importedMesh->assetIdentity;
+            instance.mesh.modelPath = asset->sourcePath.c_str();
+            instance.material = importedMesh->material;
+            instance.material.texturePath = importedMesh->texturePath.empty()
+                ? nullptr
+                : importedMesh->texturePath.c_str();
+            const Result validation = validateIncomingMeshInstance(instance);
+            if (!validation) {
+                return Result::failure(
+                    "Imported source node contains an invalid mesh: " +
+                    validation.error());
+            }
+            pendingMeshes.push_back(std::move(instance));
+        }
+    } catch (const std::exception& exception) {
+        return Result::failure("Failed to prepare imported mesh references: " +
+                               std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "Failed to prepare imported mesh references: unknown error");
+    }
+
+    meshInstances_.swap(pendingMeshes);
+    texturePathStorage_.clear();
+    loadedModelAsset_.reset();
+    modelPath = nullptr;
+    texturePath = nullptr;
+    modelPathStorage_.clear();
+    authoredTexturePathStorage_.clear();
+    importedAssetReference_ = std::move(reference);
+    importedModelAsset_ = std::move(asset);
+    importedNodeIndex_ = node->second;
+    return Result::success();
+}
+
+std::optional<model_loading::ModelAssetCacheKey>
+ModelRenderable::gpuModelCacheKey() const {
+    if (loadedModelAsset_) {
+        return model_loading::makeModelAssetCacheKey(modelPath, texturePath);
+    }
+    if (!importedModelAsset_ || meshInstances_.empty()) {
+        return std::nullopt;
+    }
+
+    model_loading::ModelAssetCacheKey key;
+    key.modelIdentity = importedModelAsset_->sourceIdentity + "|subset:";
+    for (const MeshInstance& instance : meshInstances_) {
+        const std::string& identity = instance.mesh.assetIdentity;
+        key.modelIdentity += std::to_string(identity.size());
+        key.modelIdentity.push_back(':');
+        key.modelIdentity += identity;
+    }
+    key.hasTextureFallbackOverride =
+        !importedAssetReference_.textureFallbackPath.empty();
+    if (key.hasTextureFallbackOverride) {
+        key.textureFallbackIdentity =
+            model_loading::normalizedFilesystemIdentity(
+                importedAssetReference_.textureFallbackPath);
+    }
+    return key;
 }
 
 Result ModelRenderable::loadModel() {

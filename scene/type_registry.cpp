@@ -183,6 +183,15 @@ Result registerEngineTypes(TypeRegistry& registry) {
             return object.setAuthoredModelPath(path);
         });
     if (!result) return result;
+    result = registry.registerAccessor<GameObject, ImportedAssetReference>(
+        "GameObject", "importedAsset",
+        [](const GameObject& object) {
+            return object.importedAssetReference();
+        },
+        [](GameObject& object, const ImportedAssetReference& reference) {
+            return object.setImportedAssetReference(reference);
+        });
+    if (!result) return result;
 
     result = registry.registerType<Group>(
         "Group", "GameObject", [] { return std::make_unique<Group>(); });

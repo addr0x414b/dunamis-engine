@@ -2,15 +2,19 @@
 #define MODEL_RENDERABLE_H
 
 #include <deque>
+#include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "../core/result.h"
 #include "../assets/model_asset.h"
+#include "../scene/loading_cache_key.h"
 
 namespace model_loading {
 struct CachedCpuModel;
+struct ImportedModelAsset;
 }
 
 class VulkanContext;
@@ -36,6 +40,11 @@ public:
     [[nodiscard]] Result setAuthoredModelPath(std::string path);
     [[nodiscard]] std::string authoredTexturePath() const;
     [[nodiscard]] Result setAuthoredTexturePath(std::string path);
+    [[nodiscard]] ImportedAssetReference importedAssetReference() const;
+    [[nodiscard]] Result setImportedAssetReference(
+        ImportedAssetReference reference);
+    [[nodiscard]] std::optional<model_loading::ModelAssetCacheKey>
+    gpuModelCacheKey() const;
 
 private:
     friend class Scene;
@@ -58,6 +67,10 @@ private:
     std::string modelPathStorage_;
     std::string authoredTexturePathStorage_;
     std::shared_ptr<const model_loading::CachedCpuModel> loadedModelAsset_;
+    ImportedAssetReference importedAssetReference_;
+    std::shared_ptr<const model_loading::ImportedModelAsset>
+        importedModelAsset_;
+    std::size_t importedNodeIndex_ = 0;
 };
 
 #endif

@@ -1,19 +1,21 @@
 {
   "activeCamera": {
     "kind": "attached",
-    "ownerId": "8d3adab5-d9df-4f03-bee9-4ec2a2c9cbd3"
+    "ownerId": "b1f21869-eacd-4e1f-8936-2608e50c4a6c"
   },
   "editor": {
     "camera": {
+      "farClip": 10000.0,
       "front": [
-        0.5443689823150635,
-        -0.3288666903972626,
-        0.7716923952102661
+        0.35475727915763855,
+        -0.5284383296966553,
+        0.7712977528572083
       ],
+      "nearClip": 0.10000000149011612,
       "position": [
-        -7.999929428100586,
-        9.690816879272461,
-        -27.664512634277344
+        -6.278972625732422,
+        6.963846683502197,
+        -13.95258617401123
       ],
       "up": [
         0.0,
@@ -26,11 +28,16 @@
   "formatVersion": 4,
   "objects": [
     {
-      "id": "6b891f82-a0ea-420c-a016-9d81e294c1e7",
+      "id": "1ed199a3-0713-4059-a0c3-6fe5d0503c55",
       "parentId": null,
       "properties": {
+        "importedAsset": {
+          "nodeIdentity": "",
+          "sourcePath": "",
+          "textureFallbackPath": ""
+        },
         "modelPath": "game/assets/city-scene/source/city.fbx",
-        "name": "City",
+        "name": "Cityawdawd",
         "physics": {
           "colliderType": "mesh",
           "enabled": true,
@@ -38,9 +45,9 @@
           "sphereRadius": 0.5
         },
         "position": [
-          12.994023323059082,
-          -5.508797471520666e-07,
-          -20.39046287536621
+          11.612542152404785,
+          -1.6390125751495361,
+          1.3194302320480347
         ],
         "rotation": [
           -0.0,
@@ -48,9 +55,9 @@
           -0.0
         ],
         "scale": [
-          4.5,
-          4.5,
-          4.5
+          4.0,
+          4.0,
+          4.0
         ],
         "texturePath": ""
       },
@@ -58,9 +65,14 @@
       "type": "GameObject"
     },
     {
-      "id": "8e285da1-ada4-44e1-91be-ba0befe693f6",
+      "id": "cd869bb9-4486-463b-ae55-5338a4328a0b",
       "parentId": null,
       "properties": {
+        "importedAsset": {
+          "nodeIdentity": "",
+          "sourcePath": "",
+          "textureFallbackPath": ""
+        },
         "modelPath": "game/assets/models/glTF-Sample-Assets/Models/Fox/glTF/Fox.gltf",
         "name": "Fox",
         "physics": {
@@ -70,14 +82,14 @@
           "sphereRadius": 0.5
         },
         "position": [
-          4.715843200683594,
           0.0,
-          -3.439685821533203
+          0.0,
+          0.0
         ],
         "rotation": [
-          -0.0,
-          -50.86115264892578,
-          -0.0
+          0.0,
+          0.0,
+          0.0
         ],
         "scale": [
           0.009999999776482582,
@@ -90,9 +102,14 @@
       "type": "GameObject"
     },
     {
-      "id": "61d57e0a-6a2c-422e-85ff-fd9e4f64fbb4",
+      "id": "bd5801a0-565a-4323-97b4-4c945422ebe9",
       "parentId": null,
       "properties": {
+        "importedAsset": {
+          "nodeIdentity": "",
+          "sourcePath": "",
+          "textureFallbackPath": ""
+        },
         "modelPath": "game/assets/models/glTF-Sample-Assets/Models/PotOfCoals/glTF/PotOfCoals.gltf",
         "name": "Pot",
         "physics": {
@@ -102,14 +119,14 @@
           "sphereRadius": 0.5
         },
         "position": [
-          3.8884475231170654,
           0.0,
-          -1.445611596107483
+          0.0,
+          0.0
         ],
         "rotation": [
-          -0.0,
           0.0,
-          -0.0
+          0.0,
+          0.0
         ],
         "scale": [
           7.5,
@@ -118,13 +135,55 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 4,
+      "siblingIndex": 2,
       "type": "GameObject"
     },
     {
-      "id": "e1263097-a1b7-4faf-8d82-da3d14e2d1af",
+      "id": "ab6b94c6-494b-48ed-8e46-7f5c27862db7",
       "parentId": null,
       "properties": {
+        "importedAsset": {
+          "nodeIdentity": "",
+          "sourcePath": "",
+          "textureFallbackPath": ""
+        },
+        "modelPath": "game/assets/models/glTF-Sample-Assets/Models/BrainStem/glTF/BrainStem.gltf",
+        "name": "Brah",
+        "physics": {
+          "colliderType": "mesh",
+          "enabled": false,
+          "motionType": "static",
+          "sphereRadius": 0.5
+        },
+        "position": [
+          3.2200000286102295,
+          0.0,
+          -1.2200000286102295
+        ],
+        "rotation": [
+          -90.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "texturePath": ""
+      },
+      "siblingIndex": 3,
+      "type": "GameObject"
+    },
+    {
+      "id": "406d85cc-6d7d-4bc0-aae2-296174bed139",
+      "parentId": null,
+      "properties": {
+        "importedAsset": {
+          "nodeIdentity": "",
+          "sourcePath": "",
+          "textureFallbackPath": ""
+        },
         "modelPath": "game/assets/models/Avocado.glb",
         "name": "Physics Test Avocado",
         "physics": {
@@ -150,19 +209,24 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 5,
+      "siblingIndex": 4,
       "type": "GameObject"
     },
     {
-      "id": "4b7780f5-bc17-4833-8e8a-3b15ce1ad331",
+      "id": "5677adc8-b132-45b5-9f3e-962515266859",
       "parentId": null,
       "properties": {
         "color": [
-          0.5511341691017151,
-          0.9215686321258545,
-          0.747246503829956
+          1.0,
+          1.0,
+          1.0
         ],
-        "intensity": 2.5,
+        "importedAsset": {
+          "nodeIdentity": "",
+          "sourcePath": "",
+          "textureFallbackPath": ""
+        },
+        "intensity": 1.0,
         "modelPath": "",
         "name": "Direc Light",
         "physics": {
@@ -172,44 +236,49 @@
           "sphereRadius": 0.5
         },
         "position": [
-          -0.15613296627998352,
-          2.0087101459503174,
-          -4.104998588562012
+          0.5,
+          0.20000000298023224,
+          1.0
         ],
         "rotation": [
-          40.84999084472656,
-          14.639684677124023,
-          16.29286766052246
+          0.0,
+          0.0,
+          0.0
         ],
         "scale": [
           200.0,
           200.0,
           200.0
         ],
-        "shadowFarPlane": 10.0,
+        "shadowFarPlane": 200.0,
         "shadowFocus": [
           0.0,
           0.0,
           0.0
         ],
-        "shadowHalfExtent": 5.0,
-        "shadowLightDistance": 5.0,
-        "shadowNearPlane": 0.009999999776482582,
+        "shadowHalfExtent": 50.0,
+        "shadowLightDistance": 100.0,
+        "shadowNearPlane": 0.10000000149011612,
         "texturePath": ""
       },
-      "siblingIndex": 6,
+      "siblingIndex": 5,
       "type": "DirectionalLight"
     },
     {
-      "id": "c4798ce5-642b-4234-b54b-2978e7e061da",
+      "id": "1f7b6653-15e4-4626-ad2d-2afc2e838604",
       "parentId": null,
       "properties": {
         "color": [
           1.0,
-          0.9031141996383667,
-          0.45098036527633667
+          1.0,
+          1.0
         ],
-        "intensity": 2.0,
+        "importedAsset": {
+          "nodeIdentity": "",
+          "sourcePath": "",
+          "textureFallbackPath": ""
+        },
+        "intensity": 100.0,
         "modelPath": "",
         "name": "Point Light",
         "physics": {
@@ -219,14 +288,14 @@
           "sphereRadius": 0.5
         },
         "position": [
-          7.571091175079346,
-          3.820462942123413,
-          17.52577018737793
+          2.5,
+          0.20000000298023224,
+          1.0
         ],
         "rotation": [
-          -0.0,
           0.0,
-          -0.0
+          0.0,
+          0.0
         ],
         "scale": [
           500.0,
@@ -235,17 +304,19 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 7,
+      "siblingIndex": 6,
       "type": "PointLight"
     },
     {
       "attachedCamera": {
+        "farClip": 10000.0,
         "fov": 60.0,
         "front": [
           0.0,
           0.0,
           -1.0
         ],
+        "nearClip": 0.10000000149011612,
         "position": [
           0.0,
           1.5,
@@ -257,11 +328,16 @@
           0.0
         ]
       },
-      "id": "8d3adab5-d9df-4f03-bee9-4ec2a2c9cbd3",
+      "id": "b1f21869-eacd-4e1f-8936-2608e50c4a6c",
       "parentId": null,
       "properties": {
         "capsuleHeight": 1.7999999523162842,
         "capsuleRadius": 0.3499999940395355,
+        "importedAsset": {
+          "nodeIdentity": "",
+          "sourcePath": "",
+          "textureFallbackPath": ""
+        },
         "modelPath": "",
         "name": "Player",
         "physics": {
@@ -276,9 +352,9 @@
           0.0
         ],
         "rotation": [
-          -0.0,
           0.0,
-          -0.0
+          0.0,
+          0.0
         ],
         "scale": [
           1.0,
@@ -287,148 +363,8 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 10,
+      "siblingIndex": 7,
       "type": "Player"
-    },
-    {
-      "id": "54fde28f-626e-4c4c-9828-23855e6d8901",
-      "parentId": null,
-      "properties": {
-        "modelPath": "game/assets/models/glTF-Sample-Assets/Models/Fox/glTF/Fox.gltf",
-        "name": "Fox (1)",
-        "physics": {
-          "colliderType": "mesh",
-          "enabled": true,
-          "motionType": "static",
-          "sphereRadius": 0.5
-        },
-        "position": [
-          3.344960927963257,
-          0.0,
-          -3.824530601501465
-        ],
-        "rotation": [
-          -0.0,
-          -12.578866958618164,
-          -0.0
-        ],
-        "scale": [
-          0.009999999776482582,
-          0.009999999776482582,
-          0.009999999776482582
-        ],
-        "texturePath": ""
-      },
-      "siblingIndex": 2,
-      "type": "GameObject"
-    },
-    {
-      "id": "cf7e4fb5-ffcd-4861-a606-983bd59b8a65",
-      "parentId": null,
-      "properties": {
-        "modelPath": "game/assets/models/glTF-Sample-Assets/Models/Fox/glTF/Fox.gltf",
-        "name": "Fox (2)",
-        "physics": {
-          "colliderType": "mesh",
-          "enabled": true,
-          "motionType": "static",
-          "sphereRadius": 0.5
-        },
-        "position": [
-          5.294162273406982,
-          0.0,
-          -1.9083105325698853
-        ],
-        "rotation": [
-          -180.0,
-          -74.4310302734375,
-          -180.0
-        ],
-        "scale": [
-          0.009999999776482582,
-          0.009999999776482582,
-          0.009999999776482582
-        ],
-        "texturePath": ""
-      },
-      "siblingIndex": 3,
-      "type": "GameObject"
-    },
-    {
-      "id": "eb8f1ec0-96fa-4156-b88b-572ea7c8744f",
-      "parentId": null,
-      "properties": {
-        "color": [
-          1.0,
-          0.9031141996383667,
-          0.45098036527633667
-        ],
-        "intensity": 2.0,
-        "modelPath": "",
-        "name": "Point Light (1)",
-        "physics": {
-          "colliderType": "mesh",
-          "enabled": false,
-          "motionType": "static",
-          "sphereRadius": 0.5
-        },
-        "position": [
-          7.571091175079346,
-          3.5747759342193604,
-          -1.415730595588684
-        ],
-        "rotation": [
-          -0.0,
-          0.0,
-          -0.0
-        ],
-        "scale": [
-          500.0,
-          500.0,
-          500.0
-        ],
-        "texturePath": ""
-      },
-      "siblingIndex": 8,
-      "type": "PointLight"
-    },
-    {
-      "id": "94e88bda-799e-4ff9-9e2d-326e7abd369a",
-      "parentId": null,
-      "properties": {
-        "color": [
-          1.0,
-          0.9031141996383667,
-          0.45098036527633667
-        ],
-        "intensity": 2.0,
-        "modelPath": "",
-        "name": "Point Light (2)",
-        "physics": {
-          "colliderType": "mesh",
-          "enabled": false,
-          "motionType": "static",
-          "sphereRadius": 0.5
-        },
-        "position": [
-          7.571091175079346,
-          3.820462942123413,
-          -20.301496505737305
-        ],
-        "rotation": [
-          -0.0,
-          0.0,
-          -0.0
-        ],
-        "scale": [
-          500.0,
-          500.0,
-          500.0
-        ],
-        "texturePath": ""
-      },
-      "siblingIndex": 9,
-      "type": "PointLight"
     }
   ],
   "scene": {

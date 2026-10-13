@@ -1,7 +1,9 @@
 #include "assets/model_import_policy.h"
 #include "physics/collision_shapes.h"
 #include "scene/game_object.h"
+#include "scene/model_importer.h"
 #include "scene/model_renderable.h"
+#include "scene/scene.h"
 
 #include <Jolt/Physics/Collision/Shape/Shape.h>
 #include <Jolt/Core/Factory.h>
@@ -39,6 +41,13 @@ public:
 
 private:
     std::filesystem::path original_;
+};
+
+class UnitTestScene final : public Scene {
+public:
+    void buildDefaults() override {}
+    void start() override {}
+    void update() override {}
 };
 
 std::filesystem::path makeFixtureDirectory() {
@@ -208,6 +217,41 @@ bool loadModelBounds(const std::filesystem::path& path, Bounds& output) {
     return found;
 }
 
+bool loadHierarchicalModelBounds(const std::filesystem::path& path,
+                                Bounds& output) {
+    UnitTestScene scene;
+    model_import::Options options;
+    model_import::ImportResult import;
+    const Result imported =
+        model_import::importHierarchy(scene, path, options, import);
+    if (!imported) {
+        std::cerr << "Hierarchical model load failed for " << path << ": "
+                  << imported.error() << '\n';
+        return false;
+    }
+    bool found = false;
+    for (const auto& object : scene.gameObjects()) {
+        if (!object) continue;
+        const glm::mat4 world = object->worldTransformMatrix();
+        for (const MeshInstance& instance :
+             object->modelRenderable().meshInstances()) {
+            for (const Vertex& vertex : instance.mesh.vertexData()) {
+                const glm::vec3 position = glm::vec3(
+                    world * glm::vec4(vertex.pos, 1.0f));
+                if (!found) {
+                    output.minimum = position;
+                    output.maximum = position;
+                    found = true;
+                } else {
+                    output.minimum = glm::min(output.minimum, position);
+                    output.maximum = glm::max(output.maximum, position);
+                }
+            }
+        }
+    }
+    return found;
+}
+
 bool testImportNormalization(const std::filesystem::path& directory) {
     const auto objPath = directory / "meter-triangle.obj";
     const auto gltfPath = directory / "meter-triangle.gltf";
@@ -223,24 +267,48 @@ bool testImportNormalization(const std::filesystem::path& directory) {
     bool passed = true;
     for (const auto& path : {objPath, gltfPath, glbPath}) {
         Bounds bounds;
+        Bounds hierarchyBounds;
         passed &= expect(loadModelBounds(path, bounds),
                          "meter-native model did not load");
+        passed &= expect(loadHierarchicalModelBounds(path, hierarchyBounds),
+                         "meter-native hierarchy did not load");
         passed &= expect(bounds.minimum == glm::vec3(0.0f) &&
                              near(bounds.maximum.x, 2.0f) &&
                              near(bounds.maximum.y, 1.0f),
                          "meter-native glTF/GLB/OBJ coordinates were rescaled");
+        passed &= expect(near(hierarchyBounds.minimum.x, bounds.minimum.x) &&
+                             near(hierarchyBounds.minimum.y, bounds.minimum.y) &&
+                             near(hierarchyBounds.minimum.z, bounds.minimum.z) &&
+                             near(hierarchyBounds.maximum.x, bounds.maximum.x) &&
+                             near(hierarchyBounds.maximum.y, bounds.maximum.y) &&
+                             near(hierarchyBounds.maximum.z, bounds.maximum.z),
+                         "hierarchical meter-native geometry differs from legacy import");
     }
 
     Bounds fbxU1Bounds;
     Bounds fbxU100Bounds;
+    Bounds hierarchyFbxU1Bounds;
+    Bounds hierarchyFbxU100Bounds;
     passed &= expect(loadModelBounds(fbxU1Path, fbxU1Bounds) &&
-                         loadModelBounds(fbxU100Path, fbxU100Bounds),
+                         loadModelBounds(fbxU100Path, fbxU100Bounds) &&
+                         loadHierarchicalModelBounds(fbxU1Path,
+                                                     hierarchyFbxU1Bounds) &&
+                         loadHierarchicalModelBounds(fbxU100Path,
+                                                     hierarchyFbxU100Bounds),
                      "FBX unit fixtures did not load");
     passed &= expect(near(fbxU1Bounds.maximum.x, 1.0f) &&
                          near(fbxU1Bounds.maximum.y, 1.0f) &&
                          near(fbxU100Bounds.maximum.x, 100.0f) &&
                          near(fbxU100Bounds.maximum.y, 100.0f),
                      "FBX source units were not converted exactly once");
+    passed &= expect(
+        near(hierarchyFbxU1Bounds.minimum.x, fbxU1Bounds.minimum.x) &&
+            near(hierarchyFbxU1Bounds.maximum.x, fbxU1Bounds.maximum.x) &&
+            near(hierarchyFbxU1Bounds.maximum.y, fbxU1Bounds.maximum.y) &&
+            near(hierarchyFbxU100Bounds.minimum.x, fbxU100Bounds.minimum.x) &&
+            near(hierarchyFbxU100Bounds.maximum.x, fbxU100Bounds.maximum.x) &&
+            near(hierarchyFbxU100Bounds.maximum.y, fbxU100Bounds.maximum.y),
+        "hierarchical FBX transforms differ from the meter-normalized legacy path");
 
     const auto u1Migration =
         model_loading::inspectLegacyAssetScaleMigration(fbxU1Path);

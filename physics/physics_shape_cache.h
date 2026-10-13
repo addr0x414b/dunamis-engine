@@ -46,6 +46,12 @@ struct StaticMeshShapeCacheKey {
     const std::vector<MeshInstance>& meshInstances, const glm::vec3& scale,
     std::uint8_t colliderType = 0);
 
+// Fast identity for the in-process shape cache. Immutable imported geometry
+// carries a content fingerprint computed once at import; legacy mutable meshes
+// are hashed from their current positions and indices on demand.
+[[nodiscard]] std::uint64_t makeStaticMeshInMemoryGeometryIdentity(
+    const std::vector<MeshInstance>& meshInstances);
+
 enum class ShapeCacheLoadStatus { Hit, Miss, Invalid };
 
 struct ShapeCacheLoadResult {

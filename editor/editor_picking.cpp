@@ -160,7 +160,9 @@ bool intersectMeshWorld(const Ray& worldRay, const Mesh& mesh,
     if (diagnostics != nullptr) {
         *diagnostics = {};
     }
-    if (!mesh.bounds.valid || mesh.indices.size() < 3 ||
+    const auto& vertices = mesh.vertexData();
+    const auto& indices = mesh.indexData();
+    if (!mesh.bounds.valid || indices.size() < 3 ||
         !isFiniteMatrix(model) || !isFiniteVector(worldRay.origin) ||
         !isFiniteVector(worldRay.direction)) {
         return false;
@@ -196,20 +198,20 @@ bool intersectMeshWorld(const Ray& worldRay, const Mesh& mesh,
 
     bool hit = false;
     float closestDistance = std::numeric_limits<float>::infinity();
-    for (std::size_t index = 0; index + 2 < mesh.indices.size(); index += 3) {
-        const std::uint32_t firstIndex = mesh.indices[index];
-        const std::uint32_t secondIndex = mesh.indices[index + 1];
-        const std::uint32_t thirdIndex = mesh.indices[index + 2];
-        if (firstIndex >= mesh.vertices.size() ||
-            secondIndex >= mesh.vertices.size() ||
-            thirdIndex >= mesh.vertices.size()) {
+    for (std::size_t index = 0; index + 2 < indices.size(); index += 3) {
+        const std::uint32_t firstIndex = indices[index];
+        const std::uint32_t secondIndex = indices[index + 1];
+        const std::uint32_t thirdIndex = indices[index + 2];
+        if (firstIndex >= vertices.size() ||
+            secondIndex >= vertices.size() ||
+            thirdIndex >= vertices.size()) {
             continue;
         }
         float localDistance = 0.0f;
         if (!intersectTriangle({localOrigin, localDirection},
-                               mesh.vertices[firstIndex].pos,
-                               mesh.vertices[secondIndex].pos,
-                               mesh.vertices[thirdIndex].pos, localDistance)) {
+                               vertices[firstIndex].pos,
+                               vertices[secondIndex].pos,
+                               vertices[thirdIndex].pos, localDistance)) {
             continue;
         }
         const glm::vec3 localHit = localOrigin + localDistance * localDirection;

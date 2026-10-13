@@ -4102,14 +4102,10 @@ Result VulkanContext::createTextureImages(
     if (!renderStates) {
         return Result::failure("Mesh renderer-state topology is unavailable");
     }
-    const bool cacheable =
-        static_cast<bool>(gameObject->modelRenderable().loadedModelAsset_);
     std::shared_ptr<GpuModelAsset> modelAsset;
-    std::optional<model_loading::ModelAssetCacheKey> cacheKey;
-    if (cacheable) {
-        cacheKey = model_loading::makeModelAssetCacheKey(
-            gameObject->modelRenderable().modelPath,
-            gameObject->modelRenderable().texturePath);
+    std::optional<model_loading::ModelAssetCacheKey> cacheKey =
+        gameObject->modelRenderable().gpuModelCacheKey();
+    if (cacheKey) {
         const auto found = gpuModelAssetCache_.find(*cacheKey);
         if (found != gpuModelAssetCache_.end() && found->second->complete &&
             found->second->meshes.size() ==
@@ -4461,7 +4457,8 @@ Result VulkanContext::createVertexBuffers(
         if (gpuAsset.vertexBuffer != VK_NULL_HANDLE) {
             continue;
         }
-        VkDeviceSize bufferSize = sizeof(instance.mesh.vertices[0]) * instance.mesh.vertices.size();
+        const auto& meshVertices = instance.mesh.vertexData();
+        VkDeviceSize bufferSize = sizeof(meshVertices[0]) * meshVertices.size();
         ownedTemporaryBuffers.emplace_back();
         auto& deferredStaging = ownedTemporaryBuffers.back();
         ScopedBufferAllocation staging(
@@ -4483,7 +4480,7 @@ Result VulkanContext::createVertexBuffers(
         if (mapResult != VK_SUCCESS) {
             return vkFailure("vkMapMemory(vertex staging)", mapResult);
         }
-        memcpy(data, instance.mesh.vertices.data(), (size_t)bufferSize);
+        memcpy(data, meshVertices.data(), (size_t)bufferSize);
         vkUnmapMemory(device, staging.memory);
 
         if (gpuAsset.vertexBufferMemory != VK_NULL_HANDLE) {
@@ -4550,7 +4547,8 @@ Result VulkanContext::createIndexBuffers(
         if (gpuAsset.indexBuffer != VK_NULL_HANDLE) {
             continue;
         }
-        VkDeviceSize bufferSize = sizeof(instance.mesh.indices[0]) * instance.mesh.indices.size();
+        const auto& meshIndices = instance.mesh.indexData();
+        VkDeviceSize bufferSize = sizeof(meshIndices[0]) * meshIndices.size();
 
         ownedTemporaryBuffers.emplace_back();
         auto& deferredStaging = ownedTemporaryBuffers.back();
@@ -4574,7 +4572,7 @@ Result VulkanContext::createIndexBuffers(
         if (mapResult != VK_SUCCESS) {
             return vkFailure("vkMapMemory(index staging)", mapResult);
         }
-        memcpy(data, instance.mesh.indices.data(), (size_t)bufferSize);
+        memcpy(data, meshIndices.data(), (size_t)bufferSize);
         vkUnmapMemory(device, staging.memory);
 
         if (gpuAsset.indexBufferMemory != VK_NULL_HANDLE) {
@@ -4599,11 +4597,8 @@ Result VulkanContext::createIndexBuffers(
         ++resourceLoadStats_.indexBufferUploads;
     }
 
-    if (gameObject->modelRenderable().loadedModelAsset_) {
-        const auto key = model_loading::makeModelAssetCacheKey(
-            gameObject->modelRenderable().modelPath,
-            gameObject->modelRenderable().texturePath);
-        const auto found = gpuModelAssetCache_.find(key);
+    if (const auto key = gameObject->modelRenderable().gpuModelCacheKey()) {
+        const auto found = gpuModelAssetCache_.find(*key);
         if (found != gpuModelAssetCache_.end()) found->second->complete = true;
     } else {
         for (auto& model : pendingUncachedGpuModels_) {
@@ -6153,7 +6148,7 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
                                    sizeof(MaterialPushConstants),
                                    &materialPushConstants);
                 vkCmdDrawIndexed(commandBuffer,
-                                 static_cast<uint32_t>(instance.mesh.indices.size()),
+                                 static_cast<uint32_t>(instance.mesh.indexData().size()),
                                  1, 0, 0, 0);
             }
         }
@@ -6228,7 +6223,7 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
             vkCmdPushConstants(commandBuffer, ambientOcclusionGeometryPipelineLayout,
                                VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                sizeof(MaterialPushConstants), &materialPushConstants);
-            vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(instance.mesh.indices.size()),
+            vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(instance.mesh.indexData().size()),
                              1, 0, 0, 0);
         }
     }
@@ -6356,7 +6351,7 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
                                sizeof(MaterialPushConstants),
                                &materialPushConstants);
 
-            vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(instance.mesh.indices.size()), 1, 0,
+            vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(instance.mesh.indexData().size()), 1, 0,
                             0, 0);
         }
 
@@ -6424,7 +6419,7 @@ Result VulkanContext::recordCommandBuffer(VkCommandBuffer commandBuffer,
                         nullptr);
                     vkCmdDrawIndexed(
                         commandBuffer,
-                        static_cast<uint32_t>(instance.mesh.indices.size()), 1,
+                        static_cast<uint32_t>(instance.mesh.indexData().size()), 1,
                         0, 0, 0);
                 }
             }

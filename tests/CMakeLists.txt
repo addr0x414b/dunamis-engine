@@ -225,6 +225,7 @@ target_compile_definitions(ModelImportUnitTests PRIVATE
 target_link_libraries(ModelImportUnitTests PRIVATE
         Physics
         GameObject
+        Scene
         Jolt
         VulkanUtils
         assimp
@@ -233,6 +234,24 @@ target_link_libraries(ModelImportUnitTests PRIVATE
         Threads::Threads)
 add_test(NAME model_import_units COMMAND ModelImportUnitTests)
 set_tests_properties(model_import_units PROPERTIES TIMEOUT 30)
+
+add_executable(ModelHierarchyImportTests model_hierarchy_import_tests.cpp)
+target_include_directories(ModelHierarchyImportTests PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_definitions(ModelHierarchyImportTests PRIVATE
+        DUNAMIS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(ModelHierarchyImportTests PRIVATE
+        Editor
+        Scene
+        Physics
+        GameObject
+        Jolt
+        assimp
+        glm
+        spdlog
+        nlohmann_json::nlohmann_json
+        Threads::Threads)
+add_test(NAME model_hierarchy_import COMMAND ModelHierarchyImportTests)
+set_tests_properties(model_hierarchy_import PROPERTIES TIMEOUT 60)
 
 add_executable(ModelLoadingBenchmark model_loading_benchmark.cpp)
 target_include_directories(ModelLoadingBenchmark PRIVATE ${CMAKE_SOURCE_DIR})

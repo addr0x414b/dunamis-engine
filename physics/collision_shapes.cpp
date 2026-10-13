@@ -57,10 +57,11 @@ Result buildScaledLocalConvexHull(const std::vector<MeshInstance>& instances,
     }
     for (const MeshInstance& instance : instances) {
         const Mesh& mesh = instance.mesh;
-        if (mesh.vertices.empty()) {
+        const auto& vertices = mesh.vertexData();
+        if (vertices.empty()) {
             return Result::failure("Mesh has no vertices");
         }
-        for (const Vertex& vertex : mesh.vertices) {
+        for (const Vertex& vertex : vertices) {
             if (!isFinite(vertex.pos)) {
                 return Result::failure("Mesh contains a non-finite vertex position");
             }
@@ -117,19 +118,21 @@ Result buildScaledLocalTriangleMesh(
     }
     for (const MeshInstance& instance : instances) {
         const Mesh& mesh = instance.mesh;
-        if (mesh.vertices.empty()) {
+        const auto& vertices = mesh.vertexData();
+        const auto& indices = mesh.indexData();
+        if (vertices.empty()) {
             return Result::failure("Mesh has no vertices");
         }
-        if (mesh.indices.empty() || mesh.indices.size() % 3 != 0) {
+        if (indices.empty() || indices.size() % 3 != 0) {
             return Result::failure("Mesh indices must contain complete triangles");
         }
-        if (output.vertices.size() + mesh.vertices.size() >
+        if (output.vertices.size() + vertices.size() >
             std::numeric_limits<std::uint32_t>::max()) {
             return Result::failure("Combined mesh has too many vertices");
         }
         const std::uint32_t offset =
             static_cast<std::uint32_t>(output.vertices.size());
-        for (const Vertex& vertex : mesh.vertices) {
+        for (const Vertex& vertex : vertices) {
             if (!isFinite(vertex.pos)) {
                 return Result::failure("Mesh contains a non-finite vertex position");
             }
@@ -142,8 +145,8 @@ Result buildScaledLocalTriangleMesh(
             }
             output.vertices.push_back(dunamisToMeters(scaledMeters));
         }
-        for (const std::uint32_t index : mesh.indices) {
-            if (index >= mesh.vertices.size()) {
+        for (const std::uint32_t index : indices) {
+            if (index >= vertices.size()) {
                 return Result::failure("Mesh index is outside its vertex range");
             }
             output.indices.push_back(offset + index);

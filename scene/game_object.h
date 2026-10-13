@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include "../core/result.h"
+#include "../assets/model_asset.h"
 
 class Scene;
 class GameObjectTestAccess;
@@ -65,6 +66,9 @@ public:
     [[nodiscard]] Result setAuthoredModelPath(std::string path);
     [[nodiscard]] std::string authoredTexturePath() const;
     [[nodiscard]] Result setAuthoredTexturePath(std::string path);
+    [[nodiscard]] ImportedAssetReference importedAssetReference() const;
+    [[nodiscard]] Result setImportedAssetReference(
+        ImportedAssetReference reference);
 
     // Position is a meter-valued local offset in the parent space. Rotation
     // remains angular and scale remains dimensionless. For a root object,
