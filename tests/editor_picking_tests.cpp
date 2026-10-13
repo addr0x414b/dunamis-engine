@@ -137,6 +137,266 @@ bool runScreenSegmentDistanceTests() {
     return passed;
 }
 
+bool runPointLightHelperGeometryTests() {
+    const glm::vec2 center{120.0f, 90.0f};
+    const auto sun = editor_picking::makePointLightHelperGeometry(
+        center, editor_picking::pointLightOuterRadiusPixels, 2.0f);
+    bool passed = expect(sun.valid && sun.segmentCount == 8 &&
+                             sun.circleCount == 1,
+                         "Point-light helper did not build its sun geometry");
+    const auto hits = [&](const glm::vec2& point) {
+        return std::isfinite(
+            editor_picking::screenSpaceHelperHitDistanceSquared(sun, point));
+    };
+    passed &= expect(hits(center),
+                     "Point-light sun center was not selectable");
+    passed &= expect(hits(center + glm::vec2(4.0f, 0.0f)),
+                     "Point-light center fill was not selectable");
+    const float betweenRayAngle = glm::radians(22.5f);
+    passed &= expect(hits(center + glm::vec2(
+                             std::cos(betweenRayAngle) * 12.0f,
+                             -std::sin(betweenRayAngle) * 12.0f)),
+                     "Point-light gap between rays was not selectable");
+    passed &= expect(hits(center + glm::vec2(15.0f, 0.0f)),
+                     "Point-light outer ray boundary was not selectable");
+    passed &= expect(!hits(center + glm::vec2(15.1f, 0.0f)),
+                     "Point-light hit region extended beyond its footprint");
+
+    const auto largerSun = editor_picking::makePointLightHelperGeometry(
+        center, 22.0f, 2.0f);
+    passed &= expect(largerSun.valid && std::isfinite(
+                         editor_picking::screenSpaceHelperHitDistanceSquared(
+                             largerSun, center + glm::vec2(22.0f, 0.0f))) &&
+                         !std::isfinite(
+                             editor_picking::screenSpaceHelperHitDistanceSquared(
+                                 largerSun,
+                                 center + glm::vec2(22.1f, 0.0f))),
+                     "Point-light hit footprint did not follow its radius");
+    passed &= expect(!editor_picking::makePointLightHelperGeometry(
+                          center, -1.0f, 2.0f).valid,
+                     "Point-light accepted a negative screen radius");
+    return passed;
+}
+
+bool runDirectionalLightHelperGeometryTests() {
+    const glm::vec2 center{80.0f, 60.0f};
+    const auto arrow =
+        editor_picking::makeDirectionalLightHelperGeometry(
+            center, glm::vec2(1.0f, 0.0f), true, 3.0f);
+    bool passed = expect(arrow.valid && arrow.hitPolygonCount == 2,
+                         "Directional-light helper did not build center and arrowhead regions");
+    const auto hits = [&](const glm::vec2& point) {
+        return std::isfinite(
+            editor_picking::screenSpaceHelperHitDistanceSquared(arrow, point));
+    };
+    passed &= expect(hits(center),
+                     "Directional-light center was not selectable");
+    passed &= expect(hits(center + glm::vec2(0.0f, 9.0f)),
+                     "Directional-light diamond interior was not selectable");
+    passed &= expect(hits(center + glm::vec2(20.0f, 0.0f)),
+                     "Directional-light arrow shaft was not selectable");
+    passed &= expect(hits(center + glm::vec2(30.0f, 2.0f)),
+                     "Directional-light arrowhead interior was not selectable");
+    passed &= expect(!hits(center + glm::vec2(0.0f, 40.0f)),
+                     "Directional-light hit region selected empty space");
+
+    const auto edgeOn =
+        editor_picking::makeDirectionalLightHelperGeometry(
+            center, glm::vec2(0.0f), false, 3.0f);
+    passed &= expect(edgeOn.valid && edgeOn.segmentCount == 4 &&
+                         edgeOn.hitPolygonCount == 1 &&
+                         std::isfinite(
+                             editor_picking::screenSpaceHelperHitDistanceSquared(
+                                 edgeOn, center)),
+                     "Degenerate directional projection did not retain a finite center marker");
+    passed &= expect(!std::isfinite(
+                         editor_picking::screenSpaceHelperHitDistanceSquared(
+                             edgeOn, center + glm::vec2(20.0f, 0.0f))),
+                     "Degenerate directional projection fabricated an arrow");
+    return passed;
+}
+
+bool runCameraHelperGeometryTests() {
+    const glm::vec2 apex{240.0f, 160.0f};
+    editor_picking::ScreenSpaceHelperGeometry camera;
+    bool passed = expect(editor_picking::makeCameraHelperGeometry(
+                             apex, {1.0f, 0.0f}, {0.0f, 1.0f},
+                             {0.0f, -1.0f}, 60.0f, 16.0f / 9.0f, 4.0f,
+                             camera) &&
+                             camera.segmentCount == 9 &&
+                             camera.circleCount == 1 &&
+                             camera.hitPolygonCount == 1,
+                         "Camera helper did not build a compact frustum");
+    passed &= expect(std::isfinite(
+                         editor_picking::screenSpaceHelperHitDistanceSquared(
+                             camera, apex)),
+                     "Camera helper apex was not selectable");
+    const auto& firstEdge = camera.segments[0];
+    const glm::vec2 edgeMiddle = (firstEdge.start + firstEdge.end) * 0.5f;
+    passed &= expect(std::isfinite(
+                         editor_picking::screenSpaceHelperHitDistanceSquared(
+                             camera, edgeMiddle)),
+                     "Camera frustum edge was not selectable");
+
+    glm::vec2 polygonCenter(0.0f);
+    for (std::size_t index = 0;
+         index < camera.hitPolygons[0].vertexCount; ++index) {
+        polygonCenter += camera.hitPolygons[0].vertices[index];
+    }
+    polygonCenter /= static_cast<float>(camera.hitPolygons[0].vertexCount);
+    passed &= expect(std::isfinite(
+                         editor_picking::screenSpaceHelperHitDistanceSquared(
+                             camera, polygonCenter)),
+                     "Camera frustum interior was not selectable");
+    passed &= expect(!std::isfinite(
+                         editor_picking::screenSpaceHelperHitDistanceSquared(
+                             camera, apex + glm::vec2(-40.0f, 40.0f))),
+                     "Camera helper hit region extended beyond the frustum");
+
+    glm::vec2 minimum = camera.hitPolygons[0].vertices[0];
+    glm::vec2 maximum = minimum;
+    for (std::size_t index = 1;
+         index < camera.hitPolygons[0].vertexCount; ++index) {
+        minimum = glm::min(minimum, camera.hitPolygons[0].vertices[index]);
+        maximum = glm::max(maximum, camera.hitPolygons[0].vertices[index]);
+    }
+    const glm::vec2 size = maximum - minimum;
+    passed &= expect(std::abs(std::max(size.x, size.y) -
+                                  editor_picking::cameraVisualizationMaximumDimensionPixels) <
+                             1.0e-3f,
+                     "Camera frustum helper exceeded its screen-space target");
+    for (const float depth : {0.5f, 2.0f, 10.0f, 50.0f}) {
+        editor_picking::ScreenSpaceHelperGeometry atDepth;
+        const bool built = editor_picking::makeCameraHelperGeometry(
+            apex, {1.0f, 0.0f}, {0.0f, 1.0f}, {0.0f, -1.0f}, 60.0f,
+            16.0f / 9.0f, depth, atDepth);
+        glm::vec2 depthMinimum = atDepth.hitPolygons[0].vertices[0];
+        glm::vec2 depthMaximum = depthMinimum;
+        for (std::size_t index = 1;
+             index < atDepth.hitPolygons[0].vertexCount; ++index) {
+            depthMinimum = glm::min(
+                depthMinimum, atDepth.hitPolygons[0].vertices[index]);
+            depthMaximum = glm::max(
+                depthMaximum, atDepth.hitPolygons[0].vertices[index]);
+        }
+        const glm::vec2 depthSize = depthMaximum - depthMinimum;
+        passed &= expect(built &&
+                             std::abs(std::max(depthSize.x, depthSize.y) -
+                                      editor_picking::cameraVisualizationMaximumDimensionPixels) <
+                                 1.0e-3f,
+                         "Camera helper size changed with view depth");
+    }
+
+    editor_picking::ScreenSpaceHelperGeometry aligned;
+    passed &= expect(editor_picking::makeCameraHelperGeometry(
+                         apex, {0.0f, 0.0f}, {0.0f, 1.0f}, {0.0f, -1.0f},
+                         60.0f, 16.0f / 9.0f, 4.0f, aligned) &&
+                         aligned.valid && aligned.segmentCount == 9,
+                     "View-aligned camera helper did not use its stable 2D fallback");
+    for (std::size_t index = 0; index < aligned.segmentCount; ++index) {
+        const auto& segment = aligned.segments[index];
+        passed &= expect(std::isfinite(segment.start.x) &&
+                             std::isfinite(segment.start.y) &&
+                             std::isfinite(segment.end.x) &&
+                             std::isfinite(segment.end.y),
+                         "View-aligned camera geometry contained nonfinite coordinates");
+    }
+    passed &= expect(!editor_picking::makeCameraHelperGeometry(
+                         apex, {1.0f, 0.0f}, {0.0f, 1.0f}, {0.0f, -1.0f},
+                         0.0f, 1.0f, 4.0f, aligned),
+                     "Camera helper accepted an invalid field of view");
+    return passed;
+}
+
+bool runScreenSpaceHelperPriorityAndProjectionTests() {
+    auto backOwner = std::make_unique<GameObject>();
+    auto frontOwner = std::make_unique<GameObject>();
+    GameObject* back = backOwner.get();
+    GameObject* front = frontOwner.get();
+    const glm::vec2 center{400.0f, 300.0f};
+    const auto screen = editor_picking::makePointLightHelperGeometry(
+        center, editor_picking::pointLightOuterRadiusPixels, 2.0f);
+    const std::vector<editor_picking::EditorHelperGeometry> helpers{
+        {editor_picking::EditorHelperKind::PointLight, back, 10.0f, screen},
+        {editor_picking::EditorHelperKind::PointLight, front, 2.0f, screen}};
+    bool passed = expect(editor_picking::closestHelperGeometryIndex(
+                             helpers, center) == 1,
+                         "Overlapping helpers did not prefer the nearer helper");
+
+    auto equalDepth = helpers;
+    equalDepth[1].viewDepth = equalDepth[0].viewDepth;
+    passed &= expect(editor_picking::closestHelperGeometryIndex(
+                         equalDepth, center) == 0,
+                     "Exact helper ties did not preserve stable scene order");
+    equalDepth[0].viewDepth = -1.0f;
+    passed &= expect(editor_picking::closestHelperGeometryIndex(
+                         equalDepth, center) == 1,
+                     "Invalid helper depth competed for selection");
+    passed &= expect(editor_picking::closestHelperGeometryIndex(
+                         helpers, center + glm::vec2(100.0f, 100.0f)) ==
+                         std::numeric_limits<std::size_t>::max(),
+                     "A non-hit helper suppressed mesh picking fallback");
+
+    passed &= expect(editor_picking::isScreenPointInsideRect(
+                         {50.0f, 40.0f}, {50.0f, 40.0f}, {200.0f, 100.0f}) &&
+                         editor_picking::isScreenPointInsideRect(
+                             {250.0f, 140.0f}, {50.0f, 40.0f}, {200.0f, 100.0f}) &&
+                         !editor_picking::isScreenPointInsideRect(
+                             {250.1f, 140.0f}, {50.0f, 40.0f}, {200.0f, 100.0f}) &&
+                         !editor_picking::isScreenPointInsideRect(
+                             {80.0f, 60.0f}, {50.0f, 40.0f}, {0.0f, 100.0f}),
+                     "Scene viewport bounds accepted an outside or invalid point");
+
+    glm::mat4 projection = glm::perspective(
+        glm::radians(60.0f), 4.0f / 3.0f, 0.1f, 100.0f);
+    projection[1][1] *= -1.0f;
+    const glm::mat4 view(1.0f);
+    float projectedRadius = -1.0f;
+    for (const float distance : {0.5f, 2.0f, 10.0f, 50.0f}) {
+        glm::vec2 centerScreen;
+        const bool projected = editor_picking::projectVulkanWorldToImGui(
+            {0.0f, 0.0f, -distance}, view, projection, {10.0f, 20.0f},
+            {800.0f, 600.0f}, centerScreen);
+        const auto sun = editor_picking::makePointLightHelperGeometry(
+            centerScreen, editor_picking::pointLightOuterRadiusPixels,
+            distance);
+        const float radius = sun.hitLimitRadius;
+        passed &= expect(projected && sun.valid &&
+                             (projectedRadius < 0.0f ||
+                              std::abs(radius - projectedRadius) < 1.0e-4f),
+                         "Point-light screen size changed with camera distance");
+        projectedRadius = radius;
+    }
+    glm::vec2 directionScreen;
+    passed &= expect(editor_picking::projectVulkanDirectionToImGui(
+                         {0.0f, 0.0f, -5.0f}, {1.0f, 0.0f, 0.0f}, view,
+                         projection, {800.0f, 600.0f}, directionScreen) &&
+                         std::isfinite(directionScreen.x) &&
+                         std::isfinite(directionScreen.y) &&
+                         glm::length(directionScreen) > 0.0f,
+                     "World direction did not project into screen space");
+    passed &= expect(editor_picking::projectVulkanDirectionToImGui(
+                         {0.0f, 0.0f, -5.0f}, {0.0f, 0.0f, -1.0f}, view,
+                         projection, {800.0f, 600.0f}, directionScreen) &&
+                         glm::length(directionScreen) < 1.0e-4f,
+                     "View-aligned directional light did not project to a reduced arrow");
+    passed &= expect(!editor_picking::projectVulkanWorldToImGui(
+                         {0.0f, 0.0f, 0.05f}, view, projection, {0.0f, 0.0f},
+                         {800.0f, 600.0f}, directionScreen) &&
+                         !editor_picking::projectVulkanWorldToImGui(
+                             {0.0f, 0.0f, -101.0f}, view, projection,
+                             {0.0f, 0.0f}, {800.0f, 600.0f}, directionScreen) &&
+                         !editor_picking::projectVulkanWorldToImGui(
+                             {0.0f, 0.0f, 2.0f}, view, projection,
+                             {0.0f, 0.0f}, {800.0f, 600.0f}, directionScreen),
+                     "Near-clipped, far-clipped, or behind-camera helper was projected");
+    passed &= expect(!editor_picking::projectVulkanWorldToImGui(
+                         {0.0f, 0.0f, -2.0f}, view, glm::mat4(0.0f),
+                         {0.0f, 0.0f}, {800.0f, 600.0f}, directionScreen),
+                     "Singular projection generated helper coordinates");
+    return passed;
+}
+
 bool runTriangleTests() {
     const glm::vec3 a{-1.0f, -1.0f, 0.0f};
     const glm::vec3 b{1.0f, -1.0f, 0.0f};
@@ -639,6 +899,10 @@ bool runCameraDiscoveryTests() {
 
 int main() {
     return runAabbTests() && runScreenSegmentDistanceTests() &&
+                   runPointLightHelperGeometryTests() &&
+                   runDirectionalLightHelperGeometryTests() &&
+                   runCameraHelperGeometryTests() &&
+                   runScreenSpaceHelperPriorityAndProjectionTests() &&
                    runTriangleTests() && runTransformedTests() &&
                    runTriangleScaleToleranceTests() &&
                    runMeshBoundsTests() &&

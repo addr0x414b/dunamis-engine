@@ -1,7 +1,6 @@
 #ifndef IMGUI_LAYER_H
 #define IMGUI_LAYER_H
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -19,6 +18,7 @@
 #include "../editor/editor_transform.h"
 #include "../editor/runtime_transform_edit.h"
 #include "../physics/shape_diagnostics.h"
+#include "editor_picking.h"
 
 class Scene;
 class GameObject;
@@ -129,28 +129,6 @@ private:
                                const glm::mat4& projection,
                                SceneRunState runState);
 
-    enum class EditorHelperKind {
-        Camera,
-        PointLight,
-        DirectionalLight,
-        Character,
-    };
-
-    struct EditorHelperSegment {
-        glm::vec2 start{0.0f};
-        glm::vec2 end{0.0f};
-    };
-
-    struct EditorHelperGeometry {
-        EditorHelperKind kind = EditorHelperKind::Camera;
-        const GameObject* selectionTarget = nullptr;
-        glm::vec2 point{0.0f};
-        bool pointValid = false;
-        std::array<EditorHelperSegment, 128> segments{};
-        std::size_t segmentCount = 0;
-        float viewDepth = 0.0f;
-    };
-
     struct SceneInteractionRect {
         float x = 0.0f;
         float y = 0.0f;
@@ -183,6 +161,8 @@ private:
     bool frameStarted_ = false;
     bool drawDataReady_ = false;
     bool inputEnabled_ = true;
+    bool popupBlocksSceneInteractionThisFrame_ = false;
+    bool suppressSceneInputUntilMouseRelease_ = false;
     bool gizmoDragActive_ = false;
     bool editorTransformDragActive_ = false;
     bool editorTransformDragFailed_ = false;
@@ -203,7 +183,7 @@ private:
     const GameObject* physicsDiagnosticsObject_ = nullptr;
     std::optional<physics::ShapeDiagnostics> physicsDiagnostics_;
     std::string physicsDiagnosticsError_;
-    std::vector<EditorHelperGeometry> editorHelperGeometry_;
+    std::vector<editor_picking::EditorHelperGeometry> editorHelperGeometry_;
     std::string currentScenePath_;
     std::string saveAsOverwritePath_;
     bool openSaveAsOverwritePopup_ = false;

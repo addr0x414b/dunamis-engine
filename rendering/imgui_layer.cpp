@@ -154,22 +154,13 @@ void SDLCALL nativeFileDialogCallback(
 constexpr const char* dunamisDockspaceName =
     "DunamisEditorDockspace_v1";
 constexpr float minCameraBasisLengthSquared = 1.0e-8f;
-constexpr float cameraVisualizationDistance = 30.0f;
-constexpr float directionalVisualizationDistance = 30.0f;
-constexpr float pointLightVisualizationRadius = 7.0f;
-constexpr float pointLightVisualizationInnerRadiusRatio = 0.45f;
-constexpr float pointLightVisualizationCenterRadiusRatio = 1.0f / 3.0f;
-constexpr float directionalLightVisualizationRadius = 5.0f;
-constexpr float directionalLightArrowheadLength = 9.0f;
-constexpr float directionalLightArrowheadHalfWidth = 4.0f;
-constexpr float directionalLightCenterRadius = 2.5f;
 constexpr std::size_t characterVisualizationRadialSegments = 12;
 constexpr float characterVisualizationTwoPi = 6.28318530717958647692f;
 constexpr float characterVisualizationDiagonalRatio = 0.70710678118654752440f;
-constexpr float minimumLightVisualizationPixelRadius = 1.0f;
-constexpr float editorHelperLineHitTolerance = 7.0f;
-constexpr float editorHelperPointHitRadius = 8.0f;
-constexpr float editorHelperHitTieEpsilonSquared = 1.0e-4f;
+
+bool hasOpenImGuiPopup() noexcept {
+    return ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
+}
 
 void applyDunamisEditorStyle() {
     ImGuiStyle& style = ImGui::GetStyle();
@@ -320,72 +311,10 @@ bool projectWorldToImGui(const glm::vec3& worldPoint,
                          const glm::mat4& projection,
                          const ImGuiViewport& viewport,
                          glm::vec2& screenPoint) noexcept {
-    screenPoint = {};
-    if (!isFiniteVector(worldPoint) || !isFiniteMatrix(editorView) ||
-        !isFiniteMatrix(projection) || !std::isfinite(viewport.Pos.x) ||
-        !std::isfinite(viewport.Pos.y) || !std::isfinite(viewport.Size.x) ||
-        !std::isfinite(viewport.Size.y) || viewport.Size.x <= 0.0f ||
-        viewport.Size.y <= 0.0f) {
-        return false;
-    }
-
-    const glm::vec4 clip =
-        projection * editorView * glm::vec4(worldPoint, 1.0f);
-    if (!isFiniteVector(clip) || clip.w <= 1.0e-6f) {
-        return false;
-    }
-
-    const glm::vec3 ndc = glm::vec3(clip) / clip.w;
-    if (!isFiniteVector(ndc)) {
-        return false;
-    }
-
-    // The renderer already flips projection Y for Vulkan. Mapping NDC Y
-    // directly therefore converts world-up to the smaller ImGui screen Y.
-    screenPoint = glm::vec2(
-        viewport.Pos.x + (ndc.x * 0.5f + 0.5f) * viewport.Size.x,
-        viewport.Pos.y + (ndc.y * 0.5f + 0.5f) * viewport.Size.y);
-    return std::isfinite(screenPoint.x) && std::isfinite(screenPoint.y);
-}
-
-bool projectWorldRadiusToImGui(const glm::vec3& worldPoint,
-                               const glm::vec2& centerScreen,
-                               const glm::mat4& editorView,
-                               const glm::mat4& projection,
-                               const ImGuiViewport& viewport,
-                               float worldRadius,
-                               float& screenRadius) noexcept {
-    screenRadius = 0.0f;
-    if (!isFiniteVector(worldPoint) || !std::isfinite(centerScreen.x) ||
-        !std::isfinite(centerScreen.y) || !isFiniteMatrix(editorView) ||
-        !std::isfinite(worldRadius) || worldRadius <= 0.0f) {
-        return false;
-    }
-
-    const glm::mat4 inverseView = glm::inverse(editorView);
-    if (!isFiniteMatrix(inverseView)) {
-        return false;
-    }
-
-    glm::vec3 cameraRight;
-    if (!normalizeFinite(glm::vec3(inverseView[0]), cameraRight)) {
-        return false;
-    }
-
-    const glm::vec3 offsetWorldPoint =
-        worldPoint + cameraRight * worldRadius;
-    if (!isFiniteVector(offsetWorldPoint)) {
-        return false;
-    }
-
-    glm::vec2 offsetScreen;
-    if (!projectWorldToImGui(offsetWorldPoint, editorView, projection,
-                             viewport, offsetScreen)) {
-        return false;
-    }
-
-    screenRadius = glm::length(offsetScreen - centerScreen);
-    return std::isfinite(screenRadius) && screenRadius >= 0.0f;
+    return editor_picking::projectVulkanWorldToImGui(
+        worldPoint, editorView, projection,
+        glm::vec2(viewport.Pos.x, viewport.Pos.y),
+        glm::vec2(viewport.Size.x, viewport.Size.y), screenPoint);
 }
 
 float viewDepthForWorldPoint(const glm::vec3& worldPoint,
@@ -593,8 +522,23 @@ Result ImGuiLayer::beginFrame(SceneRunState runState) {
     ImGui::NewFrame();
     ImGuizmo::BeginFrame();
     consumeNativeFileDialogResult();
-    drawToolbar(runState);
+    if (suppressSceneInputUntilMouseRelease_ &&
+        !ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
+        !ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+        suppressSceneInputUntilMouseRelease_ = false;
+    }
+    popupBlocksSceneInteractionThisFrame_ =
+        suppressSceneInputUntilMouseRelease_ || hasOpenImGuiPopup() ||
+        openSaveAsOverwritePopup_ ||
+        openLoadConfirmationPopup_ || openQuitConfirmationPopup_;
     drawPersistenceDialogs();
+    drawToolbar(runState);
+    if (hasOpenImGuiPopup()) {
+        suppressSceneInputUntilMouseRelease_ = true;
+    }
+    popupBlocksSceneInteractionThisFrame_ =
+        popupBlocksSceneInteractionThisFrame_ || hasOpenImGuiPopup() ||
+        suppressSceneInputUntilMouseRelease_;
     const ImGuiID dockspaceId = ImGui::GetID(dunamisDockspaceName);
     const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
     buildDefaultDockLayout(dockspaceId, mainViewport->WorkSize);
@@ -658,7 +602,7 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
     const bool editorShortcutAvailable =
         editing && inputEnabled_ && !ImGui::GetIO().WantTextInput &&
         !ImGui::IsAnyItemActive() && !nativeFileDialogBusy() &&
-        !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
+        !popupBlocksSceneInteractionThisFrame_ && !hasOpenImGuiPopup();
     if (editorShortcutAvailable &&
         ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S,
                         ImGuiInputFlags_RouteGlobal) &&
@@ -727,9 +671,17 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
 }
 
 void ImGuiLayer::drawPersistenceDialogs() {
+    if (hasOpenImGuiPopup()) {
+        suppressSceneInputUntilMouseRelease_ = true;
+    }
+    popupBlocksSceneInteractionThisFrame_ =
+        popupBlocksSceneInteractionThisFrame_ || hasOpenImGuiPopup() ||
+        suppressSceneInputUntilMouseRelease_;
     if (openSaveAsOverwritePopup_) {
         ImGui::OpenPopup("Overwrite Scene##SaveAs");
         openSaveAsOverwritePopup_ = false;
+        popupBlocksSceneInteractionThisFrame_ = true;
+        suppressSceneInputUntilMouseRelease_ = true;
     }
     if (ImGui::BeginPopupModal("Overwrite Scene##SaveAs", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -752,6 +704,8 @@ void ImGuiLayer::drawPersistenceDialogs() {
     if (openLoadConfirmationPopup_) {
         ImGui::OpenPopup("Unsaved Changes##Load");
         openLoadConfirmationPopup_ = false;
+        popupBlocksSceneInteractionThisFrame_ = true;
+        suppressSceneInputUntilMouseRelease_ = true;
     }
     if (ImGui::BeginPopupModal("Unsaved Changes##Load", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -776,6 +730,8 @@ void ImGuiLayer::drawPersistenceDialogs() {
     if (openQuitConfirmationPopup_) {
         ImGui::OpenPopup("Unsaved Changes##Quit");
         openQuitConfirmationPopup_ = false;
+        popupBlocksSceneInteractionThisFrame_ = true;
+        suppressSceneInputUntilMouseRelease_ = true;
     }
     if (ImGui::BeginPopupModal("Unsaved Changes##Quit", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -1297,6 +1253,7 @@ void ImGuiLayer::processGizmoShortcuts(Scene* scene,
     if (!editorToolsEnabled(runState) || !inputEnabled_ ||
         selectedGameObjectForScene(scene) == nullptr ||
         ImGui::GetIO().WantTextInput || ImGui::IsAnyItemActive() ||
+        popupBlocksSceneInteractionThisFrame_ || hasOpenImGuiPopup() ||
         ImGuizmo::IsUsing()) {
         return;
     }
@@ -1313,12 +1270,19 @@ void ImGuiLayer::processGizmoShortcuts(Scene* scene,
 void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
                                     const glm::mat4& projection,
                                     SceneRunState runState) {
+    if (popupBlocksSceneInteractionThisFrame_ || hasOpenImGuiPopup()) {
+        ImGuizmo::Enable(false);
+        cancelEditorTransformDrag();
+        finishRuntimeTransformDrag();
+        gizmoDragActive_ = false;
+        return;
+    }
+    ImGuizmo::Enable(true);
     if (!editorToolsEnabled(runState) ||
         !sceneInteractionRect_.valid) {
         cancelEditorTransformDrag();
         gizmoDragActive_ = false;
-        runtimeTransformDragActive_ = false;
-        runtimeTransformObject_ = nullptr;
+        finishRuntimeTransformDrag();
         return;
     }
     GameObject* selected = const_cast<GameObject*>(
@@ -1328,12 +1292,11 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
         viewport->Size.y <= 0.0f) {
         cancelEditorTransformDrag();
         gizmoDragActive_ = false;
-        runtimeTransformDragActive_ = false;
-        runtimeTransformObject_ = nullptr;
+        finishRuntimeTransformDrag();
         return;
     }
 
-    ImDrawList* drawList = ImGui::GetForegroundDrawList(viewport);
+    ImDrawList* drawList = ImGui::GetBackgroundDrawList(viewport);
     const ImVec2 clipMin(sceneInteractionRect_.x, sceneInteractionRect_.y);
     const ImVec2 clipMax(sceneInteractionRect_.x + sceneInteractionRect_.width,
                          sceneInteractionRect_.y + sceneInteractionRect_.height);
@@ -1602,7 +1565,6 @@ void ImGuiLayer::drawCameraVisualization(
     const Camera& camera, const glm::mat4& editorView,
     const glm::mat4& projection, const GameObject* selectionTarget,
     bool active) {
-
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     if (viewport == nullptr || viewport->Size.x <= 0.0f ||
         viewport->Size.y <= 0.0f || !isFiniteMatrix(projection)) {
@@ -1622,74 +1584,46 @@ void ImGuiLayer::drawCameraVisualization(
         return;
     }
 
-    const float horizontalProjectionScale = std::abs(projection[0][0]);
-    const float verticalProjectionScale = std::abs(projection[1][1]);
-    if (!std::isfinite(horizontalProjectionScale) ||
-        !std::isfinite(verticalProjectionScale) ||
-        horizontalProjectionScale <= minCameraBasisLengthSquared ||
-        verticalProjectionScale <= minCameraBasisLengthSquared) {
-        return;
-    }
-
-    const float halfWidth =
-        cameraVisualizationDistance / horizontalProjectionScale;
-    const float halfHeight =
-        cameraVisualizationDistance / verticalProjectionScale;
-    if (!std::isfinite(halfWidth) || !std::isfinite(halfHeight) ||
-        halfWidth <= 0.0f || halfHeight <= 0.0f) {
-        return;
-    }
-
-    const glm::vec3 apex = pose.position;
-    const glm::vec3 planeCenter =
-        apex + forward * cameraVisualizationDistance;
-    const glm::vec3 topLeft =
-        planeCenter + up * halfHeight - right * halfWidth;
-    const glm::vec3 topRight =
-        planeCenter + up * halfHeight + right * halfWidth;
-    const glm::vec3 bottomRight =
-        planeCenter - up * halfHeight + right * halfWidth;
-    const glm::vec3 bottomLeft =
-        planeCenter - up * halfHeight - right * halfWidth;
-    if (!isFiniteVector(planeCenter) || !isFiniteVector(topLeft) ||
-        !isFiniteVector(topRight) || !isFiniteVector(bottomRight) ||
-        !isFiniteVector(bottomLeft)) {
-        return;
-    }
-
-    EditorHelperGeometry geometry;
-    geometry.kind = EditorHelperKind::Camera;
-    geometry.selectionTarget = selectionTarget;
-    geometry.viewDepth = viewDepthForWorldPoint(apex, editorView);
-
-    const std::array<glm::vec3, 6> points{
-        apex, topLeft, topRight, bottomRight, bottomLeft, planeCenter};
-    const std::array<int, 9> firstIndices{0, 0, 0, 0, 1, 2, 3, 4, 0};
-    const std::array<int, 9> secondIndices{1, 2, 3, 4, 2, 3, 4, 1, 5};
-    const auto projectPoint = [&](const glm::vec3& worldPoint,
-                                  glm::vec2& screenPoint) {
-        return projectWorldToImGui(worldPoint, editorView, projection,
-                                   *viewport, screenPoint);
-    };
-
     glm::vec2 apexScreen;
-    geometry.pointValid = projectPoint(apex, apexScreen);
-    if (geometry.pointValid) {
-        geometry.point = apexScreen;
+    if (!projectWorldToImGui(pose.position, editorView, projection, *viewport,
+                             apexScreen)) {
+        return;
     }
-    for (std::size_t index = 0; index < firstIndices.size(); ++index) {
-        glm::vec2 firstScreen;
-        glm::vec2 secondScreen;
-        if (!projectPoint(points[firstIndices[index]], firstScreen) ||
-            !projectPoint(points[secondIndices[index]], secondScreen)) {
-            continue;
-        }
-        geometry.segments[geometry.segmentCount++] = {
-            firstScreen, secondScreen};
+
+    const float viewDepth = viewDepthForWorldPoint(pose.position, editorView);
+    if (!std::isfinite(viewDepth) || viewDepth <= 0.0f) {
+        return;
+    }
+
+    glm::vec2 projectedForward;
+    glm::vec2 projectedRight;
+    glm::vec2 projectedUp;
+    if (!editor_picking::projectVulkanDirectionToImGui(
+            pose.position, forward, editorView, projection,
+            glm::vec2(viewport->Size.x, viewport->Size.y),
+            projectedForward) ||
+        !editor_picking::projectVulkanDirectionToImGui(
+            pose.position, right, editorView, projection,
+            glm::vec2(viewport->Size.x, viewport->Size.y), projectedRight) ||
+        !editor_picking::projectVulkanDirectionToImGui(
+            pose.position, up, editorView, projection,
+            glm::vec2(viewport->Size.x, viewport->Size.y), projectedUp)) {
+        return;
+    }
+
+    editor_picking::EditorHelperGeometry geometry;
+    geometry.kind = editor_picking::EditorHelperKind::Camera;
+    geometry.selectionTarget = selectionTarget;
+    geometry.viewDepth = viewDepth;
+    if (!editor_picking::makeCameraHelperGeometry(
+            apexScreen, projectedForward, projectedRight, projectedUp,
+            camera.fov(), viewport->Size.x / viewport->Size.y, viewDepth,
+            geometry.screen)) {
+        return;
     }
     editorHelperGeometry_.push_back(geometry);
 
-    ImDrawList* drawList = ImGui::GetForegroundDrawList(viewport);
+    ImDrawList* drawList = ImGui::GetBackgroundDrawList(viewport);
     if (drawList == nullptr) {
         return;
     }
@@ -1708,15 +1642,19 @@ void ImGuiLayer::drawCameraVisualization(
     drawList->PushClipRect(clipMin, clipMax, true);
 
     const float lineThickness = highlighted ? 2.5f : 2.0f;
-    for (std::size_t index = 0; index < geometry.segmentCount; ++index) {
-        const EditorHelperSegment& segment = geometry.segments[index];
+    for (std::size_t index = 0;
+         index < geometry.screen.segmentCount; ++index) {
+        const editor_picking::ScreenSpaceSegment& segment =
+            geometry.screen.segments[index];
         drawList->AddLine(ImVec2(segment.start.x, segment.start.y),
                           ImVec2(segment.end.x, segment.end.y), color,
                           lineThickness);
     }
-    if (geometry.pointValid) {
+    for (std::size_t index = 0; index < geometry.screen.circleCount; ++index) {
+        const editor_picking::ScreenSpaceCircle& circle =
+            geometry.screen.circles[index];
         drawList->AddCircleFilled(
-            ImVec2(geometry.point.x, geometry.point.y), 4.0f, color);
+            ImVec2(circle.center.x, circle.center.y), circle.radius, color);
     }
 
     drawList->PopClipRect();
@@ -1742,36 +1680,22 @@ void ImGuiLayer::drawPointLightVisualization(
         return;
     }
 
-    EditorHelperGeometry geometry;
-    geometry.kind = EditorHelperKind::PointLight;
+    editor_picking::EditorHelperGeometry geometry;
+    geometry.kind = editor_picking::EditorHelperKind::PointLight;
     geometry.selectionTarget = selectionTarget;
-    geometry.point = center;
-    geometry.pointValid = true;
     geometry.viewDepth = viewDepthForWorldPoint(worldPosition, editorView);
-
-    float outerRadius = 0.0f;
-    if (!projectWorldRadiusToImGui(
-            worldPosition, center, editorView, projection, *viewport,
-            pointLightVisualizationRadius, outerRadius)) {
+    if (!std::isfinite(geometry.viewDepth) || geometry.viewDepth <= 0.0f) {
         return;
     }
-    outerRadius = std::max(outerRadius, minimumLightVisualizationPixelRadius);
-    const float innerRadius =
-        outerRadius * pointLightVisualizationInnerRadiusRatio;
-
-    constexpr std::array<glm::vec2, 8> radialDirections{
-        glm::vec2(0.0f, -1.0f), glm::vec2(0.70710677f, -0.70710677f),
-        glm::vec2(1.0f, 0.0f), glm::vec2(0.70710677f, 0.70710677f),
-        glm::vec2(0.0f, 1.0f), glm::vec2(-0.70710677f, 0.70710677f),
-        glm::vec2(-1.0f, 0.0f), glm::vec2(-0.70710677f, -0.70710677f)};
-    for (const glm::vec2& radialDirection : radialDirections) {
-        geometry.segments[geometry.segmentCount++] = {
-            center + radialDirection * innerRadius,
-            center + radialDirection * outerRadius};
+    geometry.screen = editor_picking::makePointLightHelperGeometry(
+        center, editor_picking::pointLightOuterRadiusPixels,
+        geometry.viewDepth);
+    if (!geometry.screen.valid) {
+        return;
     }
     editorHelperGeometry_.push_back(geometry);
 
-    ImDrawList* drawList = ImGui::GetForegroundDrawList(viewport);
+    ImDrawList* drawList = ImGui::GetBackgroundDrawList(viewport);
     if (drawList == nullptr) {
         return;
     }
@@ -1787,15 +1711,20 @@ void ImGuiLayer::drawPointLightVisualization(
         ImGui::GetStyle().Colors[accent]);
     drawList->PushClipRect(clipMin, clipMax, true);
     const float lineThickness = selected ? 2.5f : 2.0f;
-    for (std::size_t index = 0; index < geometry.segmentCount; ++index) {
-        const EditorHelperSegment& segment = geometry.segments[index];
+    for (std::size_t index = 0;
+         index < geometry.screen.segmentCount; ++index) {
+        const editor_picking::ScreenSpaceSegment& segment =
+            geometry.screen.segments[index];
         drawList->AddLine(ImVec2(segment.start.x, segment.start.y),
                           ImVec2(segment.end.x, segment.end.y), color,
                           lineThickness);
     }
-    drawList->AddCircleFilled(
-        ImVec2(center.x, center.y),
-        outerRadius * pointLightVisualizationCenterRadiusRatio, color);
+    for (std::size_t index = 0; index < geometry.screen.circleCount; ++index) {
+        const editor_picking::ScreenSpaceCircle& circle =
+            geometry.screen.circles[index];
+        drawList->AddCircleFilled(
+            ImVec2(circle.center.x, circle.center.y), circle.radius, color);
+    }
     drawList->PopClipRect();
 }
 
@@ -1819,74 +1748,35 @@ void ImGuiLayer::drawDirectionalLightVisualization(
         return;
     }
 
-    EditorHelperGeometry geometry;
-    geometry.kind = EditorHelperKind::DirectionalLight;
+    editor_picking::EditorHelperGeometry geometry;
+    geometry.kind = editor_picking::EditorHelperKind::DirectionalLight;
     geometry.selectionTarget = selectionTarget;
-    geometry.point = center;
-    geometry.pointValid = true;
     geometry.viewDepth = viewDepthForWorldPoint(worldPosition, editorView);
-
-    float markerRadius = 0.0f;
-    if (!projectWorldRadiusToImGui(
-            worldPosition, center, editorView, projection, *viewport,
-            directionalLightVisualizationRadius, markerRadius)) {
+    if (!std::isfinite(geometry.viewDepth) || geometry.viewDepth <= 0.0f) {
         return;
     }
-    markerRadius =
-        std::max(markerRadius, minimumLightVisualizationPixelRadius);
-    const std::array<glm::vec2, 4> markerPoints{
-        center + glm::vec2(0.0f, -markerRadius),
-        center + glm::vec2(markerRadius, 0.0f),
-        center + glm::vec2(0.0f, markerRadius),
-        center + glm::vec2(-markerRadius, 0.0f)};
-    for (std::size_t index = 0; index < markerPoints.size(); ++index) {
-        geometry.segments[geometry.segmentCount++] = {
-            markerPoints[index], markerPoints[(index + 1) % markerPoints.size()]};
-    }
 
+    glm::vec2 projectedDirection(0.0f);
+    bool projectedDirectionValid = false;
     glm::vec3 normalizedDirection;
     if (light.calculateWorldDirection(normalizedDirection)) {
-        const glm::vec3 arrowEnd =
-            worldPosition + normalizedDirection * directionalVisualizationDistance;
-        glm::vec2 arrowEndScreen;
-        if (isFiniteVector(arrowEnd) &&
-            projectWorldToImGui(arrowEnd, editorView, projection, *viewport,
-                                arrowEndScreen)) {
-            const glm::vec2 screenDirection = arrowEndScreen - center;
-            const float screenLength = glm::length(screenDirection);
-            if (std::isfinite(screenLength) && screenLength > 1.0e-4f) {
-                const glm::vec2 unitDirection = screenDirection / screenLength;
-                const glm::vec2 perpendicular(-unitDirection.y,
-                                               unitDirection.x);
-                geometry.segments[geometry.segmentCount++] = {
-                    center, arrowEndScreen};
-                float arrowheadLength = 0.0f;
-                float arrowheadHalfWidth = 0.0f;
-                if (projectWorldRadiusToImGui(
-                        worldPosition, center, editorView, projection,
-                        *viewport, directionalLightArrowheadLength,
-                        arrowheadLength) &&
-                    projectWorldRadiusToImGui(
-                        worldPosition, center, editorView, projection,
-                        *viewport, directionalLightArrowheadHalfWidth,
-                        arrowheadHalfWidth)) {
-                    const glm::vec2 arrowBase =
-                        arrowEndScreen - unitDirection * arrowheadLength;
-                    const glm::vec2 firstWing =
-                        arrowBase + perpendicular * arrowheadHalfWidth;
-                    const glm::vec2 secondWing =
-                        arrowBase - perpendicular * arrowheadHalfWidth;
-                    geometry.segments[geometry.segmentCount++] = {
-                        arrowEndScreen, firstWing};
-                    geometry.segments[geometry.segmentCount++] = {
-                        arrowEndScreen, secondWing};
-                }
-            }
-        }
+        projectedDirectionValid =
+            editor_picking::projectVulkanDirectionToImGui(
+                worldPosition, normalizedDirection, editorView, projection,
+                glm::vec2(viewport->Size.x, viewport->Size.y),
+                projectedDirection) &&
+            glm::length(projectedDirection) > 1.0e-4f;
+    }
+    geometry.screen =
+        editor_picking::makeDirectionalLightHelperGeometry(
+            center, projectedDirection, projectedDirectionValid,
+            geometry.viewDepth);
+    if (!geometry.screen.valid) {
+        return;
     }
     editorHelperGeometry_.push_back(geometry);
 
-    ImDrawList* drawList = ImGui::GetForegroundDrawList(viewport);
+    ImDrawList* drawList = ImGui::GetBackgroundDrawList(viewport);
     if (drawList == nullptr) {
         return;
     }
@@ -1902,18 +1792,19 @@ void ImGuiLayer::drawDirectionalLightVisualization(
         ImGui::GetStyle().Colors[accent]);
     drawList->PushClipRect(clipMin, clipMax, true);
     const float lineThickness = selected ? 2.5f : 2.0f;
-    for (std::size_t index = 0; index < geometry.segmentCount; ++index) {
-        const EditorHelperSegment& segment = geometry.segments[index];
+    for (std::size_t index = 0;
+         index < geometry.screen.segmentCount; ++index) {
+        const editor_picking::ScreenSpaceSegment& segment =
+            geometry.screen.segments[index];
         drawList->AddLine(ImVec2(segment.start.x, segment.start.y),
                           ImVec2(segment.end.x, segment.end.y), color,
                           lineThickness);
     }
-    float centerRadius = 0.0f;
-    if (projectWorldRadiusToImGui(
-            worldPosition, center, editorView, projection, *viewport,
-            directionalLightCenterRadius, centerRadius)) {
-        drawList->AddCircleFilled(ImVec2(center.x, center.y), centerRadius,
-                                   color);
+    for (std::size_t index = 0; index < geometry.screen.circleCount; ++index) {
+        const editor_picking::ScreenSpaceCircle& circle =
+            geometry.screen.circles[index];
+        drawList->AddCircleFilled(
+            ImVec2(circle.center.x, circle.center.y), circle.radius, color);
     }
     drawList->PopClipRect();
 }
@@ -1954,10 +1845,12 @@ void ImGuiLayer::drawCharacterVisualization(
         return;
     }
 
-    EditorHelperGeometry geometry;
-    geometry.kind = EditorHelperKind::Character;
+    editor_picking::EditorHelperGeometry geometry;
+    geometry.kind = editor_picking::EditorHelperKind::Character;
     geometry.selectionTarget = selectionTarget;
     geometry.viewDepth = viewDepthForWorldPoint(capsuleCenter, editorView);
+    float nearestVisibleSegmentDepth =
+        std::numeric_limits<float>::infinity();
 
     const auto projectPoint = [&](const glm::vec3& worldPoint,
                                   glm::vec2& screenPoint) {
@@ -1966,7 +1859,8 @@ void ImGuiLayer::drawCharacterVisualization(
     };
     const auto appendSegment = [&](const glm::vec3& first,
                                    const glm::vec3& second) {
-        if (geometry.segmentCount >= geometry.segments.size()) {
+        if (geometry.screen.segmentCount >=
+            geometry.screen.segments.size()) {
             return;
         }
 
@@ -1976,8 +1870,18 @@ void ImGuiLayer::drawCharacterVisualization(
             !projectPoint(second, secondScreen)) {
             return;
         }
-        geometry.segments[geometry.segmentCount++] = {
-            firstScreen, secondScreen};
+        const float firstDepth = viewDepthForWorldPoint(first, editorView);
+        const float secondDepth = viewDepthForWorldPoint(second, editorView);
+        if (std::isfinite(firstDepth) && firstDepth > 0.0f) {
+            nearestVisibleSegmentDepth =
+                std::min(nearestVisibleSegmentDepth, firstDepth);
+        }
+        if (std::isfinite(secondDepth) && secondDepth > 0.0f) {
+            nearestVisibleSegmentDepth =
+                std::min(nearestVisibleSegmentDepth, secondDepth);
+        }
+        geometry.screen.segments[geometry.screen.segmentCount++] = {
+            firstScreen, secondScreen, 7.0f};
     };
     const auto ringPoint = [&](float y, float ringRadius, float angle) {
         return characterWorldPosition + glm::vec3(
@@ -2034,7 +1938,15 @@ void ImGuiLayer::drawCharacterVisualization(
         }
     }
 
-    editorHelperGeometry_.push_back(geometry);
+    if (!std::isfinite(geometry.viewDepth) || geometry.viewDepth <= 0.0f) {
+        geometry.viewDepth = nearestVisibleSegmentDepth;
+    }
+    geometry.screen.valid = geometry.screen.segmentCount > 0 &&
+                            std::isfinite(geometry.viewDepth) &&
+                            geometry.viewDepth > 0.0f;
+    if (geometry.screen.valid) {
+        editorHelperGeometry_.push_back(geometry);
+    }
 
     // The projected segments above remain only as editor picking metadata.
     // Character drawing itself is performed by the Jolt/Vulkan debug pass.
@@ -2045,6 +1957,7 @@ void ImGuiLayer::processWorldSelection(Scene* scene, const glm::mat4& view,
                                        SceneRunState runState) {
     if (!editorToolsEnabled(runState) || !inputEnabled_ ||
         !sceneInteractionRect_.valid || !sceneInteractionAreaHovered_ ||
+        popupBlocksSceneInteractionThisFrame_ || hasOpenImGuiPopup() ||
         gizmoDragActive_ || ImGuizmo::IsOver() || ImGuizmo::IsUsing() ||
         ImGui::IsDragDropActive() ||
         ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
@@ -2058,74 +1971,20 @@ void ImGuiLayer::processWorldSelection(Scene* scene, const glm::mat4& view,
     }
 
     const ImVec2 mouse = ImGui::GetIO().MousePos;
-    if (!std::isfinite(mouse.x) || !std::isfinite(mouse.y) ||
-        mouse.x < sceneInteractionRect_.x ||
-        mouse.y < sceneInteractionRect_.y ||
-        mouse.x > sceneInteractionRect_.x + sceneInteractionRect_.width ||
-        mouse.y > sceneInteractionRect_.y + sceneInteractionRect_.height) {
+    const glm::vec2 mousePoint(mouse.x, mouse.y);
+    if (!editor_picking::isScreenPointInsideRect(
+            mousePoint,
+            glm::vec2(sceneInteractionRect_.x, sceneInteractionRect_.y),
+            glm::vec2(sceneInteractionRect_.width,
+                      sceneInteractionRect_.height))) {
         return;
     }
-
-    const glm::vec2 mousePoint(mouse.x, mouse.y);
-    const float lineToleranceSquared =
-        editorHelperLineHitTolerance * editorHelperLineHitTolerance;
-    const float pointRadiusSquared =
-        editorHelperPointHitRadius * editorHelperPointHitRadius;
-    const GameObject* closestHelperTarget = nullptr;
-    float closestHelperDistanceSquared =
-        std::numeric_limits<float>::infinity();
-    float closestHelperDepth = std::numeric_limits<float>::infinity();
-    for (const EditorHelperGeometry& geometry : editorHelperGeometry_) {
-        if (geometry.selectionTarget == nullptr) {
-            continue;
-        }
-
-        float helperDistanceSquared =
-            std::numeric_limits<float>::infinity();
-        if (geometry.pointValid) {
-            const glm::vec2 pointDifference = mousePoint - geometry.point;
-            const float pointDistanceSquared = glm::dot(
-                pointDifference, pointDifference);
-            if (std::isfinite(pointDistanceSquared) &&
-                pointDistanceSquared <= pointRadiusSquared) {
-                helperDistanceSquared = pointDistanceSquared;
-            }
-        }
-        for (std::size_t index = 0; index < geometry.segmentCount; ++index) {
-            const EditorHelperSegment& segment = geometry.segments[index];
-            const float segmentDistanceSquared =
-                editor_picking::distanceSquaredToSegment(
-                    mousePoint, segment.start, segment.end);
-            if (std::isfinite(segmentDistanceSquared) &&
-                segmentDistanceSquared <= lineToleranceSquared) {
-                helperDistanceSquared = std::min(helperDistanceSquared,
-                                                 segmentDistanceSquared);
-            }
-        }
-        if (!std::isfinite(helperDistanceSquared)) {
-            continue;
-        }
-
-        const float depth = std::isfinite(geometry.viewDepth)
-                                ? geometry.viewDepth
-                                : std::numeric_limits<float>::infinity();
-        const bool closerOnScreen =
-            helperDistanceSquared < closestHelperDistanceSquared -
-                editorHelperHitTieEpsilonSquared;
-        const bool tiedOnScreen = std::abs(helperDistanceSquared -
-                                           closestHelperDistanceSquared) <=
-                                  editorHelperHitTieEpsilonSquared;
-        const bool closerInView = tiedOnScreen &&
-                                  depth < closestHelperDepth -
-                                      editorHelperHitTieEpsilonSquared;
-        if (closerOnScreen || closerInView) {
-            closestHelperTarget = geometry.selectionTarget;
-            closestHelperDistanceSquared = helperDistanceSquared;
-            closestHelperDepth = depth;
-        }
-    }
-
-    if (closestHelperTarget != nullptr) {
+    const std::size_t closestHelperIndex =
+        editor_picking::closestHelperGeometryIndex(
+            editorHelperGeometry_, mousePoint);
+    if (closestHelperIndex < editorHelperGeometry_.size()) {
+        const GameObject* closestHelperTarget =
+            editorHelperGeometry_[closestHelperIndex].selectionTarget;
         const ImGuiIO& io = ImGui::GetIO();
         selectGameObject(
             scene, const_cast<GameObject*>(closestHelperTarget),
@@ -2138,6 +1997,9 @@ void ImGuiLayer::processWorldSelection(Scene* scene, const glm::mat4& view,
     const float ndcX = 2.0f * localX / viewport->Size.x - 1.0f;
     const float ndcY = 2.0f * localY / viewport->Size.y - 1.0f;
     const glm::mat4 inverseViewProjection = glm::inverse(projection * view);
+    if (!isFiniteMatrix(inverseViewProjection)) {
+        return;
+    }
     const glm::vec4 nearPoint = inverseViewProjection *
         glm::vec4(ndcX, ndcY, 0.0f, 1.0f);
     const glm::vec4 farPoint = inverseViewProjection *
@@ -2450,7 +2312,10 @@ void ImGuiLayer::updateSceneInteractionAreaHovered() noexcept {
     sceneInteractionRect_.width = centralRect.GetWidth();
     sceneInteractionRect_.height = centralRect.GetHeight();
     sceneInteractionRect_.valid = true;
-    const bool imguiObstructed = context->HoveredWindow != nullptr ||
+    const bool popupOpen = popupBlocksSceneInteractionThisFrame_ ||
+                           hasOpenImGuiPopup();
+    const bool imguiObstructed = popupOpen ||
+                                 context->HoveredWindow != nullptr ||
                                  context->HoveredId != 0 ||
                                  context->ActiveId != 0;
     sceneInteractionAreaHovered_ = viewportRect.Contains(mouse) &&
@@ -2529,6 +2394,8 @@ void ImGuiLayer::shutdown() noexcept {
     physicsDiagnosticsError_.clear();
     sceneInteractionAreaHovered_ = false;
     sceneInteractionRect_ = {};
+    popupBlocksSceneInteractionThisFrame_ = false;
+    suppressSceneInputUntilMouseRelease_ = false;
     pendingHierarchyReorder_.reset();
     inputEnabled_ = true;
     gizmoDragActive_ = false;
@@ -2584,6 +2451,8 @@ void ImGuiLayer::abandon() noexcept {
     physicsDiagnosticsError_.clear();
     sceneInteractionAreaHovered_ = false;
     sceneInteractionRect_ = {};
+    popupBlocksSceneInteractionThisFrame_ = false;
+    suppressSceneInputUntilMouseRelease_ = false;
     pendingHierarchyReorder_.reset();
     inputEnabled_ = true;
     gizmoDragActive_ = false;

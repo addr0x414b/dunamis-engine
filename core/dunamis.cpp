@@ -513,6 +513,15 @@ void Dunamis::requestQuit(bool& running) {
         return;
     }
     editorSession_.setQuitConfirmationPending(true);
+    if (inputManager && inputManager->inputMode() ==
+                            InputMode::EditorCameraCaptured) {
+        const Result release = inputManager->endEditorCameraCapture();
+        if (!release) {
+            spdlog::error("Failed to release editor camera input for quit prompt: {}",
+                          release.error());
+        }
+        synchronizeImGuiInput();
+    }
     if (usesGameplayCamera(editorSession_.runState()) && inputManager &&
         inputManager->inputMode() == InputMode::GameplayCaptured) {
         const Result release = inputManager->toggleGameplayMouseRelease();
