@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -30,12 +31,15 @@ class HierarchyImporter;
 
 class Scene {
 public:
+    Scene();
     enum class ReparentMode { PreserveWorld, PreserveLocal };
 
     virtual void buildDefaults() = 0;
     virtual void start() = 0;
     virtual void update() = 0;
     virtual ~Scene() = default;
+
+    [[nodiscard]] std::uint64_t lifetimeId() const noexcept;
 
     [[nodiscard]] Result addGameObject(
         std::unique_ptr<GameObject> gameObject);
@@ -113,6 +117,7 @@ private:
     [[nodiscard]] Result activate();
     void deactivate() noexcept;
 
+    const std::uint64_t lifetimeId_;
     std::vector<std::unique_ptr<GameObject>> gameObjects_;
     // Hierarchy presentation order is deliberately separate from lifetime
     // ownership. Every pointer here is non-owning and is owned by

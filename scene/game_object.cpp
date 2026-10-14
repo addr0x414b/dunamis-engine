@@ -3,10 +3,21 @@
 #include "../math/transform_math.h"
 #include "model_renderable.h"
 
+#include <atomic>
 #include <utility>
 
+namespace {
+
+std::uint64_t nextGameObjectInstanceId() noexcept {
+    static std::atomic<std::uint64_t> next{1};
+    return next.fetch_add(1, std::memory_order_relaxed);
+}
+
+}  // namespace
+
 GameObject::GameObject()
-    : modelRenderable_(std::make_unique<ModelRenderable>()) {}
+    : instanceId_(nextGameObjectInstanceId()),
+      modelRenderable_(std::make_unique<ModelRenderable>()) {}
 
 GameObject::~GameObject() = default;
 
@@ -83,6 +94,10 @@ glm::mat4 GameObject::worldTransformMatrix() const noexcept {
         world = ancestor->localTransformMatrix() * world;
     }
     return world;
+}
+
+std::uint64_t GameObject::instanceId() const noexcept {
+    return instanceId_;
 }
 
 GameObject* GameObject::parent() noexcept {

@@ -517,6 +517,13 @@ Result ImGuiLayer::initializeVulkanBackend() {
 }
 
 void ImGuiLayer::processEvent(const SDL_Event& event) noexcept {
+    if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+        cancelEditorTransformDrag();
+        if (editorSession_ != nullptr) {
+            finishInspectorTransformEdit(
+                editorSession_->selectionScene(), true);
+        }
+    }
     if (!sdlBackendInitialized_) {
         return;
     }
@@ -525,6 +532,10 @@ void ImGuiLayer::processEvent(const SDL_Event& event) noexcept {
 
 void ImGuiLayer::setInputEnabled(bool enabled) noexcept {
     inputEnabled_ = enabled;
+    if (!enabled && editorSession_ != nullptr) {
+        finishInspectorTransformEdit(
+            editorSession_->selectionScene(), true);
+    }
     cancelEditorTransformDrag();
     clearInspectorScaleDrag();
     gizmoDragActive_ = false;
@@ -605,6 +616,7 @@ void ImGuiLayer::drawEditor(Scene* scene, const glm::mat4& view,
     inspectorScaleWidgetSeen_ = false;
     synchronizeSelection(scene);
     if (!frameStarted_) {
+        finishInspectorTransformEdit(scene, true);
         clearInspectorScaleDrag();
         return;
     }
@@ -653,6 +665,13 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
         editing && inputEnabled_ && !ImGui::GetIO().WantTextInput &&
         !ImGui::IsAnyItemActive() && !nativeFileDialogBusy() &&
         !popupBlocksSceneInteractionThisFrame_ && !hasOpenImGuiPopup();
+    if (editorShortcutAvailable && !gizmoDragActive_ &&
+        !editorTransformDragActive_ &&
+        ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z,
+                        ImGuiInputFlags_RouteGlobal) &&
+        !editorActionPending()) {
+        submitEditorAction(EditorCommand::UndoTransform);
+    }
     if (editorShortcutAvailable &&
         ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S,
                         ImGuiInputFlags_RouteGlobal) &&
@@ -1048,10 +1067,99 @@ void ImGuiLayer::clearInspectorScaleDrag() noexcept {
     inspectorScaleDragObject_ = nullptr;
 }
 
+void ImGuiLayer::beginInspectorTransformEdit(
+    Scene* scene, GameObject* object, InspectorTransformWidget widget) {
+    if (scene == nullptr || object == nullptr || editorSession_ == nullptr) {
+        return;
+    }
+    const std::uint64_t sceneId = scene->lifetimeId();
+    if (inspectorTransformEditActive_ &&
+        inspectorTransformEditSceneId_ == sceneId &&
+        inspectorTransformEditObjectId_ == object->persistentId &&
+        inspectorTransformEditObjectInstanceId_ == object->instanceId() &&
+        inspectorTransformEditWidget_ == widget) {
+        return;
+    }
+    if (inspectorTransformEditActive_) {
+        finishInspectorTransformEdit(
+            inspectorTransformEditSceneId_ == sceneId ? scene : nullptr,
+            inspectorTransformEditSceneId_ == sceneId);
+    }
+
+    inspectorTransformEditSceneId_ = sceneId;
+    inspectorTransformEditObjectId_ = object->persistentId;
+    inspectorTransformEditObjectInstanceId_ = object->instanceId();
+    inspectorTransformEditWidget_ = widget;
+    inspectorTransformEditActive_ = true;
+    try {
+        editor_undo::TransformUndoSnapshot snapshot;
+        const Result result = editorSession_->transformUndoHistory().capture(
+            *scene, std::vector<GameObject*>{object}, snapshot);
+        if (!result) {
+            inspectorTransformUndoCaptureFailed_ = true;
+            inspectorError_ = "Inspector transform changed, but undo could not "
+                              "be started: " + result.error();
+            return;
+        }
+        inspectorTransformUndoSnapshot_ = std::move(snapshot);
+    } catch (const std::exception& exception) {
+        inspectorTransformUndoCaptureFailed_ = true;
+        inspectorError_ = "Inspector transform changed, but undo could not "
+                          "be started: " + std::string(exception.what());
+    } catch (...) {
+        inspectorTransformUndoCaptureFailed_ = true;
+        inspectorError_ =
+            "Inspector transform changed, but undo could not be started.";
+    }
+}
+
+void ImGuiLayer::finishInspectorTransformEdit(Scene* scene,
+                                               bool commit) noexcept {
+    if (!inspectorTransformEditActive_) {
+        return;
+    }
+    if (commit && scene != nullptr &&
+        scene->lifetimeId() == inspectorTransformEditSceneId_ &&
+        editorSession_ != nullptr &&
+        !inspectorTransformUndoCaptureFailed_) {
+        try {
+            const Result result = editorSession_->transformUndoHistory().commit(
+                *scene, inspectorTransformUndoSnapshot_);
+            if (!result) {
+                try {
+                    inspectorError_ =
+                        "Inspector transform completed, but undo could not be "
+                        "recorded: " + result.error();
+                } catch (...) {
+                }
+            }
+        } catch (...) {
+            try {
+                inspectorError_ =
+                    "Inspector transform completed, but undo could not be recorded.";
+            } catch (...) {
+            }
+        }
+    }
+    clearInspectorTransformEdit();
+}
+
+void ImGuiLayer::clearInspectorTransformEdit() noexcept {
+    inspectorTransformEditActive_ = false;
+    inspectorTransformUndoCaptureFailed_ = false;
+    inspectorTransformEditWidget_ = InspectorTransformWidget::Position;
+    inspectorTransformEditSceneId_ = 0;
+    inspectorTransformEditObjectId_.clear();
+    inspectorTransformEditObjectInstanceId_ = 0;
+    inspectorTransformUndoSnapshot_ = {};
+}
+
 void ImGuiLayer::clearEditorTransformDrag() noexcept {
     editorTransformDragActive_ = false;
     editorTransformDragFailed_ = false;
+    editorTransformUndoCaptureFailed_ = false;
     editorTransformSnapshot_ = {};
+    editorTransformUndoSnapshot_ = {};
     editorTransformGizmoMatrix_ = glm::mat4(1.0f);
 }
 
@@ -1064,6 +1172,10 @@ void ImGuiLayer::cancelEditorTransformDrag() noexcept {
 }
 
 void ImGuiLayer::cancelStructuralAction() noexcept {
+    if (editorSession_ != nullptr) {
+        finishInspectorTransformEdit(
+            editorSession_->selectionScene(), true);
+    }
     cancelEditorTransformDrag();
     finishRuntimeTransformDrag();
     clearInspectorScaleDrag();
@@ -1076,6 +1188,10 @@ void ImGuiLayer::cancelStructuralAction() noexcept {
 }
 
 void ImGuiLayer::clearSelection() noexcept {
+    if (editorSession_ != nullptr) {
+        finishInspectorTransformEdit(
+            editorSession_->selectionScene(), true);
+    }
     cancelEditorTransformDrag();
     finishRuntimeTransformDrag();
     clearInspectorScaleDrag();
@@ -1100,6 +1216,7 @@ void ImGuiLayer::synchronizeSelection(Scene* scene) {
         runtimeTransformDragActive_ = false;
         runtimeTransformObject_ = nullptr;
         clearInspectorScaleDrag();
+        clearInspectorTransformEdit();
         if (editorTransformDragActive_) {
             clearEditorTransformDrag();
         }
@@ -1117,6 +1234,26 @@ void ImGuiLayer::synchronizeSelection(Scene* scene) {
         }
     }
     editorSession_->synchronizeSelection(scene);
+    if (inspectorTransformEditActive_) {
+        bool stillSelected = false;
+        if (scene != nullptr &&
+            scene->lifetimeId() == inspectorTransformEditSceneId_) {
+            GameObject* target =
+                scene->findGameObject(inspectorTransformEditObjectId_);
+            stillSelected = target != nullptr &&
+                target->instanceId() == inspectorTransformEditObjectInstanceId_ &&
+                editorSession_->isSelectedForScene(scene, target);
+        }
+        if (!stillSelected) {
+            finishInspectorTransformEdit(
+                scene != nullptr &&
+                        scene->lifetimeId() == inspectorTransformEditSceneId_
+                    ? scene
+                    : nullptr,
+                scene != nullptr &&
+                    scene->lifetimeId() == inspectorTransformEditSceneId_);
+        }
+    }
     if (inspectorScaleDragActive_ &&
         (inspectorScaleDragScene_ != scene ||
          !editorSession_->isSelectedForScene(scene,
@@ -1140,6 +1277,7 @@ void ImGuiLayer::selectGameObject(Scene* scene, GameObject* object,
         return;
     }
 
+    finishInspectorTransformEdit(scene, true);
     cancelEditorTransformDrag();
     finishRuntimeTransformDrag();
     clearInspectorScaleDrag();
@@ -1189,10 +1327,15 @@ void ImGuiLayer::drawSceneHierarchy(Scene* scene, bool disabled) {
         const HierarchyReorderRequest request = *pendingHierarchyReorder_;
         pendingHierarchyReorder_.reset();
         if (request.scene == scene && request.object != nullptr) {
+            finishInspectorTransformEdit(scene, true);
+            cancelEditorTransformDrag();
             const Result result = request.scene->reorderGameObject(
                 *request.object, request.expectedParent,
                 request.siblingIndex);
             if (result) {
+                if (editorSession_ != nullptr) {
+                    editorSession_->transformUndoHistory().clear();
+                }
                 inspectorError_.clear();
             } else {
                 inspectorError_ = result.error();
@@ -1429,8 +1572,36 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
                 }
                 editorTransformDragActive_ = true;
                 editorTransformDragFailed_ = false;
+                editorTransformUndoCaptureFailed_ = false;
                 editorTransformGizmoMatrix_ =
                     editorTransformSnapshot_.originalGizmoWorld;
+                try {
+                    std::vector<GameObject*> affected;
+                    affected.reserve(editorTransformSnapshot_.objects.size());
+                    for (const auto& objectSnapshot :
+                         editorTransformSnapshot_.objects) {
+                        affected.push_back(objectSnapshot.object);
+                    }
+                    const Result undoSnapshotResult =
+                        editorSession_->transformUndoHistory().capture(
+                            *scene, affected,
+                            editorTransformUndoSnapshot_);
+                    if (!undoSnapshotResult) {
+                        editorTransformUndoCaptureFailed_ = true;
+                        inspectorError_ =
+                            "Transform is active, but undo could not be "
+                            "captured: " + undoSnapshotResult.error();
+                    }
+                } catch (const std::exception& exception) {
+                    editorTransformUndoCaptureFailed_ = true;
+                    inspectorError_ =
+                        "Transform is active, but undo could not be "
+                        "captured: " + std::string(exception.what());
+                } catch (...) {
+                    editorTransformUndoCaptureFailed_ = true;
+                    inspectorError_ =
+                        "Transform is active, but undo could not be captured.";
+                }
                 baseGizmoMatrix = editorTransformGizmoMatrix_;
             }
         }
@@ -1478,7 +1649,9 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
                     // cooked statistics for the newly authored scale.
                     setPhysicsDiagnostics(nullptr, std::nullopt, {});
                 }
-                inspectorError_.clear();
+                if (!editorTransformUndoCaptureFailed_) {
+                    inspectorError_.clear();
+                }
             } else {
                 const bool restored =
                     editor_transform::restoreTransformDragSnapshot(
@@ -1498,6 +1671,18 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
         gizmoDragActive_ = (usingNow || editorTransformDragFailed_) &&
                            mouseDown;
         if (!usingNow && (!editorTransformDragFailed_ || !mouseDown)) {
+            if (!editorTransformDragFailed_ &&
+                !editorTransformUndoCaptureFailed_ &&
+                editorTransformUndoSnapshot_.valid) {
+                const Result undoResult =
+                    editorSession_->transformUndoHistory().commit(
+                        *scene, editorTransformUndoSnapshot_);
+                if (!undoResult) {
+                    inspectorError_ =
+                        "Transform completed, but undo could not be "
+                        "recorded: " + undoResult.error();
+                }
+            }
             clearEditorTransformDrag();
         }
         return;
@@ -2097,6 +2282,7 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled,
     ImGui::SetNextWindowSize(ImVec2(340.0f, 500.0f),
                              ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Inspector")) {
+        finishInspectorTransformEdit(scene, true);
         ImGui::End();
         return;
     }
@@ -2106,6 +2292,7 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled,
     GameObject* selectedGameObject = const_cast<GameObject*>(
         selectedGameObjectForScene(scene));
     if (selectedGameObject == nullptr) {
+        finishInspectorTransformEdit(scene, true);
         ImGui::TextUnformatted(
             "Select a GameObject from the Scene Hierarchy.");
         if (!inspectorError_.empty()) {
@@ -2149,29 +2336,59 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled,
             localTransform ? TransformSpace::Local : TransformSpace::World);
     }
     glm::vec3 position = selectedGameObject->position;
-    if (ImGui::DragFloat3("Position", &position.x, 0.1f)) {
+    const bool positionChanged =
+        ImGui::DragFloat3("Position", &position.x, 0.1f);
+    const bool positionActivated = ImGui::IsItemActivated();
+    const bool positionDeactivated = ImGui::IsItemDeactivated();
+    if (runState == SceneRunState::Editing &&
+        (positionActivated || positionChanged)) {
+        beginInspectorTransformEdit(
+            scene, selectedGameObject, InspectorTransformWidget::Position);
+    }
+    if (positionChanged) {
         const Result result =
             editor_mutation::applyPosition(*selectedGameObject, position);
         if (result) {
-            inspectorError_.clear();
+            if (!inspectorTransformUndoCaptureFailed_) {
+                inspectorError_.clear();
+            }
         } else {
             inspectorError_ = result.error();
         }
     }
+    if (positionDeactivated) {
+        finishInspectorTransformEdit(scene, true);
+    }
 
     glm::vec3 rotation = selectedGameObject->rotation;
-    if (ImGui::DragFloat3("Rotation (degrees)", &rotation.x, 0.5f)) {
+    const bool rotationChanged = ImGui::DragFloat3(
+        "Rotation (degrees)", &rotation.x, 0.5f);
+    const bool rotationActivated = ImGui::IsItemActivated();
+    const bool rotationDeactivated = ImGui::IsItemDeactivated();
+    if (runState == SceneRunState::Editing &&
+        (rotationActivated || rotationChanged)) {
+        beginInspectorTransformEdit(
+            scene, selectedGameObject, InspectorTransformWidget::Rotation);
+    }
+    if (rotationChanged) {
         const Result result =
             editor_mutation::applyRotation(*selectedGameObject, rotation);
         if (result) {
-            inspectorError_.clear();
+            if (!inspectorTransformUndoCaptureFailed_) {
+                inspectorError_.clear();
+            }
         } else {
             inspectorError_ = result.error();
         }
+    }
+    if (rotationDeactivated) {
+        finishInspectorTransformEdit(scene, true);
     }
 
     glm::vec3 scale = selectedGameObject->scale;
     const bool scaleChanged = ImGui::DragFloat3("Scale", &scale.x, 0.01f);
+    const bool scaleActivated = ImGui::IsItemActivated();
+    const bool scaleDeactivated = ImGui::IsItemDeactivated();
     const bool scaleItemActive = ImGui::IsItemActive();
     inspectorScaleWidgetSeen_ = true;
     if (scaleItemActive) {
@@ -2181,6 +2398,11 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled,
     } else {
         clearInspectorScaleDrag();
     }
+    if (runState == SceneRunState::Editing &&
+        (scaleActivated || scaleChanged)) {
+        beginInspectorTransformEdit(
+            scene, selectedGameObject, InspectorTransformWidget::Scale);
+    }
     if (scaleChanged) {
         const Result result =
             applyEditorScale(*selectedGameObject, scale, runState);
@@ -2188,10 +2410,15 @@ void ImGuiLayer::drawInspector(Scene* scene, bool disabled,
             // Diagnostics were prepared before this widget was evaluated and
             // therefore may describe the previous exact scale.
             setPhysicsDiagnostics(nullptr, std::nullopt, {});
-            inspectorError_.clear();
+            if (!inspectorTransformUndoCaptureFailed_) {
+                inspectorError_.clear();
+            }
         } else {
             inspectorError_ = result.error();
         }
+    }
+    if (scaleDeactivated) {
+        finishInspectorTransformEdit(scene, true);
     }
 
     if (character != nullptr || selectedGameObject->physics.enabled) {
@@ -2449,6 +2676,10 @@ void ImGuiLayer::shutdown() noexcept {
     stopNativeFileDialog();
     cancelEditorTransformDrag();
     clearInspectorScaleDrag();
+    if (editorSession_ != nullptr) {
+        finishInspectorTransformEdit(
+            editorSession_->selectionScene(), true);
+    }
     frameStarted_ = false;
     drawDataReady_ = false;
     physicsDiagnosticsObject_ = nullptr;
@@ -2494,6 +2725,7 @@ void ImGuiLayer::abandon() noexcept {
     stopNativeFileDialog();
     cancelEditorTransformDrag();
     clearInspectorScaleDrag();
+    clearInspectorTransformEdit();
     contextCreated_ = false;
     sdlBackendInitialized_ = false;
     vulkanBackendInitialized_ = false;

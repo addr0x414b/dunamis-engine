@@ -48,6 +48,7 @@ emptyWorldSelectionOperationForModifiers(bool ctrl, bool shift) noexcept {
 
 enum class EditorCommand {
     None,
+    UndoTransform,
     DuplicateGameObject,
     DeleteSelection,
     ParentSelectionToActive,

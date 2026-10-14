@@ -142,6 +142,12 @@ target_link_libraries(EditorTransformTests PRIVATE
         spdlog)
 add_test(NAME editor_transform_semantics COMMAND EditorTransformTests)
 
+add_executable(EditorUndoTests editor_undo_tests.cpp)
+target_include_directories(EditorUndoTests PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(EditorUndoTests PRIVATE
+        Editor Scene GameObject Camera glm spdlog)
+add_test(NAME editor_undo_semantics COMMAND EditorUndoTests)
+
 add_executable(EditorDuplicationTests editor_duplication_tests.cpp)
 target_include_directories(EditorDuplicationTests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(EditorDuplicationTests PRIVATE

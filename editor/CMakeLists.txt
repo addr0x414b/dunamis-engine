@@ -4,6 +4,7 @@ add_library(Editor STATIC
         editor_picking.cpp
         editor_mutation.cpp
         editor_transform.cpp
+        transform_undo_history.cpp
         editor_duplication.cpp
 )
 

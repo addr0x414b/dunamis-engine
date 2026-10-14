@@ -5,6 +5,7 @@
 #include "persistent_id.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <exception>
 #include <limits>
@@ -13,6 +14,11 @@
 #include <utility>
 
 namespace {
+
+std::uint64_t nextSceneLifetimeId() noexcept {
+    static std::atomic<std::uint64_t> next{1};
+    return next.fetch_add(1, std::memory_order_relaxed);
+}
 
 bool isValidColorComponent(float component) {
     return std::isfinite(component) && component >= 0.0f &&
@@ -64,6 +70,12 @@ Result validateDirectionalLightState(const DirectionalLight& light) {
 }
 
 }  // namespace
+
+Scene::Scene() : lifetimeId_(nextSceneLifetimeId()) {}
+
+std::uint64_t Scene::lifetimeId() const noexcept {
+    return lifetimeId_;
+}
 
 Result Scene::addGameObject(std::unique_ptr<GameObject> gameObject) {
     GameObject* ignored = nullptr;

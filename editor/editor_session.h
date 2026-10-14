@@ -9,6 +9,7 @@
 #include "../core/result.h"
 #include "editor_state.h"
 #include "runtime_transform_edit.h"
+#include "transform_undo_history.h"
 
 class Scene;
 class GameObject;
@@ -59,6 +60,11 @@ public:
     [[nodiscard]] const EditorAction& pendingEditorAction() const noexcept;
     [[nodiscard]] EditorAction consumeEditorAction();
 
+    [[nodiscard]] editor_undo::TransformUndoHistory&
+    transformUndoHistory() noexcept;
+    [[nodiscard]] const editor_undo::TransformUndoHistory&
+    transformUndoHistory() const noexcept;
+
     void setPendingLoadPath(std::filesystem::path path);
     [[nodiscard]] const std::filesystem::path& pendingLoadPath() const noexcept;
     void clearPendingLoadPath() noexcept;
@@ -99,6 +105,7 @@ private:
     std::vector<GameObject*> selectionRecency_;
     GameObject* activeGameObject_ = nullptr;
     EditorAction pendingEditorAction_;
+    editor_undo::TransformUndoHistory transformUndoHistory_;
     std::filesystem::path pendingLoadPath_;
     std::filesystem::path pendingSaveAsPath_;
     bool quitConfirmationPending_ = false;

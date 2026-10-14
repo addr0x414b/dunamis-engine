@@ -2,6 +2,7 @@
 #define GAME_OBJECT_H
 
 #include <glm/glm.hpp>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -75,6 +76,7 @@ public:
     // local and world space are identical.
     [[nodiscard]] glm::mat4 localTransformMatrix() const noexcept;
     [[nodiscard]] glm::mat4 worldTransformMatrix() const noexcept;
+    [[nodiscard]] std::uint64_t instanceId() const noexcept;
 
     [[nodiscard]] GameObject* parent() noexcept;
     [[nodiscard]] const GameObject* parent() const noexcept;
@@ -84,6 +86,7 @@ private:
     friend class Scene;
     friend class GameObjectTestAccess;
 
+    const std::uint64_t instanceId_;
     std::unique_ptr<ModelRenderable> modelRenderable_;
     GameObject* parent_ = nullptr;
     std::vector<GameObject*> children_;

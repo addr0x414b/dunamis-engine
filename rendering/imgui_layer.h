@@ -17,6 +17,7 @@
 #include "../editor/editor_state.h"
 #include "../editor/editor_transform.h"
 #include "../editor/runtime_transform_edit.h"
+#include "../editor/transform_undo_history.h"
 #include "../physics/shape_diagnostics.h"
 #include "editor_picking.h"
 
@@ -80,6 +81,12 @@ public:
     void abandon() noexcept;
 
 private:
+    enum class InspectorTransformWidget : std::uint8_t {
+        Position,
+        Rotation,
+        Scale,
+    };
+
     [[nodiscard]] Result initializeVulkanBackend();
     [[nodiscard]] bool editorActionPending() const noexcept;
     void submitEditorAction(EditorCommand command);
@@ -88,6 +95,10 @@ private:
         const RuntimeTransformEdit& edit) noexcept;
     void finishRuntimeTransformDrag() noexcept;
     void clearInspectorScaleDrag() noexcept;
+    void beginInspectorTransformEdit(Scene* scene, GameObject* object,
+                                     InspectorTransformWidget widget);
+    void finishInspectorTransformEdit(Scene* scene, bool commit) noexcept;
+    void clearInspectorTransformEdit() noexcept;
     void cancelEditorTransformDrag() noexcept;
     void clearEditorTransformDrag() noexcept;
     void synchronizeSelection(Scene* scene);
@@ -166,12 +177,22 @@ private:
     bool gizmoDragActive_ = false;
     bool editorTransformDragActive_ = false;
     bool editorTransformDragFailed_ = false;
+    bool editorTransformUndoCaptureFailed_ = false;
     editor_transform::TransformDragSnapshot editorTransformSnapshot_;
+    editor_undo::TransformUndoSnapshot editorTransformUndoSnapshot_;
     glm::mat4 editorTransformGizmoMatrix_{1.0f};
     bool inspectorScaleDragActive_ = false;
     bool inspectorScaleWidgetSeen_ = false;
     Scene* inspectorScaleDragScene_ = nullptr;
     GameObject* inspectorScaleDragObject_ = nullptr;
+    bool inspectorTransformEditActive_ = false;
+    bool inspectorTransformUndoCaptureFailed_ = false;
+    InspectorTransformWidget inspectorTransformEditWidget_ =
+        InspectorTransformWidget::Position;
+    std::uint64_t inspectorTransformEditSceneId_ = 0;
+    std::string inspectorTransformEditObjectId_;
+    std::uint64_t inspectorTransformEditObjectInstanceId_ = 0;
+    editor_undo::TransformUndoSnapshot inspectorTransformUndoSnapshot_;
     bool runtimeTransformDragActive_ = false;
     GameObject* runtimeTransformObject_ = nullptr;
     EditorSession* editorSession_ = nullptr;

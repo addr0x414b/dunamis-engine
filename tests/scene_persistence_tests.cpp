@@ -1,4 +1,5 @@
 #include "editor/editor_mutation.h"
+#include "editor/transform_undo_history.h"
 #include "scene/scene_manager.h"
 #include "scene/scene_serializer.h"
 #include "scene/type_registry.h"
@@ -19,6 +20,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace {
 
@@ -2012,6 +2014,39 @@ bool managerDirtyTests() {
                          savedCamera->at("properties").at("nearClip") == 20000.0f &&
                          savedCamera->at("properties").at("farClip") == 30000.0f,
                      "authored property state was not persisted");
+    editor_undo::TransformUndoHistory undoHistory;
+    GameObject* pointObject =
+        manager.editingScene()->findGameObject("point");
+    const glm::vec3 savedPointPosition = pointObject->position;
+    editor_undo::TransformUndoSnapshot undoSnapshot;
+    result = undoHistory.capture(
+        *manager.editingScene(), std::vector<GameObject*>{pointObject},
+        undoSnapshot);
+    pointObject->position.x += 10.0f;
+    if (result) result = undoHistory.commit(*manager.editingScene(), undoSnapshot);
+    passed &= expect(result && manager.hasUnsavedChanges() &&
+                         static_cast<bool>(undoHistory.undo(
+                             *manager.editingScene())) &&
+                         sameVector(pointObject->position, savedPointPosition) &&
+                         !manager.hasUnsavedChanges(),
+                     "undo to the saved transform did not restore the clean baseline");
+
+    result = undoHistory.capture(
+        *manager.editingScene(), std::vector<GameObject*>{pointObject},
+        undoSnapshot);
+    pointObject->position.x += 2.0f;
+    if (result) result = undoHistory.commit(*manager.editingScene(), undoSnapshot);
+    if (result) result = manager.saveEditingScene(editor);
+    passed &= expect(result && !manager.hasUnsavedChanges() &&
+                         undoHistory.actionCount() == 1 &&
+                         static_cast<bool>(undoHistory.undo(
+                             *manager.editingScene())) &&
+                         sameVector(pointObject->position, savedPointPosition) &&
+                         manager.hasUnsavedChanges(),
+                     "saving cleared transform history or undo missed dirty-state tracking");
+    result = manager.saveEditingScene(editor);
+    passed &= expect(result && !manager.hasUnsavedChanges(),
+                     "could not restore the clean persistence test baseline");
     editor.position.x = 50.0f;
     passed &= expect(!manager.hasUnsavedChanges(),
                      "editor camera movement made authored state dirty");
