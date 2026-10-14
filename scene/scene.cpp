@@ -10,6 +10,7 @@
 #include <exception>
 #include <limits>
 #include <stdexcept>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -428,6 +429,235 @@ Result Scene::addGameObjectForEditor(
     std::unique_ptr<GameObject> gameObject, GameObject*& inserted) {
     inserted = nullptr;
     return addGameObjectInternal(std::move(gameObject), true, inserted);
+}
+
+Result Scene::reserveEditorGameObjectRestoration(
+    std::size_t additionalObjects) {
+    if (!active_) {
+        return Result::failure(
+            "Controlled editor restoration requires an active scene");
+    }
+    if (additionalObjects > gameObjects_.max_size() - gameObjects_.size() ||
+        additionalObjects > rootObjects_.max_size() - rootObjects_.size()) {
+        return Result::failure(
+            "Editor restoration exceeds available scene storage capacity");
+    }
+    try {
+        gameObjects_.reserve(gameObjects_.size() + additionalObjects);
+        // Restored objects are temporarily inserted as roots before a single
+        // batch hierarchy commit places them in their authored locations.
+        rootObjects_.reserve(rootObjects_.size() + additionalObjects);
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "Failed to reserve Scene storage for editor restoration: " +
+            std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "Failed to reserve Scene storage for editor restoration");
+    }
+    return Result::success();
+}
+
+Result Scene::restoreGameObjectForEditor(
+    std::unique_ptr<GameObject>& gameObject, std::size_t owningIndex,
+    GameObject*& inserted) {
+    inserted = nullptr;
+    if (!active_) {
+        return Result::failure(
+            "Controlled editor restoration requires an active scene");
+    }
+    if (!gameObject) {
+        return Result::failure(
+            "Cannot restore a null GameObject into the Scene");
+    }
+    if (owningIndex > gameObjects_.size()) {
+        return Result::failure(
+            "Original Scene ownership index is no longer available");
+    }
+    if (!gameObject->modelRenderable().renderTopologyMutable()) {
+        return Result::failure(
+            "Cannot restore a GameObject while renderer resources are attached");
+    }
+
+    const Result validation = validateGameObjectInsertion(*gameObject);
+    if (!validation) return validation;
+    const Result reserveResult = reserveEditorGameObjectRestoration(1);
+    if (!reserveResult) return reserveResult;
+
+    GameObject* raw = gameObject.get();
+    // reserveEditorGameObjectRestoration guarantees these operations do not
+    // allocate. unique_ptr movement and pointer insertion are non-throwing.
+    gameObjects_.insert(
+        gameObjects_.begin() + static_cast<std::ptrdiff_t>(owningIndex),
+        std::move(gameObject));
+    rootObjects_.push_back(raw);
+    rebuildLightRegistration();
+    inserted = raw;
+    return Result::success();
+}
+
+void Scene::rebuildLightRegistration() noexcept {
+    pointLightCount_ = 0;
+    directionalLightIndex_.reset();
+    pointLightIndices_.fill(0);
+    for (std::size_t index = 0; index < gameObjects_.size(); ++index) {
+        GameObject* object = gameObjects_[index].get();
+        if (dynamic_cast<PointLight*>(object) != nullptr &&
+            pointLightCount_ < pointLightIndices_.size()) {
+            pointLightIndices_[pointLightCount_++] = index;
+        }
+        if (dynamic_cast<DirectionalLight*>(object) != nullptr) {
+            directionalLightIndex_ = index;
+        }
+    }
+}
+
+Result Scene::restoreEditorHierarchyForEditor(
+    const std::vector<EditorHierarchyRestore>& restores) {
+    if (!active_) {
+        return Result::failure(
+            "Controlled hierarchy restoration requires an active scene");
+    }
+    if (restores.empty()) return Result::success();
+
+    Result sceneValidation = Result::success();
+    try {
+        sceneValidation = validateAuthoredState();
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "Failed to validate Scene before hierarchy restoration: " +
+            std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "Failed to validate Scene before hierarchy restoration");
+    }
+    if (!sceneValidation) {
+        return Result::failure(
+            "Cannot restore hierarchy in an invalid Scene: " +
+            sceneValidation.error());
+    }
+
+    try {
+        std::unordered_map<GameObject*, GameObject*> proposedParents;
+        proposedParents.reserve(restores.size());
+        std::unordered_map<GameObject*, std::vector<GameObject*>> stagedLists;
+        stagedLists.reserve(restores.size() * 2 + 1);
+        const auto ensureList = [this, &stagedLists](GameObject* parent)
+            -> std::vector<GameObject*>& {
+            auto found = stagedLists.find(parent);
+            if (found != stagedLists.end()) return found->second;
+            std::vector<GameObject*> initial =
+                parent == nullptr ? rootObjects_ : parent->children_;
+            return stagedLists.emplace(parent, std::move(initial)).first->second;
+        };
+
+        for (const EditorHierarchyRestore& restore : restores) {
+            if (restore.object == nullptr || !ownsGameObject(restore.object) ||
+                (restore.parent != nullptr && !ownsGameObject(restore.parent)) ||
+                restore.object == restore.parent ||
+                !isFiniteVector(restore.position) ||
+                !isFiniteVector(restore.rotation) ||
+                !isFiniteVector(restore.scale) ||
+                !proposedParents.emplace(restore.object, restore.parent).second) {
+                return Result::failure(
+                    "Hierarchy restoration contains an invalid or duplicate object");
+            }
+            ensureList(restore.object->parent_);
+            ensureList(restore.parent);
+        }
+
+        // Validate the proposed parent graph before changing a link.
+        for (const EditorHierarchyRestore& restore : restores) {
+            std::unordered_set<GameObject*> visited;
+            for (GameObject* ancestor = restore.parent; ancestor != nullptr;) {
+                if (ancestor == restore.object || !visited.insert(ancestor).second) {
+                    return Result::failure(
+                        "Hierarchy restoration would create a cycle");
+                }
+                const auto proposed = proposedParents.find(ancestor);
+                ancestor = proposed == proposedParents.end()
+                               ? ancestor->parent_
+                               : proposed->second;
+            }
+        }
+
+        // First remove all moving objects from staged copies of their current
+        // sibling lists. The live Scene remains untouched through this phase.
+        for (const EditorHierarchyRestore& restore : restores) {
+            std::vector<GameObject*>& current = ensureList(restore.object->parent_);
+            const auto found = std::find(current.begin(), current.end(),
+                                         restore.object);
+            if (found == current.end() ||
+                std::count(current.begin(), current.end(), restore.object) != 1) {
+                return Result::failure(
+                    "Hierarchy restoration found an inconsistent current sibling list");
+            }
+            current.erase(found);
+        }
+
+        std::vector<const EditorHierarchyRestore*> ordered;
+        ordered.reserve(restores.size());
+        for (const EditorHierarchyRestore& restore : restores) {
+            ordered.push_back(&restore);
+        }
+        std::stable_sort(
+            ordered.begin(), ordered.end(),
+            [](const EditorHierarchyRestore* first,
+               const EditorHierarchyRestore* second) {
+                if (first->parent != second->parent) {
+                    return std::less<GameObject*>{}(first->parent,
+                                                    second->parent);
+                }
+                return first->siblingIndex < second->siblingIndex;
+            });
+        for (const EditorHierarchyRestore* restore : ordered) {
+            std::vector<GameObject*>& target = ensureList(restore->parent);
+            if (restore->siblingIndex > target.size()) {
+                return Result::failure(
+                    "Original hierarchy sibling index cannot be restored");
+            }
+            target.insert(
+                target.begin() +
+                    static_cast<std::ptrdiff_t>(restore->siblingIndex),
+                restore->object);
+        }
+
+        // Verify each staged sibling list has exactly one occurrence of every
+        // object before committing any live hierarchy links.
+        for (const auto& [parent, siblings] : stagedLists) {
+            (void)parent;
+            std::unordered_set<GameObject*> unique;
+            unique.reserve(siblings.size());
+            for (GameObject* sibling : siblings) {
+                if (sibling == nullptr || !unique.insert(sibling).second) {
+                    return Result::failure(
+                        "Hierarchy restoration produced duplicate sibling entries");
+                }
+            }
+        }
+
+        for (const EditorHierarchyRestore& restore : restores) {
+            restore.object->parent_ = restore.parent;
+            restore.object->position = restore.position;
+            restore.object->rotation = restore.rotation;
+            restore.object->scale = restore.scale;
+        }
+        for (auto& [parent, siblings] : stagedLists) {
+            if (parent == nullptr) {
+                rootObjects_.swap(siblings);
+            } else {
+                parent->children_.swap(siblings);
+            }
+        }
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "Failed to prepare hierarchy restoration: " +
+            std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "Failed to prepare hierarchy restoration with an unknown error");
+    }
+    return Result::success();
 }
 
 Result Scene::reserveEditorHierarchyStorage(
@@ -861,7 +1091,17 @@ Result Scene::setActiveCamera(std::shared_ptr<Camera> camera) {
 
 Result Scene::setActiveCameraReference(Camera* camera) {
     if (!camera) return Result::failure("Cannot set a null camera as active");
-    activeCamera_ = std::shared_ptr<Camera>(camera, [](Camera*) {});
+    try {
+        std::shared_ptr<Camera> reference(camera, [](Camera*) {});
+        activeCamera_ = std::move(reference);
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "Failed to set active Camera reference: " +
+            std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "Failed to set active Camera reference with an unknown error");
+    }
     return Result::success();
 }
 

@@ -254,20 +254,37 @@ Result Dunamis::run() {
                 result = beginRuntimeSession(SceneRunState::Simulating);
             } else if (command == EditorCommand::Stop) {
                 result = stopRuntimeSession();
-            } else if (command == EditorCommand::UndoTransform) {
+            } else if (command == EditorCommand::Undo) {
                 if (editorSession_.runState() == SceneRunState::Editing) {
                     Scene* editingScene = sceneManager_.editingScene();
                     if (editingScene == nullptr || activeScene != editingScene) {
                         result = Result::failure(
-                            "Transform undo is unavailable because the editing Scene is not active.");
+                            "Undo is unavailable because the editing Scene is not active.");
                     } else {
-                        result = editorSession_.transformUndoHistory().undo(
-                            *editingScene);
+                        result = editorSession_.undoHistory().undo(
+                            *editingScene,
+                            [this](Scene& scene,
+                                   editor_undo::DeleteUndoAction& action) {
+                                return editor::EditorObjectCoordinator::
+                                    restoreDeletedSelection(
+                                        scene, editorSession_, action,
+                                        [this](Scene& target,
+                                               const std::vector<GameObject*>& objects) {
+                                            return visualServer.detachGameObjects(
+                                                &target, objects);
+                                        },
+                                        [this](Scene& target,
+                                               GameObject& object) {
+                                            return visualServer.attachGameObject(
+                                                &target, &object);
+                                        });
+                            });
                     }
                     if (result) {
+                        captureColliderVisibility();
                         visualServer.setEditorError({});
                     } else {
-                        spdlog::error("Transform undo failed: {}",
+                        spdlog::error("Undo failed: {}",
                                       result.error());
                         visualServer.setEditorError(result.error());
                     }
@@ -277,7 +294,7 @@ Result Dunamis::run() {
                 visualServer.cancelStructuralAction();
                 result = duplicateSelectedGameObject();
                 if (result) {
-                    editorSession_.transformUndoHistory().clear();
+                    editorSession_.undoHistory().clear();
                     visualServer.setEditorError({});
                 } else {
                     spdlog::error("GameObject duplication failed: {}",
@@ -289,7 +306,6 @@ Result Dunamis::run() {
                 visualServer.cancelStructuralAction();
                 result = deleteSelectedGameObjects();
                 if (result) {
-                    editorSession_.transformUndoHistory().clear();
                     captureColliderVisibility();
                     visualServer.setEditorError({});
                 } else {
@@ -301,7 +317,7 @@ Result Dunamis::run() {
             } else if (command == EditorCommand::ParentSelectionToActive) {
                 result = parentSelectedGameObjects();
                 if (result) {
-                    editorSession_.transformUndoHistory().clear();
+                    editorSession_.undoHistory().clear();
                     visualServer.setEditorError({});
                 } else {
                     spdlog::error("Selection parenting failed: {}",
@@ -312,7 +328,7 @@ Result Dunamis::run() {
             } else if (command == EditorCommand::GroupSelection) {
                 result = groupSelectedGameObjects();
                 if (result) {
-                    editorSession_.transformUndoHistory().clear();
+                    editorSession_.undoHistory().clear();
                     visualServer.setEditorError({});
                 } else {
                     spdlog::error("Selection grouping failed: {}",
@@ -517,7 +533,7 @@ Result Dunamis::loadEditingScene(const std::filesystem::path& path) {
         sceneManager_.cancelPreparedEditingSceneLoad();
         return result;
     }
-    editorSession_.transformUndoHistory().clear();
+    editorSession_.undoHistory().clear();
     if (restoredCamera) {
         result = editorCameraController.restore(*restoredCamera);
         if (!result) return Result::failure("Loaded scene committed but editor camera restore failed: " + result.error());
@@ -799,7 +815,7 @@ Result Dunamis::beginRuntimeSession(SceneRunState targetState) {
     runtimeStart = Clock::now() - stageStart;
 
     editorSession_.setRunState(targetState);
-    editorSession_.transformUndoHistory().clear();
+    editorSession_.undoHistory().clear();
     synchronizeImGuiInput();
     const auto asMilliseconds = [](Clock::duration duration) {
         return std::chrono::duration<double, std::milli>(duration).count();
@@ -913,7 +929,7 @@ bool Dunamis::shutdown() noexcept {
     if (inputManager) {
         inputManager->window = nullptr;
     }
-    editorSession_.transformUndoHistory().clear();
+    editorSession_.undoHistory().clear();
     sceneManager_.shutdown();
     physicsServer_.shutdown();
     inputManager.reset();

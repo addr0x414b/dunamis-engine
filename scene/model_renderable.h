@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -18,6 +19,12 @@ struct ImportedModelAsset;
 }
 
 class VulkanContext;
+
+struct SharedCpuMemoryEstimate {
+    const void* identity = nullptr;
+    std::size_t bytes = 0;
+    std::size_t referenceCount = 0;
+};
 
 class ModelRenderable {
 public:
@@ -45,6 +52,12 @@ public:
         ImportedAssetReference reference);
     [[nodiscard]] std::optional<model_loading::ModelAssetCacheKey>
     gpuModelCacheKey() const;
+    // Conservative CPU-side retention estimates used by RAM-only editor undo.
+    // Shared immutable assets are reported separately so a delete action only
+    // charges them when every reference is part of that same action.
+    [[nodiscard]] std::size_t estimatedPrivateCpuMemoryBytes() const noexcept;
+    void appendSharedCpuMemoryEstimates(
+        std::vector<SharedCpuMemoryEstimate>& estimates) const;
 
 private:
     friend class Scene;

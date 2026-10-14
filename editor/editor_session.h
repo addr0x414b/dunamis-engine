@@ -60,10 +60,13 @@ public:
     [[nodiscard]] const EditorAction& pendingEditorAction() const noexcept;
     [[nodiscard]] EditorAction consumeEditorAction();
 
-    [[nodiscard]] editor_undo::TransformUndoHistory&
-    transformUndoHistory() noexcept;
-    [[nodiscard]] const editor_undo::TransformUndoHistory&
-    transformUndoHistory() const noexcept;
+    [[nodiscard]] editor_undo::EditorUndoHistory& undoHistory() noexcept;
+    [[nodiscard]] const editor_undo::EditorUndoHistory&
+    undoHistory() const noexcept;
+    [[nodiscard]] editor_undo::EditorUndoHistory&
+    transformUndoHistory() noexcept { return undoHistory(); }
+    [[nodiscard]] const editor_undo::EditorUndoHistory&
+    transformUndoHistory() const noexcept { return undoHistory(); }
 
     void setPendingLoadPath(std::filesystem::path path);
     [[nodiscard]] const std::filesystem::path& pendingLoadPath() const noexcept;
@@ -105,7 +108,7 @@ private:
     std::vector<GameObject*> selectionRecency_;
     GameObject* activeGameObject_ = nullptr;
     EditorAction pendingEditorAction_;
-    editor_undo::TransformUndoHistory transformUndoHistory_;
+    editor_undo::EditorUndoHistory undoHistory_;
     std::filesystem::path pendingLoadPath_;
     std::filesystem::path pendingSaveAsPath_;
     bool quitConfirmationPending_ = false;

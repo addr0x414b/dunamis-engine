@@ -6,6 +6,7 @@
 #include "../scene/camera.h"
 #include "../scene/game_object.h"
 #include "../scene/group.h"
+#include "../scene/model_renderable.h"
 #include "../scene/scene.h"
 #include "../scene/scene_serializer.h"
 #include "../scene/type_registry.h"
@@ -571,6 +572,256 @@ Result makeDeletePlan(
     return Result::success();
 }
 
+std::size_t addUndoBytes(std::size_t total, std::size_t value) noexcept {
+    if (value > std::numeric_limits<std::size_t>::max() - total) {
+        return std::numeric_limits<std::size_t>::max();
+    }
+    return total + value;
+}
+
+std::size_t hierarchyIndex(const Scene& scene, const GameObject* object) {
+    const GameObject* parent = object == nullptr ? nullptr : object->parent();
+    const auto& siblings = parent == nullptr
+                               ? scene.rootObjects()
+                               : parent->children();
+    const auto found = std::find(siblings.begin(), siblings.end(), object);
+    return found == siblings.end()
+               ? std::numeric_limits<std::size_t>::max()
+               : static_cast<std::size_t>(
+                     std::distance(siblings.begin(), found));
+}
+
+Result buildDeleteUndoAction(
+    Scene& scene, EditorSession& editorSession, const DeleteBatchPlan& plan,
+    editor_undo::DeleteUndoAction& action) {
+    action = {};
+    try {
+        action.sceneLifetimeId = scene.lifetimeId();
+        action.objects.reserve(plan.selected.size());
+        action.promotions.reserve(plan.promotions.size());
+        action.selectionOrder.reserve(editorSession.selectedGameObjects().size());
+        for (GameObject* object : plan.selected) {
+            if (object == nullptr || object->persistentId.empty()) {
+                return Result::failure(
+                    "Delete undo requires stable identities for every selected object");
+            }
+            const std::size_t sibling = hierarchyIndex(scene, object);
+            if (sibling == std::numeric_limits<std::size_t>::max()) {
+                return Result::failure(
+                    "Delete undo could not capture an object's sibling position");
+            }
+            std::size_t owningIndex = 0;
+            const auto owner = std::find_if(
+                scene.gameObjects().begin(), scene.gameObjects().end(),
+                [object](const auto& candidate) {
+                    return candidate.get() == object;
+                });
+            if (owner == scene.gameObjects().end()) {
+                return Result::failure(
+                    "Delete undo could not capture Scene ownership order");
+            }
+            owningIndex = static_cast<std::size_t>(
+                std::distance(scene.gameObjects().begin(), owner));
+
+            editor_undo::DeleteUndoObject record;
+            record.plannedObject = object;
+            record.persistentId = object->persistentId;
+            record.instanceId = object->instanceId();
+            if (const GameObject* parent = object->parent()) {
+                if (parent->persistentId.empty()) {
+                    return Result::failure(
+                        "Delete undo requires stable identity for every original parent");
+                }
+                record.parentPersistentId = parent->persistentId;
+                record.parentInstanceId = parent->instanceId();
+            }
+            record.owningIndex = owningIndex;
+            record.siblingIndex = sibling;
+            record.hierarchyDepth = objectDepth(object);
+            record.position = object->position;
+            record.rotation = object->rotation;
+            record.scale = object->scale;
+            action.objects.push_back(std::move(record));
+        }
+
+        for (const DeletePromotionPlan& promotion : plan.promotions) {
+            const auto snapshot = std::find_if(
+                plan.promotionSnapshots.begin(),
+                plan.promotionSnapshots.end(),
+                [&promotion](const StructuralObjectSnapshot& candidate) {
+                    return candidate.object == promotion.object;
+                });
+            if (snapshot == plan.promotionSnapshots.end()) {
+                return Result::failure(
+                    "Delete undo is missing a promoted object's original state");
+            }
+            std::size_t finalIndex = std::numeric_limits<std::size_t>::max();
+            for (const DeleteHierarchyListPlan& list : plan.finalLists) {
+                if (list.parent != promotion.finalParent) continue;
+                const auto found = std::find(list.objects.begin(),
+                                             list.objects.end(),
+                                             promotion.object);
+                if (found != list.objects.end()) {
+                    finalIndex = static_cast<std::size_t>(
+                        std::distance(list.objects.begin(), found));
+                    break;
+                }
+            }
+            if (finalIndex == std::numeric_limits<std::size_t>::max()) {
+                return Result::failure(
+                    "Delete undo could not capture a promoted object's final sibling position");
+            }
+            editor_undo::DeleteUndoPromotion record;
+            record.persistentId = promotion.object->persistentId;
+            record.instanceId = promotion.object->instanceId();
+            if (snapshot->parent != nullptr) {
+                if (snapshot->parent->persistentId.empty()) {
+                    return Result::failure(
+                        "Delete undo requires stable identity for every promoted object's parent");
+                }
+                record.originalParentPersistentId =
+                    snapshot->parent->persistentId;
+                record.originalParentInstanceId =
+                    snapshot->parent->instanceId();
+            }
+            record.originalSiblingIndex = snapshot->siblingIndex;
+            record.hierarchyDepth = objectDepth(promotion.object);
+            record.originalPosition = snapshot->localPosition;
+            record.originalRotation = snapshot->localRotation;
+            record.originalScale = snapshot->localScale;
+            if (promotion.finalParent != nullptr) {
+                if (promotion.finalParent->persistentId.empty()) {
+                    return Result::failure(
+                        "Delete undo requires stable identity for every promotion target");
+                }
+                record.finalParentPersistentId =
+                    promotion.finalParent->persistentId;
+                record.finalParentInstanceId =
+                    promotion.finalParent->instanceId();
+            }
+            record.finalSiblingIndex = finalIndex;
+            record.finalPosition = promotion.finalLocal.position;
+            record.finalRotation = promotion.finalLocal.rotation;
+            record.finalScale = promotion.finalLocal.scale;
+            action.promotions.push_back(std::move(record));
+        }
+
+        for (GameObject* selected : editorSession.selectedGameObjects()) {
+            if (selected == nullptr) {
+                return Result::failure(
+                    "Delete undo found a null object in the editor selection");
+            }
+            action.selectionOrder.push_back(selected->persistentId);
+        }
+        if (const GameObject* active =
+                editorSession.activeGameObjectForScene(&scene)) {
+            action.activeSelectionId = active->persistentId;
+        }
+        for (GameObject* object : plan.selected) {
+            if (editorSession.renderColliderEnabled(*object)) {
+                action.renderColliderIds.push_back(object->persistentId);
+            }
+        }
+        const Camera* activeCamera = scene.activeCamera();
+        if (activeCamera != nullptr) {
+            for (GameObject* object : plan.selected) {
+                const Camera* objectCamera =
+                    dynamic_cast<const Camera*>(object);
+                const bool standalone = objectCamera == activeCamera;
+                const bool attached = object->attachedCamera() == activeCamera;
+                if (standalone || attached) {
+                    action.activeCameraOwnerId = object->persistentId;
+                    action.activeCameraOwnerInstanceId = object->instanceId();
+                    action.activeCameraInstanceId =
+                        activeCamera->instanceId();
+                    action.activeCameraStandalone = standalone;
+                    break;
+                }
+            }
+        }
+
+        std::vector<SharedCpuMemoryEstimate> sharedAssets;
+        sharedAssets.reserve(plan.selected.size() * 2);
+        struct SharedAssetCounts {
+            std::size_t bytes = 0;
+            std::size_t actionReferences = 0;
+            std::size_t totalReferences = 0;
+        };
+        std::unordered_map<const void*, SharedAssetCounts> sharedReferenceCounts;
+        sharedReferenceCounts.reserve(plan.selected.size() * 2);
+        std::size_t bytes = sizeof(editor_undo::DeleteUndoAction);
+        bytes = addUndoBytes(bytes,
+            action.objects.capacity() * sizeof(editor_undo::DeleteUndoObject));
+        bytes = addUndoBytes(bytes,
+            action.promotions.capacity() *
+                sizeof(editor_undo::DeleteUndoPromotion));
+        bytes = addUndoBytes(bytes,
+            action.selectionOrder.capacity() * sizeof(std::string));
+        bytes = addUndoBytes(bytes,
+            action.renderColliderIds.capacity() * sizeof(std::string));
+        for (const editor_undo::DeleteUndoObject& record : action.objects) {
+            const GameObject* object = record.plannedObject;
+            bytes = addUndoBytes(
+                bytes, object->estimatedRetainedCpuMemoryBytes());
+            bytes = addUndoBytes(bytes, sizeof(record));
+            bytes = addUndoBytes(bytes, record.persistentId.capacity());
+            bytes = addUndoBytes(bytes, record.parentPersistentId.capacity());
+            object->modelRenderable().appendSharedCpuMemoryEstimates(sharedAssets);
+        }
+        for (const editor_undo::DeleteUndoPromotion& record : action.promotions) {
+            bytes = addUndoBytes(bytes, record.persistentId.capacity());
+            bytes = addUndoBytes(bytes,
+                                 record.originalParentPersistentId.capacity());
+            bytes = addUndoBytes(bytes,
+                                 record.finalParentPersistentId.capacity());
+        }
+        for (const std::string& id : action.selectionOrder) {
+            bytes = addUndoBytes(bytes, id.capacity());
+        }
+        for (const std::string& id : action.renderColliderIds) {
+            bytes = addUndoBytes(bytes, id.capacity());
+        }
+        bytes = addUndoBytes(bytes, action.activeSelectionId.capacity());
+        bytes = addUndoBytes(bytes, action.activeCameraOwnerId.capacity());
+        for (const SharedCpuMemoryEstimate& estimate : sharedAssets) {
+            if (estimate.identity == nullptr || estimate.referenceCount == 0) {
+                continue;
+            }
+            auto [found, inserted] = sharedReferenceCounts.emplace(
+                estimate.identity,
+                SharedAssetCounts{estimate.bytes, 0,
+                                  estimate.referenceCount});
+            if (!inserted &&
+                (found->second.totalReferences != estimate.referenceCount ||
+                 (estimate.bytes != 0 && found->second.bytes != 0 &&
+                  found->second.bytes != estimate.bytes))) {
+                return Result::failure(
+                    "Delete undo found inconsistent shared asset ownership metadata");
+            }
+            if (found->second.bytes == 0) {
+                found->second.bytes = estimate.bytes;
+            }
+            ++found->second.actionReferences;
+        }
+        for (const auto& [identity, counts] : sharedReferenceCounts) {
+            // A shared CPU asset is charged only when all of its object-level
+            // references move into this one delete action.
+            if (counts.actionReferences >= counts.totalReferences) {
+                bytes = addUndoBytes(bytes, counts.bytes);
+            }
+        }
+        action.estimatedBytes = bytes;
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "Failed to prepare Delete undo metadata: " +
+            std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "Failed to prepare Delete undo metadata with an unknown error");
+    }
+    return Result::success();
+}
+
 }  // namespace
 
 namespace editor {
@@ -1026,12 +1277,20 @@ Result EditorObjectCoordinator::deleteSelection(
     if (editorSession.selectedGameObjects().empty()) {
         return Result::success();
     }
+    if (detachRenderer && !attachRenderer) {
+        return Result::failure(
+            "Undoable deletion requires a renderer reattachment path");
+    }
 
     Result result = validateStructuralContext(scene, editorSession);
     if (!result) return result;
 
     DeleteBatchPlan plan;
     result = makeDeletePlan(scene, editorSession, plan);
+    if (!result) return result;
+
+    editor_undo::DeleteUndoAction undoAction;
+    result = buildDeleteUndoAction(scene, editorSession, plan, undoAction);
     if (!result) return result;
 
     std::vector<std::pair<GameObject*, std::size_t>> requirements;
@@ -1070,62 +1329,111 @@ Result EditorObjectCoordinator::deleteSelection(
     if (!result) return result;
 
     std::vector<GameObject*> movedPromotions;
-    movedPromotions.reserve(plan.promotions.size());
+    try {
+        movedPromotions.reserve(plan.promotions.size());
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "Failed to reserve Delete rollback storage: " +
+            std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "Failed to reserve Delete rollback storage");
+    }
+
+    editor_undo::EditorUndoHistory& undoHistory =
+        editorSession.undoHistory();
+    result = undoHistory.stageDelete(scene, std::move(undoAction));
+    if (!result) return result;
+    editor_undo::DeleteUndoAction* stagedAction =
+        undoHistory.stagedDeleteAction();
+    if (stagedAction == nullptr) {
+        undoHistory.cancelStagedDelete();
+        return Result::failure(
+            "Delete undo history failed to expose its staged action");
+    }
+
     bool rendererDetached = false;
 
     auto rollback = [&](const Result& failure) -> Result {
         Result rollbackResult = Result::success();
-        if (!movedPromotions.empty()) {
+        const bool hasRetainedObjects = std::any_of(
+            stagedAction->objects.begin(), stagedAction->objects.end(),
+            [](const editor_undo::DeleteUndoObject& object) {
+                return static_cast<bool>(object.retainedObject);
+            });
+        if (rendererDetached || hasRetainedObjects) {
+            try {
+                rollbackResult = restoreDeletedSelection(
+                    scene, editorSession, *stagedAction, detachRenderer,
+                    rendererDetached ? attachRenderer : RendererAttachment{});
+            } catch (const std::exception& exception) {
+                rollbackResult = Result::failure(
+                    "Delete restoration rollback threw: " +
+                    std::string(exception.what()));
+            } catch (...) {
+                rollbackResult = Result::failure(
+                    "Delete restoration rollback threw an unknown exception");
+            }
+        } else if (!movedPromotions.empty()) {
             const auto reparent = [&scene](GameObject& object,
                                            GameObject* parent,
                                            Scene::ReparentMode mode,
                                            std::size_t index) {
                 return scene.reparentGameObjectAt(object, parent, mode, index);
             };
-            rollbackResult = restoreMovedObjects(
-                plan.promotionSnapshots, movedPromotions, reparent);
-        }
-
-        if (rollbackResult && rendererDetached && !plan.selected.empty()) {
-            if (!attachRenderer) {
+            try {
+                rollbackResult = restoreMovedObjects(
+                    plan.promotionSnapshots, movedPromotions, reparent);
+            } catch (const std::exception& exception) {
                 rollbackResult = Result::failure(
-                    "No renderer attachment path was supplied for Delete rollback");
-            } else {
-                for (GameObject* object : plan.selected) {
-                    try {
-                        const Result attachResult =
-                            attachRenderer(scene, *object);
-                        if (!attachResult && rollbackResult) {
-                            rollbackResult = Result::failure(
-                                "Failed to reattach '" + object->name +
-                                "': " + attachResult.error());
-                        }
-                    } catch (const std::exception& exception) {
-                        if (rollbackResult) {
-                            rollbackResult = Result::failure(
-                                "Renderer rollback attachment for '" +
-                                object->name + "' threw: " +
-                                std::string(exception.what()));
-                        }
-                    } catch (...) {
-                        if (rollbackResult) {
-                            rollbackResult = Result::failure(
-                                "Renderer rollback attachment for '" +
-                                object->name +
-                                "' threw an unknown exception");
-                        }
-                    }
-                }
+                    "Delete hierarchy rollback threw: " +
+                    std::string(exception.what()));
+            } catch (...) {
+                rollbackResult = Result::failure(
+                    "Delete hierarchy rollback threw an unknown exception");
             }
         }
+
         if (rollbackResult) {
-            rollbackResult = scene.validateAuthoredState();
+            try {
+                rollbackResult = scene.validateAuthoredState();
+            } catch (const std::exception& exception) {
+                rollbackResult = Result::failure(
+                    "Delete rollback validation threw: " +
+                    std::string(exception.what()));
+            } catch (...) {
+                rollbackResult = Result::failure(
+                    "Delete rollback validation threw an unknown exception");
+            }
         }
         if (!rollbackResult) {
+            const bool retainedAny = std::any_of(
+                stagedAction->objects.begin(), stagedAction->objects.end(),
+                [](const editor_undo::DeleteUndoObject& object) {
+                    return static_cast<bool>(object.retainedObject);
+                });
+            if (retainedAny) {
+                const Result historyResult = undoHistory.commitStagedDelete();
+                if (historyResult) {
+                    editorSession.removeRenderColliderIds(deletedColliderIds);
+                    editorSession.clearSelection();
+                    return Result::failure(
+                        failure.error() +
+                        "; Delete rollback failed: " + rollbackResult.error() +
+                        "; the changed Scene remains recoverable through Ctrl+Z");
+                }
+                return Result::failure(
+                    failure.error() + "; Delete rollback failed: " +
+                    rollbackResult.error() +
+                    "; retaining the staged undo payload also failed: " +
+                    historyResult.error());
+            }
+            undoHistory.cancelStagedDelete();
             return Result::failure(
                 failure.error() + "; Delete transaction rollback failed: " +
                 rollbackResult.error());
         }
+        undoHistory.cancelStagedDelete();
         return failure;
     };
 
@@ -1140,7 +1448,10 @@ Result EditorObjectCoordinator::deleteSelection(
             result = Result::failure(
                 "Renderer detachment threw an unknown exception");
         }
-        if (!result) return result;
+        if (!result) {
+            undoHistory.cancelStagedDelete();
+            return result;
+        }
     }
     rendererDetached = static_cast<bool>(detachRenderer);
 
@@ -1168,9 +1479,18 @@ Result EditorObjectCoordinator::deleteSelection(
                 }
             }
 
-            result = scene.reparentGameObjectAt(
-                *object, list.parent, Scene::ReparentMode::PreserveWorld,
-                destinationIndex);
+            try {
+                result = scene.reparentGameObjectAt(
+                    *object, list.parent, Scene::ReparentMode::PreserveWorld,
+                    destinationIndex);
+            } catch (const std::exception& exception) {
+                result = Result::failure(
+                    "Delete promotion threw: " +
+                    std::string(exception.what()));
+            } catch (...) {
+                result = Result::failure(
+                    "Delete promotion threw an unknown exception");
+            }
             if (!result) return rollback(result);
             for (const DeletePromotionPlan& promotion : plan.promotions) {
                 if (promotion.object == object) {
@@ -1184,7 +1504,16 @@ Result EditorObjectCoordinator::deleteSelection(
         }
     }
 
-    result = scene.validateAuthoredState();
+    try {
+        result = scene.validateAuthoredState();
+    } catch (const std::exception& exception) {
+        result = Result::failure(
+            "Delete promotion validation threw: " +
+            std::string(exception.what()));
+    } catch (...) {
+        result = Result::failure(
+            "Delete promotion validation threw an unknown exception");
+    }
     if (!result) return rollback(result);
 
     // Every remaining child of a selected object must itself be selected;
@@ -1204,22 +1533,52 @@ Result EditorObjectCoordinator::deleteSelection(
     // removal is intentionally noexcept, so this keeps a later precondition
     // failure from producing a partially deleted selection.
     for (GameObject* object : plan.deletionOrder) {
-        result = scene.validateEditorGameObjectRemoval(object, false);
+        try {
+            result = scene.validateEditorGameObjectRemoval(object, false);
+        } catch (const std::exception& exception) {
+            result = Result::failure(
+                "Delete removal preflight threw: " +
+                std::string(exception.what()));
+        } catch (...) {
+            result = Result::failure(
+                "Delete removal preflight threw an unknown exception");
+        }
         if (!result) return rollback(result);
     }
 
     for (GameObject* object : plan.deletionOrder) {
-        std::unique_ptr<GameObject> removed;
-        result = scene.removeGameObjectForEditor(object, removed);
+        auto record = std::find_if(
+            stagedAction->objects.begin(), stagedAction->objects.end(),
+            [object](const editor_undo::DeleteUndoObject& candidate) {
+                return candidate.plannedObject == object;
+            });
+        if (record == stagedAction->objects.end()) {
+            return rollback(Result::failure(
+                "Delete undo lost ownership metadata for a selected object"));
+        }
+        result = scene.removeGameObjectForEditor(
+            object, record->retainedObject);
         if (!result) return rollback(result);
+        record->plannedObject = nullptr;
     }
 
-    result = scene.validateAuthoredState();
-    if (!result) {
-        return Result::failure(
-            "Delete committed but final Scene validation failed: " +
-            result.error());
+    try {
+        result = scene.validateAuthoredState();
+    } catch (const std::exception& exception) {
+        result = Result::failure(
+            "Delete final Scene validation threw: " +
+            std::string(exception.what()));
+    } catch (...) {
+        result = Result::failure(
+            "Delete final Scene validation threw an unknown exception");
     }
+    if (!result) {
+        return rollback(Result::failure(
+            "Delete final Scene validation failed: " + result.error()));
+    }
+
+    result = undoHistory.commitStagedDelete();
+    if (!result) return rollback(result);
 
     editorSession.removeRenderColliderIds(deletedColliderIds);
     editorSession.clearSelection();
@@ -1235,6 +1594,497 @@ Result EditorObjectCoordinator::deleteSelection(
 Result EditorObjectCoordinator::deleteSelection(
     Scene& scene, EditorSession& editorSession) {
     return deleteSelection(scene, editorSession, {}, {});
+}
+
+Result EditorObjectCoordinator::restoreDeletedSelection(
+    Scene& scene, EditorSession& editorSession,
+    editor_undo::DeleteUndoAction& action,
+    const RendererBatchDetachment& detachRenderer,
+    const RendererAttachment& attachRenderer) {
+    if (editorSession.runState() != SceneRunState::Editing ||
+        editorSession.selectionScene() != &scene || !scene.isActive()) {
+        return Result::failure(
+            "Delete undo is available only for the active editing Scene");
+    }
+    if (attachRenderer && !detachRenderer) {
+        return Result::failure(
+            "Transactional Delete undo requires renderer detach and attach paths");
+    }
+    if (action.sceneLifetimeId != scene.lifetimeId() ||
+        action.objects.empty()) {
+        return Result::failure(
+            "Delete undo action does not match the active Scene");
+    }
+
+    struct ObjectBeforeRestore {
+        GameObject* object = nullptr;
+        GameObject* parent = nullptr;
+        std::size_t siblingIndex = 0;
+        glm::vec3 position{0.0f};
+        glm::vec3 rotation{0.0f};
+        glm::vec3 scale{1.0f};
+    };
+
+    std::vector<editor_undo::DeleteUndoObject*> ownerOrder;
+    std::vector<editor_undo::DeleteUndoObject*> hierarchyOrder;
+    std::vector<GameObject*> objectsByRecord;
+    std::vector<ObjectBeforeRestore> sceneStateBefore;
+    std::vector<Scene::EditorHierarchyRestore> restoreLinks;
+    std::vector<Scene::EditorHierarchyRestore> rollbackLinks;
+    std::vector<editor_undo::DeleteUndoObject*> insertedRecords;
+    std::vector<GameObject*> attachedObjects;
+    std::vector<GameObject*> selectionBefore;
+    std::vector<GameObject*> validSelectionBefore;
+    std::vector<editor_undo::DeleteUndoObject*> removeOrder;
+    std::vector<bool> colliderVisibilityBefore;
+    GameObject* activeSelectionBefore = nullptr;
+    const Camera* activeCameraBefore = scene.activeCamera();
+    bool selectionApplied = false;
+    bool hierarchyApplied = false;
+    std::size_t rootCountBefore = scene.rootObjects().size();
+
+    try {
+        ownerOrder.reserve(action.objects.size());
+        hierarchyOrder.reserve(action.objects.size());
+        objectsByRecord.reserve(action.objects.size());
+        sceneStateBefore.reserve(action.objects.size() + action.promotions.size());
+        restoreLinks.reserve(action.objects.size() + action.promotions.size());
+        rollbackLinks.reserve(action.objects.size() + action.promotions.size());
+        insertedRecords.reserve(action.objects.size());
+        attachedObjects.reserve(action.objects.size());
+        selectionBefore = editorSession.selectedGameObjects();
+        validSelectionBefore.reserve(selectionBefore.size());
+        activeSelectionBefore = editorSession.activeGameObject();
+        colliderVisibilityBefore.reserve(action.objects.size());
+        removeOrder.reserve(action.objects.size());
+
+        std::unordered_map<std::string, std::size_t> recordById;
+        recordById.reserve(action.objects.size());
+        for (std::size_t index = 0; index < action.objects.size(); ++index) {
+            editor_undo::DeleteUndoObject& record = action.objects[index];
+            if (record.persistentId.empty() || record.instanceId == 0 ||
+                !recordById.emplace(record.persistentId, index).second) {
+                return Result::failure(
+                    "Delete undo action contains duplicate or invalid object identities");
+            }
+            GameObject* object = record.retainedObject
+                                     ? record.retainedObject.get()
+                                     : record.plannedObject;
+            if (object == nullptr || object->persistentId != record.persistentId ||
+                object->instanceId() != record.instanceId) {
+                return Result::failure(
+                    "Delete undo no longer owns the original GameObject identity");
+            }
+            GameObject* current = scene.findGameObject(record.persistentId);
+            if (record.retainedObject) {
+                if (current != nullptr || object->parent() != nullptr ||
+                    !object->children().empty()) {
+                    return Result::failure(
+                        "A retained Delete undo object is already active in the Scene");
+                }
+                ownerOrder.push_back(&record);
+            } else if (current != object) {
+                return Result::failure(
+                    "A staged Delete undo object changed Scene ownership");
+            }
+            hierarchyOrder.push_back(&record);
+            objectsByRecord.push_back(object);
+            colliderVisibilityBefore.push_back(
+                editorSession.renderColliderEnabled(*object));
+        }
+        std::stable_sort(
+            ownerOrder.begin(), ownerOrder.end(),
+            [](const auto* first, const auto* second) {
+                return first->owningIndex < second->owningIndex;
+            });
+        std::stable_sort(
+            hierarchyOrder.begin(), hierarchyOrder.end(),
+            [](const auto* first, const auto* second) {
+                if (first->hierarchyDepth != second->hierarchyDepth) {
+                    return first->hierarchyDepth < second->hierarchyDepth;
+                }
+                return first->siblingIndex < second->siblingIndex;
+            });
+
+        const auto recordForId = [&recordById, &action](
+                                     const std::string& id)
+            -> editor_undo::DeleteUndoObject* {
+            if (id.empty()) return nullptr;
+            const auto found = recordById.find(id);
+            return found == recordById.end()
+                       ? nullptr
+                       : &action.objects[found->second];
+        };
+        const auto resolveObject = [&scene, &recordForId](
+                                       const std::string& id,
+                                       std::uint64_t instanceId)
+            -> GameObject* {
+            if (id.empty()) return instanceId == 0 ? nullptr : nullptr;
+            if (editor_undo::DeleteUndoObject* record = recordForId(id)) {
+                GameObject* object = record->retainedObject
+                                         ? record->retainedObject.get()
+                                         : record->plannedObject;
+                return object != nullptr && object->instanceId() == instanceId
+                           ? object
+                           : nullptr;
+            }
+            GameObject* object = scene.findGameObject(id);
+            return object != nullptr && object->instanceId() == instanceId
+                       ? object
+                       : nullptr;
+        };
+
+        for (editor_undo::DeleteUndoObject* record : hierarchyOrder) {
+            GameObject* parent = resolveObject(
+                record->parentPersistentId, record->parentInstanceId);
+            if ((!record->parentPersistentId.empty() && parent == nullptr) ||
+                (record->parentPersistentId.empty() &&
+                 record->parentInstanceId != 0)) {
+                return Result::failure(
+                    "Delete undo parent no longer exists with its recorded identity");
+            }
+            restoreLinks.push_back({
+                record->retainedObject ? record->retainedObject.get()
+                                       : record->plannedObject,
+                parent, record->siblingIndex, record->position,
+                record->rotation, record->scale});
+        }
+        std::vector<editor_undo::DeleteUndoPromotion*> promotions;
+        promotions.reserve(action.promotions.size());
+        for (editor_undo::DeleteUndoPromotion& promotion : action.promotions) {
+            GameObject* object = scene.findGameObject(promotion.persistentId);
+            if (object == nullptr || object->instanceId() != promotion.instanceId) {
+                return Result::failure(
+                    "A promoted survivor changed identity before Delete undo");
+            }
+            GameObject* parent = resolveObject(
+                promotion.originalParentPersistentId,
+                promotion.originalParentInstanceId);
+            if ((!promotion.originalParentPersistentId.empty() && parent == nullptr) ||
+                (promotion.originalParentPersistentId.empty() &&
+                 promotion.originalParentInstanceId != 0)) {
+                return Result::failure(
+                    "A promoted object's original parent no longer exists");
+            }
+            restoreLinks.push_back({
+                object, parent, promotion.originalSiblingIndex,
+                promotion.originalPosition, promotion.originalRotation,
+                promotion.originalScale});
+            promotions.push_back(&promotion);
+        }
+
+        for (const Scene::EditorHierarchyRestore& link : restoreLinks) {
+            if (scene.findGameObject(link.object->persistentId) != link.object) {
+                continue;
+            }
+            const auto& siblings = link.object->parent() == nullptr
+                                       ? scene.rootObjects()
+                                       : link.object->parent()->children();
+            const auto found = std::find(siblings.begin(), siblings.end(),
+                                         link.object);
+            if (found == siblings.end()) {
+                return Result::failure(
+                    "Delete undo found an object missing from its current hierarchy list");
+            }
+            sceneStateBefore.push_back({
+                link.object, link.object->parent(),
+                static_cast<std::size_t>(
+                    std::distance(siblings.begin(), found)),
+                link.object->position, link.object->rotation, link.object->scale});
+        }
+
+        const Result reserveResult =
+            scene.reserveEditorGameObjectRestoration(ownerOrder.size());
+        if (!reserveResult) return reserveResult;
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "Failed to preflight Delete restoration: " +
+            std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "Failed to preflight Delete restoration with an unknown error");
+    }
+
+    const auto resolveParentNow = [&scene, &action](const std::string& id,
+                                                     std::uint64_t instanceId)
+        -> GameObject* {
+        if (id.empty()) return nullptr;
+        for (const editor_undo::DeleteUndoObject& record : action.objects) {
+            if (record.persistentId == id) {
+                GameObject* object = record.retainedObject
+                                         ? record.retainedObject.get()
+                                         : record.plannedObject;
+                return object != nullptr && object->instanceId() == instanceId
+                           ? object
+                           : nullptr;
+            }
+        }
+        GameObject* object = scene.findGameObject(id);
+        return object != nullptr && object->instanceId() == instanceId
+                   ? object
+                   : nullptr;
+    };
+
+    const auto rollback = [&](const Result& failure) -> Result {
+        Result rollbackResult = Result::success();
+        if (!attachedObjects.empty()) {
+            if (!detachRenderer) {
+                rollbackResult = Result::failure(
+                    "No renderer detachment path was supplied for restoration rollback");
+            } else {
+                try {
+                    rollbackResult = detachRenderer(scene, attachedObjects);
+                } catch (const std::exception& exception) {
+                    rollbackResult = Result::failure(
+                        "Renderer rollback detachment threw: " +
+                        std::string(exception.what()));
+                } catch (...) {
+                    rollbackResult = Result::failure(
+                        "Renderer rollback detachment threw an unknown exception");
+                }
+            }
+        }
+
+        if (rollbackResult && (hierarchyApplied || !insertedRecords.empty())) {
+            try {
+                rollbackLinks.clear();
+                for (const ObjectBeforeRestore& before : sceneStateBefore) {
+                    rollbackLinks.push_back({
+                        before.object, before.parent, before.siblingIndex,
+                        before.position, before.rotation, before.scale});
+                }
+                std::size_t insertionRank = 0;
+                const std::size_t targetRootBase = rootCountBefore;
+                for (editor_undo::DeleteUndoObject* record : ownerOrder) {
+                    if (record->retainedObject) continue;
+                    GameObject* object = record->plannedObject;
+                    if (object == nullptr) {
+                        object = scene.findGameObject(record->persistentId);
+                    }
+                    if (object == nullptr ||
+                        scene.findGameObject(record->persistentId) != object) {
+                        continue;
+                    }
+                    const bool insertedHere = std::find(
+                        insertedRecords.begin(), insertedRecords.end(), record) !=
+                        insertedRecords.end();
+                    if (!insertedHere) continue;
+                    rollbackLinks.push_back({
+                        object, nullptr, targetRootBase + insertionRank++,
+                        record->position, record->rotation, record->scale});
+                }
+                rollbackResult = scene.restoreEditorHierarchyForEditor(
+                    rollbackLinks);
+            } catch (const std::exception& exception) {
+                rollbackResult = Result::failure(
+                    "Failed to prepare Delete restoration rollback: " +
+                    std::string(exception.what()));
+            } catch (...) {
+                rollbackResult = Result::failure(
+                    "Failed to prepare Delete restoration rollback");
+            }
+        }
+
+        if (rollbackResult) {
+            removeOrder.clear();
+            removeOrder.insert(removeOrder.end(), insertedRecords.begin(),
+                               insertedRecords.end());
+            std::stable_sort(
+                removeOrder.begin(), removeOrder.end(),
+                [](const auto* first, const auto* second) {
+                    return first->owningIndex > second->owningIndex;
+                });
+            for (editor_undo::DeleteUndoObject* record : removeOrder) {
+                if (!rollbackResult) break;
+                if (record->retainedObject) continue;
+                GameObject* object = scene.findGameObject(record->persistentId);
+                if (object == nullptr) continue;
+                rollbackResult = scene.removeGameObjectForEditor(
+                    object, record->retainedObject);
+            }
+        }
+
+        if (selectionApplied) {
+            editorSession.clearSelection();
+            validSelectionBefore.clear();
+            for (GameObject* object : selectionBefore) {
+                if (object != nullptr &&
+                    scene.findGameObject(object->persistentId) == object) {
+                    validSelectionBefore.push_back(object);
+                }
+            }
+            if (rollbackResult && !validSelectionBefore.empty()) {
+                GameObject* active = std::find(validSelectionBefore.begin(),
+                                               validSelectionBefore.end(),
+                                               activeSelectionBefore) !=
+                                             validSelectionBefore.end()
+                                         ? activeSelectionBefore
+                                         : validSelectionBefore.back();
+                rollbackResult = editorSession.setExactSelection(
+                    &scene, validSelectionBefore, active);
+            }
+        }
+        for (std::size_t index = 0; index < action.objects.size(); ++index) {
+            GameObject* object = action.objects[index].retainedObject
+                                     ? action.objects[index].retainedObject.get()
+                                     : action.objects[index].plannedObject;
+            if (object == nullptr) {
+                object = scene.findGameObject(
+                    action.objects[index].persistentId);
+            }
+            if (object != nullptr) {
+                try {
+                    editorSession.setRenderColliderEnabled(
+                        *object, colliderVisibilityBefore[index]);
+                } catch (...) {
+                    if (rollbackResult) {
+                        rollbackResult = Result::failure(
+                            "Failed to restore collider visibility after Delete undo rollback");
+                    }
+                }
+            }
+        }
+        if (activeCameraBefore != nullptr &&
+            scene.activeCamera() != activeCameraBefore) {
+            const bool owned = std::any_of(
+                scene.gameObjects().begin(), scene.gameObjects().end(),
+                [activeCameraBefore](const auto& object) {
+                    return object.get() == activeCameraBefore ||
+                           (object && object->attachedCamera() == activeCameraBefore);
+                });
+            if (owned) {
+                const Result cameraResult = scene.setActiveCameraReference(
+                    const_cast<Camera*>(activeCameraBefore));
+                if (!cameraResult && rollbackResult) {
+                    rollbackResult = cameraResult;
+                }
+            }
+        }
+        if (!rollbackResult) {
+            return Result::failure(
+                failure.error() + "; Delete undo rollback failed: " +
+                rollbackResult.error());
+        }
+        return failure;
+    };
+
+    for (editor_undo::DeleteUndoObject* record : ownerOrder) {
+        if (!record->retainedObject) continue;
+        GameObject* inserted = nullptr;
+        Result result = Result::failure(
+            "Scene insertion did not run for a retained GameObject");
+        try {
+            result = scene.restoreGameObjectForEditor(
+                record->retainedObject, record->owningIndex, inserted);
+        } catch (const std::exception& exception) {
+            result = Result::failure(
+                "Scene insertion for Delete undo threw: " +
+                std::string(exception.what()));
+        } catch (...) {
+            result = Result::failure(
+                "Scene insertion for Delete undo threw an unknown exception");
+        }
+        if (!result) return rollback(result);
+        insertedRecords.push_back(record);
+    }
+
+    Result result = scene.restoreEditorHierarchyForEditor(restoreLinks);
+    if (!result) return rollback(result);
+    hierarchyApplied = true;
+
+    if (attachRenderer) {
+        for (GameObject* object : objectsByRecord) {
+            try {
+                result = attachRenderer(scene, *object);
+            } catch (const std::exception& exception) {
+                result = Result::failure(
+                    "Renderer attachment for '" + object->name + "' threw: " +
+                    std::string(exception.what()));
+            } catch (...) {
+                result = Result::failure(
+                    "Renderer attachment for '" + object->name +
+                    "' threw an unknown exception");
+            }
+            if (!result) return rollback(result);
+            attachedObjects.push_back(object);
+        }
+    }
+
+    try {
+        result = scene.validateAuthoredState();
+    } catch (const std::exception& exception) {
+        result = Result::failure(
+            "Delete undo Scene validation threw: " +
+            std::string(exception.what()));
+    } catch (...) {
+        result = Result::failure(
+            "Delete undo Scene validation threw an unknown exception");
+    }
+    if (!result) return rollback(result);
+
+    try {
+        for (const std::string& id : action.renderColliderIds) {
+            GameObject* object = scene.findGameObject(id);
+            if (object == nullptr) {
+                return rollback(Result::failure(
+                    "Delete undo could not restore collider visibility for a missing object"));
+            }
+            editorSession.setRenderColliderEnabled(*object, true);
+        }
+
+        std::vector<GameObject*> restoredSelection;
+        restoredSelection.reserve(action.selectionOrder.size());
+        for (const std::string& id : action.selectionOrder) {
+            GameObject* object = scene.findGameObject(id);
+            if (object == nullptr) {
+                return rollback(Result::failure(
+                    "Delete undo selection contains a missing GameObject"));
+            }
+            restoredSelection.push_back(object);
+        }
+        GameObject* active = nullptr;
+        if (!action.activeSelectionId.empty()) {
+            active = scene.findGameObject(action.activeSelectionId);
+            if (active == nullptr) {
+                return rollback(Result::failure(
+                    "Delete undo Active Object no longer exists"));
+            }
+        }
+        result = editorSession.setExactSelection(
+            &scene, restoredSelection, active);
+        if (!result) return rollback(result);
+        selectionApplied = true;
+    } catch (const std::exception& exception) {
+        return rollback(Result::failure(
+            "Failed to restore Delete undo editor state: " +
+            std::string(exception.what())));
+    } catch (...) {
+        return rollback(Result::failure(
+            "Failed to restore Delete undo editor state with an unknown error"));
+    }
+
+    if (!action.activeCameraOwnerId.empty()) {
+        GameObject* owner = scene.findGameObject(action.activeCameraOwnerId);
+        if (owner == nullptr ||
+            owner->instanceId() != action.activeCameraOwnerInstanceId) {
+            return rollback(Result::failure(
+                "Delete undo active Camera owner changed identity"));
+        }
+        Camera* camera = action.activeCameraStandalone
+                             ? dynamic_cast<Camera*>(owner)
+                             : owner->attachedCamera();
+        if (camera == nullptr ||
+            camera->instanceId() != action.activeCameraInstanceId) {
+            return rollback(Result::failure(
+                "Delete undo active Camera changed identity"));
+        }
+        result = scene.setActiveCameraReference(camera);
+        if (!result) return rollback(result);
+    }
+    for (editor_undo::DeleteUndoObject& record : action.objects) {
+        record.plannedObject = nullptr;
+    }
+    return Result::success();
 }
 
 Result EditorObjectCoordinator::parentSelectionToActive(

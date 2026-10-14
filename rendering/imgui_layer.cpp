@@ -670,7 +670,7 @@ void ImGuiLayer::drawToolbar(SceneRunState runState) {
         ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z,
                         ImGuiInputFlags_RouteGlobal) &&
         !editorActionPending()) {
-        submitEditorAction(EditorCommand::UndoTransform);
+        submitEditorAction(EditorCommand::Undo);
     }
     if (editorShortcutAvailable &&
         ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S,
@@ -1093,7 +1093,7 @@ void ImGuiLayer::beginInspectorTransformEdit(
     inspectorTransformEditActive_ = true;
     try {
         editor_undo::TransformUndoSnapshot snapshot;
-        const Result result = editorSession_->transformUndoHistory().capture(
+        const Result result = editorSession_->undoHistory().capture(
             *scene, std::vector<GameObject*>{object}, snapshot);
         if (!result) {
             inspectorTransformUndoCaptureFailed_ = true;
@@ -1123,7 +1123,7 @@ void ImGuiLayer::finishInspectorTransformEdit(Scene* scene,
         editorSession_ != nullptr &&
         !inspectorTransformUndoCaptureFailed_) {
         try {
-            const Result result = editorSession_->transformUndoHistory().commit(
+            const Result result = editorSession_->undoHistory().commit(
                 *scene, inspectorTransformUndoSnapshot_);
             if (!result) {
                 try {
@@ -1334,7 +1334,7 @@ void ImGuiLayer::drawSceneHierarchy(Scene* scene, bool disabled) {
                 request.siblingIndex);
             if (result) {
                 if (editorSession_ != nullptr) {
-                    editorSession_->transformUndoHistory().clear();
+                    editorSession_->undoHistory().clear();
                 }
                 inspectorError_.clear();
             } else {
@@ -1583,7 +1583,7 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
                         affected.push_back(objectSnapshot.object);
                     }
                     const Result undoSnapshotResult =
-                        editorSession_->transformUndoHistory().capture(
+                        editorSession_->undoHistory().capture(
                             *scene, affected,
                             editorTransformUndoSnapshot_);
                     if (!undoSnapshotResult) {
@@ -1675,7 +1675,7 @@ void ImGuiLayer::drawTransformGizmo(Scene* scene, const glm::mat4& view,
                 !editorTransformUndoCaptureFailed_ &&
                 editorTransformUndoSnapshot_.valid) {
                 const Result undoResult =
-                    editorSession_->transformUndoHistory().commit(
+                    editorSession_->undoHistory().commit(
                         *scene, editorTransformUndoSnapshot_);
                 if (!undoResult) {
                     inspectorError_ =

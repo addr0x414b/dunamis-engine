@@ -91,12 +91,30 @@ private:
         const GameObject& gameObject) const;
     [[nodiscard]] Result addGameObjectForEditor(
         std::unique_ptr<GameObject> gameObject, GameObject*& inserted);
+    // Restoration keeps the caller's unique_ptr intact on every reported
+    // failure. All storage is reserved before ownership is moved.
+    [[nodiscard]] Result reserveEditorGameObjectRestoration(
+        std::size_t additionalObjects);
+    [[nodiscard]] Result restoreGameObjectForEditor(
+        std::unique_ptr<GameObject>& gameObject, std::size_t owningIndex,
+        GameObject*& inserted);
     [[nodiscard]] Result removeGameObjectForEditor(
         GameObject* gameObject, std::unique_ptr<GameObject>& removed) noexcept;
     [[nodiscard]] Result validateEditorGameObjectRemoval(
         GameObject* gameObject, bool requireNoChildren = true) const;
     [[nodiscard]] Result reserveEditorHierarchyStorage(
         const std::vector<std::pair<GameObject*, std::size_t>>& requirements);
+    struct EditorHierarchyRestore {
+        GameObject* object = nullptr;
+        GameObject* parent = nullptr;
+        std::size_t siblingIndex = 0;
+        glm::vec3 position{0.0f};
+        glm::vec3 rotation{0.0f};
+        glm::vec3 scale{1.0f};
+    };
+    [[nodiscard]] Result restoreEditorHierarchyForEditor(
+        const std::vector<EditorHierarchyRestore>& restores);
+    void rebuildLightRegistration() noexcept;
     [[nodiscard]] Result validateGameObjectInsertion(
         const GameObject& gameObject) const;
     [[nodiscard]] Result addGameObjectInternal(

@@ -2618,6 +2618,230 @@ const std::vector<MeshInstance>& ModelRenderable::meshInstances() const noexcept
     return meshInstances_;
 }
 
+namespace {
+
+std::size_t saturatedBytesAdd(std::size_t total,
+                              std::size_t value) noexcept {
+    if (value > std::numeric_limits<std::size_t>::max() - total) {
+        return std::numeric_limits<std::size_t>::max();
+    }
+    return total + value;
+}
+
+std::size_t saturatedBytesMultiply(std::size_t count,
+                                   std::size_t elementSize) noexcept {
+    if (count != 0 &&
+        elementSize > std::numeric_limits<std::size_t>::max() / count) {
+        return std::numeric_limits<std::size_t>::max();
+    }
+    return count * elementSize;
+}
+
+std::size_t pixelStorageBytes(int width, int height, int channels) noexcept {
+    if (width <= 0 || height <= 0 || channels <= 0) return 0;
+    const std::size_t w = static_cast<std::size_t>(width);
+    const std::size_t h = static_cast<std::size_t>(height);
+    const std::size_t c = static_cast<std::size_t>(channels);
+    if (h > std::numeric_limits<std::size_t>::max() / w ||
+        c > std::numeric_limits<std::size_t>::max() / (w * h)) {
+        return std::numeric_limits<std::size_t>::max();
+    }
+    return w * h * c;
+}
+
+std::size_t estimateCachedModelBytes(
+    const model_loading::CachedCpuModel& model) {
+    std::size_t bytes = sizeof(model_loading::CachedCpuModel);
+    bytes = saturatedBytesAdd(
+        bytes, saturatedBytesMultiply(
+                   model.meshes.capacity(),
+                   sizeof(model_loading::CachedCpuMesh)));
+    std::unordered_set<const void*> pixelOwners;
+    for (const model_loading::CachedCpuMesh& mesh : model.meshes) {
+        bytes = saturatedBytesAdd(
+            bytes, saturatedBytesMultiply(mesh.vertices.capacity(),
+                                          sizeof(Vertex)));
+        bytes = saturatedBytesAdd(
+            bytes, saturatedBytesMultiply(mesh.indices.capacity(),
+                                          sizeof(std::uint32_t)));
+        const auto& material = mesh.material;
+        bytes = saturatedBytesAdd(bytes, material.texturePath.capacity());
+        bytes = saturatedBytesAdd(bytes, material.normalMapPath.capacity());
+        bytes = saturatedBytesAdd(
+            bytes, material.metallicRoughnessMapPath.capacity());
+        const auto addPixels = [&bytes, &pixelOwners](
+                                  const StbiPixelOwner& owner, int width,
+                                  int height, int channels) {
+            if (owner && pixelOwners.insert(owner.get()).second) {
+                bytes = saturatedBytesAdd(
+                    bytes, pixelStorageBytes(width, height, channels));
+            }
+        };
+        addPixels(material.pixelsOwner, material.texWidth,
+                  material.texHeight, material.texChannels);
+        addPixels(material.normalMapPixelsOwner, material.normalMapWidth,
+                  material.normalMapHeight, material.normalMapChannels);
+        addPixels(material.metallicRoughnessMapPixelsOwner,
+                  material.metallicRoughnessMapWidth,
+                  material.metallicRoughnessMapHeight,
+                  material.metallicRoughnessMapChannels);
+    }
+    return bytes;
+}
+
+std::size_t estimateImportedModelBytes(
+    const model_loading::ImportedModelAsset& model) {
+    std::size_t bytes = sizeof(model_loading::ImportedModelAsset);
+    bytes = saturatedBytesAdd(bytes, model.sourcePath.capacity());
+    bytes = saturatedBytesAdd(bytes, model.sourceIdentity.capacity());
+        bytes = saturatedBytesAdd(
+            bytes, saturatedBytesMultiply(
+                       model.nodes.capacity(),
+                       sizeof(model_loading::ImportedModelNode)));
+    bytes = saturatedBytesAdd(
+        bytes, model.nodeByIdentity.bucket_count() * sizeof(void*));
+    std::unordered_set<const void*> pixelOwners;
+    std::unordered_set<const MeshGeometry*> geometries;
+    for (const model_loading::ImportedModelNode& node : model.nodes) {
+        bytes = saturatedBytesAdd(bytes, node.identity.capacity());
+        bytes = saturatedBytesAdd(bytes, node.name.capacity());
+        bytes = saturatedBytesAdd(
+            bytes, node.children.capacity() * sizeof(std::size_t));
+        bytes = saturatedBytesAdd(
+            bytes, node.meshes.capacity() *
+                       sizeof(std::shared_ptr<const model_loading::ImportedMeshAsset>));
+        for (const auto& mesh : node.meshes) {
+            if (!mesh) continue;
+            bytes = saturatedBytesAdd(bytes, sizeof(*mesh));
+            bytes = saturatedBytesAdd(bytes, mesh->texturePath.capacity());
+            bytes = saturatedBytesAdd(bytes, mesh->assetIdentity.capacity());
+            if (mesh->geometry && geometries.insert(mesh->geometry.get()).second) {
+                bytes = saturatedBytesAdd(bytes, sizeof(MeshGeometry));
+            bytes = saturatedBytesAdd(
+                bytes, saturatedBytesMultiply(
+                           mesh->geometry->vertices.capacity(), sizeof(Vertex)));
+                bytes = saturatedBytesAdd(
+                bytes, saturatedBytesMultiply(
+                           mesh->geometry->indices.capacity(),
+                           sizeof(std::uint32_t)));
+                bytes = saturatedBytesAdd(
+                    bytes, mesh->geometry->assetIdentity.capacity());
+            }
+            const Material& material = mesh->material;
+            bytes = saturatedBytesAdd(bytes, material.normalMapPath.capacity());
+            bytes = saturatedBytesAdd(
+                bytes, material.metallicRoughnessMapPath.capacity());
+            const auto addPixels = [&bytes, &pixelOwners](
+                                      const StbiPixelOwner& owner, int width,
+                                      int height, int channels) {
+                if (owner && pixelOwners.insert(owner.get()).second) {
+                    bytes = saturatedBytesAdd(
+                        bytes, pixelStorageBytes(width, height, channels));
+                }
+            };
+            addPixels(material.pixelsOwner, material.texWidth,
+                      material.texHeight, material.texChannels);
+            addPixels(material.normalMapPixelsOwner,
+                      material.normalMapWidth, material.normalMapHeight,
+                      material.normalMapChannels);
+            addPixels(material.metallicRoughnessMapPixelsOwner,
+                      material.metallicRoughnessMapWidth,
+                      material.metallicRoughnessMapHeight,
+                      material.metallicRoughnessMapChannels);
+        }
+    }
+    return bytes;
+}
+
+}  // namespace
+
+std::size_t ModelRenderable::estimatedPrivateCpuMemoryBytes() const noexcept {
+    std::size_t bytes = sizeof(ModelRenderable);
+    bytes = saturatedBytesAdd(bytes, modelPathStorage_.capacity());
+    bytes = saturatedBytesAdd(bytes, authoredTexturePathStorage_.capacity());
+    bytes = saturatedBytesAdd(
+        bytes, importedAssetReference_.sourcePath.capacity());
+    bytes = saturatedBytesAdd(
+        bytes, importedAssetReference_.nodeIdentity.capacity());
+    bytes = saturatedBytesAdd(
+        bytes, importedAssetReference_.textureFallbackPath.capacity());
+    bytes = saturatedBytesAdd(bytes, modelPathStorage_.size());
+    bytes = saturatedBytesAdd(
+        bytes, saturatedBytesMultiply(texturePathStorage_.size(),
+                                      sizeof(std::string)));
+    for (const std::string& path : texturePathStorage_) {
+        bytes = saturatedBytesAdd(bytes, path.capacity());
+    }
+    bytes = saturatedBytesAdd(
+        bytes, saturatedBytesMultiply(meshInstances_.capacity(),
+                                      sizeof(MeshInstance)));
+    for (const MeshInstance& instance : meshInstances_) {
+        bytes = saturatedBytesAdd(bytes, instance.mesh.assetIdentity.capacity());
+        if (!instance.mesh.sharedGeometry) {
+            bytes = saturatedBytesAdd(
+                bytes, saturatedBytesMultiply(
+                           instance.mesh.vertices.capacity(), sizeof(Vertex)));
+            bytes = saturatedBytesAdd(
+                bytes, saturatedBytesMultiply(
+                           instance.mesh.indices.capacity(),
+                           sizeof(std::uint32_t)));
+        }
+        const Material& material = instance.material;
+        bytes = saturatedBytesAdd(bytes, material.normalMapPath.capacity());
+        bytes = saturatedBytesAdd(
+            bytes, material.metallicRoughnessMapPath.capacity());
+        if (material.pixelsOwner.use_count() == 1) {
+            bytes = saturatedBytesAdd(
+                bytes, pixelStorageBytes(material.texWidth, material.texHeight,
+                                         material.texChannels));
+        }
+        if (material.normalMapPixelsOwner.use_count() == 1) {
+            bytes = saturatedBytesAdd(
+                bytes, pixelStorageBytes(material.normalMapWidth,
+                                         material.normalMapHeight,
+                                         material.normalMapChannels));
+        }
+        if (material.metallicRoughnessMapPixelsOwner.use_count() == 1) {
+            bytes = saturatedBytesAdd(
+                bytes, pixelStorageBytes(
+                           material.metallicRoughnessMapWidth,
+                           material.metallicRoughnessMapHeight,
+                           material.metallicRoughnessMapChannels));
+        }
+    }
+    return bytes;
+}
+
+void ModelRenderable::appendSharedCpuMemoryEstimates(
+    std::vector<SharedCpuMemoryEstimate>& estimates) const {
+    const auto append = [&estimates](const void* identity,
+                                     std::size_t referenceCount,
+                                     auto&& estimateBytes) {
+        const bool alreadyEstimated = std::any_of(
+            estimates.begin(), estimates.end(),
+            [identity](const SharedCpuMemoryEstimate& estimate) {
+                return estimate.identity == identity && estimate.bytes != 0;
+            });
+        estimates.push_back({identity,
+                             alreadyEstimated ? 0 : estimateBytes(),
+                             referenceCount});
+    };
+    if (loadedModelAsset_) {
+        append(loadedModelAsset_.get(),
+               static_cast<std::size_t>(loadedModelAsset_.use_count()),
+               [this] {
+                   return estimateCachedModelBytes(*loadedModelAsset_);
+               });
+    }
+    if (importedModelAsset_) {
+        append(importedModelAsset_.get(),
+               static_cast<std::size_t>(importedModelAsset_.use_count()),
+               [this] {
+                   return estimateImportedModelBytes(*importedModelAsset_);
+               });
+    }
+}
+
 Result ModelRenderable::markRenderResourcesAttached() {
     if (!renderTopologyMutable()) {
         return Result::failure("GameObject render resources are already attached");

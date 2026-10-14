@@ -4,6 +4,7 @@
 #include "model_renderable.h"
 
 #include <atomic>
+#include <limits>
 #include <utility>
 
 namespace {
@@ -15,11 +16,42 @@ std::uint64_t nextGameObjectInstanceId() noexcept {
 
 }  // namespace
 
+namespace {
+
+std::size_t addBytes(std::size_t total, std::size_t value) noexcept {
+    if (value > std::numeric_limits<std::size_t>::max() - total) {
+        return std::numeric_limits<std::size_t>::max();
+    }
+    return total + value;
+}
+
+std::size_t multiplyBytes(std::size_t count,
+                          std::size_t elementSize) noexcept {
+    if (count != 0 &&
+        elementSize > std::numeric_limits<std::size_t>::max() / count) {
+        return std::numeric_limits<std::size_t>::max();
+    }
+    return count * elementSize;
+}
+
+}  // namespace
+
 GameObject::GameObject()
     : instanceId_(nextGameObjectInstanceId()),
       modelRenderable_(std::make_unique<ModelRenderable>()) {}
 
 GameObject::~GameObject() = default;
+
+std::size_t GameObject::estimatedRetainedCpuMemoryBytes() const noexcept {
+    std::size_t bytes = addBytes(sizeof(GameObject), 4096);
+    bytes = addBytes(bytes, name.capacity());
+    bytes = addBytes(bytes, persistentId.capacity());
+    bytes = addBytes(bytes,
+                     multiplyBytes(children_.capacity(), sizeof(GameObject*)));
+    bytes = addBytes(bytes,
+                     modelRenderable().estimatedPrivateCpuMemoryBytes());
+    return bytes;
+}
 
 ModelRenderable& GameObject::modelRenderable() noexcept {
     return *modelRenderable_;

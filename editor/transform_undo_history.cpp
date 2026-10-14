@@ -15,7 +15,7 @@
 namespace editor_undo {
 namespace {
 
-constexpr std::size_t maxTransformUndoHistoryBytes = 64u * 1024u * 1024u;
+constexpr std::size_t maxEditorUndoHistoryBytes = 64u * 1024u * 1024u;
 constexpr float noOpTolerance = 1.0e-5f;
 constexpr float worldStateTolerance = 1.0e-4f;
 
@@ -197,12 +197,29 @@ constexpr float worldStateTolerance = 1.0e-4f;
 
 }  // namespace
 
-void TransformUndoHistory::clear() noexcept {
-    actions_.clear();
-    estimatedBytes_ = 0;
+EditorUndoHistory::~EditorUndoHistory() = default;
+
+std::size_t EditorUndoHistory::actionBytes(const Action& action) noexcept {
+    return std::visit([](const auto& concrete) {
+        return concrete.estimatedBytes;
+    }, action);
 }
 
-Result TransformUndoHistory::capture(
+void EditorUndoHistory::enforceLimits() noexcept {
+    while (actions_.size() > maxEditorUndoActions ||
+           estimatedBytes_ > maxEditorUndoHistoryBytes) {
+        estimatedBytes_ -= actionBytes(actions_.front());
+        actions_.pop_front();
+    }
+}
+
+void EditorUndoHistory::clear() noexcept {
+    actions_.clear();
+    estimatedBytes_ = 0;
+    stagedDeletePending_ = false;
+}
+
+Result EditorUndoHistory::capture(
     const Scene& scene, const std::vector<GameObject*>& objects,
     TransformUndoSnapshot& snapshot) const {
     snapshot = {};
@@ -256,7 +273,7 @@ Result TransformUndoHistory::capture(
     }
 }
 
-Result TransformUndoHistory::commit(
+Result EditorUndoHistory::commit(
     const Scene& scene, const TransformUndoSnapshot& snapshot) {
     if (!snapshot.valid || snapshot.sceneLifetimeId != scene.lifetimeId() ||
         snapshot.objects.empty() ||
@@ -266,7 +283,7 @@ Result TransformUndoHistory::commit(
     }
 
     try {
-        Action action;
+        TransformAction action;
         action.sceneLifetimeId = snapshot.sceneLifetimeId;
         action.objects.reserve(snapshot.objects.size());
         std::unordered_set<std::uint64_t> seenInstances;
@@ -331,17 +348,13 @@ Result TransformUndoHistory::commit(
                 action.estimatedBytes,
                 change.after.parentPersistentId.capacity());
         }
-        if (action.estimatedBytes > maxTransformUndoHistoryBytes) {
+        if (action.estimatedBytes > maxEditorUndoHistoryBytes) {
             return Result::failure(
                 "Transform action is too large for the in-memory undo budget.");
         }
-        actions_.push_back(std::move(action));
-        estimatedBytes_ += actions_.back().estimatedBytes;
-        while (actions_.size() > maxTransformUndoActions ||
-               estimatedBytes_ > maxTransformUndoHistoryBytes) {
-            estimatedBytes_ -= actions_.front().estimatedBytes;
-            actions_.pop_front();
-        }
+        actions_.emplace_back(std::move(action));
+        estimatedBytes_ += std::get<TransformAction>(actions_.back()).estimatedBytes;
+        enforceLimits();
         return Result::success();
     } catch (const std::exception& exception) {
         return Result::failure(
@@ -353,16 +366,135 @@ Result TransformUndoHistory::commit(
     }
 }
 
-Result TransformUndoHistory::undo(Scene& scene) {
+Result EditorUndoHistory::stageDelete(Scene& scene,
+                                      DeleteUndoAction&& action) {
+    if (stagedDeletePending_) {
+        return Result::failure(
+            "Another Delete action is already being staged");
+    }
+    if (action.sceneLifetimeId != scene.lifetimeId() ||
+        action.objects.empty() || action.estimatedBytes == 0) {
+        return Result::failure(
+            "Delete undo transaction does not match the active Scene");
+    }
+    if (action.estimatedBytes > maxEditorUndoHistoryBytes) {
+        return Result::failure(
+            "Delete is too large to retain safely in the in-memory undo budget");
+    }
+    for (const DeleteUndoObject& object : action.objects) {
+        if (object.plannedObject == nullptr || object.retainedObject ||
+            object.persistentId.empty() || object.instanceId == 0) {
+            return Result::failure(
+                "Delete undo transaction contains invalid ownership metadata");
+        }
+    }
+    try {
+        action.staged = true;
+        actions_.emplace_back(std::move(action));
+        stagedDeletePending_ = true;
+        return Result::success();
+    } catch (const std::exception& exception) {
+        return Result::failure(
+            "Failed to reserve Delete undo history: " +
+            std::string(exception.what()));
+    } catch (...) {
+        return Result::failure(
+            "Failed to reserve Delete undo history with an unknown error");
+    }
+}
+
+DeleteUndoAction* EditorUndoHistory::stagedDeleteAction() noexcept {
+    if (!stagedDeletePending_ || actions_.empty()) return nullptr;
+    DeleteUndoAction* action = std::get_if<DeleteUndoAction>(&actions_.back());
+    return action != nullptr && action->staged ? action : nullptr;
+}
+
+Result EditorUndoHistory::commitStagedDelete() noexcept {
+    DeleteUndoAction* action = stagedDeleteAction();
+    if (action == nullptr) {
+        return Result::failure("No staged Delete undo action is available");
+    }
+    for (const DeleteUndoObject& object : action->objects) {
+        const GameObject* source = object.retainedObject
+                                       ? object.retainedObject.get()
+                                       : object.plannedObject;
+        if ((object.retainedObject && object.plannedObject != nullptr) ||
+            source == nullptr || source->persistentId != object.persistentId ||
+            source->instanceId() != object.instanceId) {
+            return Result::failure(
+                "Delete undo action lost a selected GameObject identity");
+        }
+    }
+    action->staged = false;
+    estimatedBytes_ += action->estimatedBytes;
+    stagedDeletePending_ = false;
+    enforceLimits();
+    return Result::success();
+}
+
+void EditorUndoHistory::cancelStagedDelete() noexcept {
+    if (!stagedDeletePending_ || actions_.empty()) return;
+    const DeleteUndoAction* action =
+        std::get_if<DeleteUndoAction>(&actions_.back());
+    if (action != nullptr && action->staged) {
+        actions_.pop_back();
+    }
+    stagedDeletePending_ = false;
+}
+
+Result EditorUndoHistory::undo(
+    Scene& scene, const DeleteRestoreHandler& restoreDelete) {
     if (actions_.empty()) {
         return Result::success();
+    }
+    if (stagedDeletePending_) {
+        return Result::failure(
+            "Cannot undo while a Delete transaction is being committed");
     }
     const auto reject = [this](const char* message) {
         clear();
         return Result::failure(message);
     };
 
-    const Action& action = actions_.back();
+    if (DeleteUndoAction* deleteAction =
+            std::get_if<DeleteUndoAction>(&actions_.back())) {
+        if (deleteAction->staged ||
+            deleteAction->sceneLifetimeId != scene.lifetimeId()) {
+            return reject(
+                "Delete undo history belongs to a different or replaced Scene; the history was cleared.");
+        }
+        if (!restoreDelete) {
+            return Result::failure(
+                "Delete undo requires the active editor restoration handler");
+        }
+        Result restoreResult = Result::failure(
+            "Delete restoration handler did not complete");
+        try {
+            restoreResult = restoreDelete(scene, *deleteAction);
+        } catch (const std::exception& exception) {
+            restoreResult = Result::failure(
+                "Delete restoration threw: " +
+                std::string(exception.what()));
+        } catch (...) {
+            restoreResult = Result::failure(
+                "Delete restoration threw an unknown exception");
+        }
+        if (!restoreResult) return restoreResult;
+        for (const DeleteUndoObject& object : deleteAction->objects) {
+            const GameObject* restored =
+                scene.findGameObject(object.persistentId);
+            if (object.retainedObject || object.plannedObject != nullptr ||
+                restored == nullptr || restored->instanceId() != object.instanceId) {
+                return Result::failure(
+                    "Delete restoration did not transfer every original object back to the Scene");
+            }
+        }
+        estimatedBytes_ -= deleteAction->estimatedBytes;
+        actions_.pop_back();
+        return Result::success();
+    }
+
+    const TransformAction& action = std::get<TransformAction>(actions_.back());
     if (action.sceneLifetimeId != scene.lifetimeId()) {
         return reject(
             "Transform undo history belongs to a different or replaced Scene; the history was cleared.");
@@ -482,11 +614,11 @@ Result TransformUndoHistory::undo(Scene& scene) {
     return Result::success();
 }
 
-bool TransformUndoHistory::canUndo() const noexcept {
-    return !actions_.empty();
+bool EditorUndoHistory::canUndo() const noexcept {
+    return !actions_.empty() && !stagedDeletePending_;
 }
 
-std::size_t TransformUndoHistory::actionCount() const noexcept {
+std::size_t EditorUndoHistory::actionCount() const noexcept {
     return actions_.size();
 }
 

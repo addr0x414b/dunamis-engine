@@ -41,6 +41,11 @@ public:
 
     virtual void start() {}
     virtual void update() {}
+    // Derived GameObjects with unusually large dynamic authored state may
+    // override this for a tighter undo-retention estimate. The default adds a
+    // conservative allowance for ordinary derived editor objects.
+    [[nodiscard]] virtual std::size_t
+    estimatedRetainedCpuMemoryBytes() const noexcept;
     // Called by PhysicsServer after it writes a physics-resolved transform.
     // Most objects have nothing else to synchronize.
     virtual void onPhysicsTransformResolved() noexcept {}

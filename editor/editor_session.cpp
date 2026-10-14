@@ -426,14 +426,12 @@ EditorAction EditorSession::consumeEditorAction() {
     return action;
 }
 
-editor_undo::TransformUndoHistory&
-EditorSession::transformUndoHistory() noexcept {
-    return transformUndoHistory_;
+editor_undo::EditorUndoHistory& EditorSession::undoHistory() noexcept {
+    return undoHistory_;
 }
 
-const editor_undo::TransformUndoHistory&
-EditorSession::transformUndoHistory() const noexcept {
-    return transformUndoHistory_;
+const editor_undo::EditorUndoHistory& EditorSession::undoHistory() const noexcept {
+    return undoHistory_;
 }
 
 void EditorSession::setPendingLoadPath(std::filesystem::path path) {

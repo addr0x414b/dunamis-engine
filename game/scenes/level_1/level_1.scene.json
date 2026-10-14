@@ -7,15 +7,15 @@
     "camera": {
       "farClip": 10000.0,
       "front": [
-        -0.13044607639312744,
-        -0.22835087776184082,
-        0.9648003578186035
+        5.0191825806678025e-08,
+        -0.3106764256954193,
+        0.9505157470703125
       ],
       "nearClip": 0.10000000149011612,
       "position": [
-        0.5641562342643738,
-        8.438443183898926,
-        -17.23692512512207
+        -3.100672483444214,
+        10.272000312805176,
+        25.58523941040039
       ],
       "up": [
         0.0,
@@ -694,43 +694,6 @@
       "type": "GameObject"
     },
     {
-      "id": "608acb55-6333-4bc9-9f57-0a65a224479f",
-      "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
-      "properties": {
-        "importedAsset": {
-          "nodeIdentity": "root:8:RootNode/17:8:Cube.018",
-          "sourcePath": "game/assets/city-scene/source/city.fbx",
-          "textureFallbackPath": ""
-        },
-        "modelPath": "",
-        "name": "Cube.018",
-        "physics": {
-          "colliderType": "mesh",
-          "enabled": true,
-          "motionType": "static",
-          "sphereRadius": 0.5
-        },
-        "position": [
-          -2.984266996383667,
-          0.031679198145866394,
-          13.798498153686523
-        ],
-        "rotation": [
-          90.00001525878906,
-          -0.0008878380176611245,
-          90.5351333618164
-        ],
-        "scale": [
-          1.0,
-          1.0,
-          1.0
-        ],
-        "texturePath": ""
-      },
-      "siblingIndex": 17,
-      "type": "GameObject"
-    },
-    {
       "id": "37183ec1-e642-4b6d-9491-bafc124c85ab",
       "parentId": "1cdd464a-f1c1-4b15-b31d-7cd3e2d9dcd5",
       "properties": {
@@ -764,7 +727,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 18,
+      "siblingIndex": 17,
       "type": "GameObject"
     },
     {
@@ -801,7 +764,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 19,
+      "siblingIndex": 18,
       "type": "GameObject"
     },
     {
@@ -838,7 +801,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 20,
+      "siblingIndex": 19,
       "type": "GameObject"
     },
     {
@@ -875,7 +838,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 21,
+      "siblingIndex": 20,
       "type": "GameObject"
     },
     {
@@ -912,7 +875,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 22,
+      "siblingIndex": 21,
       "type": "GameObject"
     },
     {
@@ -949,7 +912,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 23,
+      "siblingIndex": 22,
       "type": "GameObject"
     },
     {
@@ -986,7 +949,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 24,
+      "siblingIndex": 23,
       "type": "GameObject"
     },
     {
@@ -1023,7 +986,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 25,
+      "siblingIndex": 24,
       "type": "GameObject"
     },
     {
@@ -1060,7 +1023,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 26,
+      "siblingIndex": 25,
       "type": "GameObject"
     },
     {
@@ -1097,7 +1060,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 27,
+      "siblingIndex": 26,
       "type": "GameObject"
     },
     {
@@ -1134,7 +1097,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 28,
+      "siblingIndex": 27,
       "type": "GameObject"
     },
     {
@@ -1171,7 +1134,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 29,
+      "siblingIndex": 28,
       "type": "GameObject"
     },
     {
@@ -1208,7 +1171,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 30,
+      "siblingIndex": 29,
       "type": "GameObject"
     },
     {
@@ -1245,7 +1208,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 31,
+      "siblingIndex": 30,
       "type": "GameObject"
     },
     {
@@ -1282,7 +1245,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 32,
+      "siblingIndex": 31,
       "type": "GameObject"
     },
     {
@@ -1319,7 +1282,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 33,
+      "siblingIndex": 32,
       "type": "GameObject"
     },
     {
@@ -1356,7 +1319,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 34,
+      "siblingIndex": 33,
       "type": "GameObject"
     },
     {
@@ -1393,7 +1356,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 35,
+      "siblingIndex": 34,
       "type": "GameObject"
     },
     {
@@ -1430,7 +1393,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 36,
+      "siblingIndex": 35,
       "type": "GameObject"
     },
     {
@@ -1467,7 +1430,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 37,
+      "siblingIndex": 36,
       "type": "GameObject"
     },
     {
@@ -1504,7 +1467,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 38,
+      "siblingIndex": 37,
       "type": "GameObject"
     },
     {
@@ -1541,7 +1504,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 39,
+      "siblingIndex": 38,
       "type": "GameObject"
     },
     {
@@ -1578,7 +1541,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 40,
+      "siblingIndex": 39,
       "type": "GameObject"
     },
     {
@@ -1615,7 +1578,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 41,
+      "siblingIndex": 40,
       "type": "GameObject"
     },
     {
@@ -1652,7 +1615,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 42,
+      "siblingIndex": 41,
       "type": "GameObject"
     },
     {
@@ -1689,7 +1652,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 43,
+      "siblingIndex": 42,
       "type": "GameObject"
     },
     {
@@ -1726,7 +1689,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 44,
+      "siblingIndex": 43,
       "type": "GameObject"
     },
     {
@@ -1763,7 +1726,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 45,
+      "siblingIndex": 44,
       "type": "GameObject"
     },
     {
@@ -1800,7 +1763,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 46,
+      "siblingIndex": 45,
       "type": "GameObject"
     },
     {
@@ -1837,7 +1800,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 47,
+      "siblingIndex": 46,
       "type": "GameObject"
     },
     {
@@ -1874,7 +1837,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 48,
+      "siblingIndex": 47,
       "type": "GameObject"
     },
     {
@@ -1911,7 +1874,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 49,
+      "siblingIndex": 48,
       "type": "GameObject"
     },
     {
@@ -1948,7 +1911,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 50,
+      "siblingIndex": 49,
       "type": "GameObject"
     },
     {
@@ -1985,7 +1948,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 51,
+      "siblingIndex": 50,
       "type": "GameObject"
     },
     {
@@ -2022,7 +1985,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 52,
+      "siblingIndex": 51,
       "type": "GameObject"
     },
     {
@@ -2059,7 +2022,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 53,
+      "siblingIndex": 52,
       "type": "GameObject"
     },
     {
@@ -2096,7 +2059,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 54,
+      "siblingIndex": 53,
       "type": "GameObject"
     },
     {
@@ -2133,7 +2096,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 55,
+      "siblingIndex": 54,
       "type": "GameObject"
     },
     {
@@ -2170,7 +2133,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 56,
+      "siblingIndex": 55,
       "type": "GameObject"
     },
     {
@@ -2207,7 +2170,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 57,
+      "siblingIndex": 56,
       "type": "GameObject"
     },
     {
@@ -2244,7 +2207,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 58,
+      "siblingIndex": 57,
       "type": "GameObject"
     },
     {
@@ -2281,7 +2244,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 59,
+      "siblingIndex": 58,
       "type": "GameObject"
     },
     {
@@ -2318,7 +2281,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 60,
+      "siblingIndex": 59,
       "type": "GameObject"
     },
     {
@@ -2355,7 +2318,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 61,
+      "siblingIndex": 60,
       "type": "GameObject"
     },
     {
@@ -2392,7 +2355,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 62,
+      "siblingIndex": 61,
       "type": "GameObject"
     },
     {
@@ -2429,7 +2392,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 63,
+      "siblingIndex": 62,
       "type": "GameObject"
     },
     {
@@ -2466,7 +2429,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 64,
+      "siblingIndex": 63,
       "type": "GameObject"
     },
     {
@@ -2503,7 +2466,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 65,
+      "siblingIndex": 64,
       "type": "GameObject"
     },
     {
@@ -2540,7 +2503,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 66,
+      "siblingIndex": 65,
       "type": "GameObject"
     },
     {
@@ -2577,7 +2540,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 67,
+      "siblingIndex": 66,
       "type": "GameObject"
     },
     {
@@ -2614,7 +2577,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 68,
+      "siblingIndex": 67,
       "type": "GameObject"
     },
     {
@@ -2651,7 +2614,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 69,
+      "siblingIndex": 68,
       "type": "GameObject"
     },
     {
@@ -2688,7 +2651,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 70,
+      "siblingIndex": 69,
       "type": "GameObject"
     },
     {
@@ -2725,7 +2688,7 @@
         ],
         "texturePath": ""
       },
-      "siblingIndex": 71,
+      "siblingIndex": 70,
       "type": "GameObject"
     },
     {

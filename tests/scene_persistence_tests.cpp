@@ -1,4 +1,6 @@
+#include "editor/editor_duplication.h"
 #include "editor/editor_mutation.h"
+#include "editor/editor_session.h"
 #include "editor/transform_undo_history.h"
 #include "scene/scene_manager.h"
 #include "scene/scene_serializer.h"
@@ -21,6 +23,12 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+class SceneTestAccess {
+public:
+    static Result activate(Scene& scene) { return scene.activate(); }
+    static void deactivate(Scene& scene) { scene.deactivate(); }
+};
 
 namespace {
 
@@ -2047,6 +2055,60 @@ bool managerDirtyTests() {
     result = manager.saveEditingScene(editor);
     passed &= expect(result && !manager.hasUnsavedChanges(),
                      "could not restore the clean persistence test baseline");
+
+    result = SceneTestAccess::activate(*manager.editingScene());
+    passed &= expect(static_cast<bool>(result),
+                     "could not activate Scene for Delete undo persistence checks");
+    EditorSession deleteSession;
+    if (result) {
+        result = deleteSession.setExactSelection(
+            manager.editingScene(), {pointObject}, pointObject);
+    }
+    if (result) {
+        result = editor::EditorObjectCoordinator::deleteSelection(
+            *manager.editingScene(), deleteSession);
+    }
+    passed &= expect(result && manager.hasUnsavedChanges() &&
+                         manager.editingScene()->findGameObject("point") == nullptr,
+                     "deleting an authored object did not make the saved Scene dirty");
+    if (result) {
+        result = deleteSession.undoHistory().undo(*manager.editingScene(),
+            [&deleteSession](Scene& scene,
+                             editor_undo::DeleteUndoAction& action) {
+                return editor::EditorObjectCoordinator::restoreDeletedSelection(
+                    scene, deleteSession, action, {}, {});
+            });
+    }
+    passed &= expect(result && !manager.hasUnsavedChanges() &&
+                         manager.editingScene()->findGameObject("point") == pointObject,
+                     "Delete undo did not return to the saved authored baseline");
+
+    result = deleteSession.setExactSelection(
+        manager.editingScene(), {pointObject}, pointObject);
+    if (result) {
+        result = editor::EditorObjectCoordinator::deleteSelection(
+            *manager.editingScene(), deleteSession);
+    }
+    if (result) result = manager.saveEditingScene(editor);
+    passed &= expect(result && !manager.hasUnsavedChanges() &&
+                         deleteSession.undoHistory().actionCount() == 1,
+                     "saving a deleted Scene did not preserve its undo action");
+    if (result) {
+        result = deleteSession.undoHistory().undo(*manager.editingScene(),
+            [&deleteSession](Scene& scene,
+                             editor_undo::DeleteUndoAction& action) {
+                return editor::EditorObjectCoordinator::restoreDeletedSelection(
+                    scene, deleteSession, action, {}, {});
+            });
+    }
+    passed &= expect(result && manager.hasUnsavedChanges() &&
+                         manager.editingScene()->findGameObject("point") == pointObject,
+                     "undo after saving the deleted Scene did not mark it dirty");
+    result = manager.saveEditingScene(editor);
+    passed &= expect(result && !manager.hasUnsavedChanges(),
+                     "could not restore the clean baseline after Delete undo checks");
+    SceneTestAccess::deactivate(*manager.editingScene());
+
     editor.position.x = 50.0f;
     passed &= expect(!manager.hasUnsavedChanges(),
                      "editor camera movement made authored state dirty");

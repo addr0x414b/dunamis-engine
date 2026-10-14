@@ -12,6 +12,9 @@ class GameObject;
 class Scene;
 class EditorSession;
 class TypeRegistry;
+namespace editor_undo {
+struct DeleteUndoAction;
+}
 
 namespace editor {
 
@@ -65,6 +68,15 @@ public:
         const RendererBatchDetachment& detachRenderer);
     [[nodiscard]] static Result deleteSelection(
         Scene& scene, EditorSession& editorSession);
+
+    // Restores the original GameObject instances and reverses survivor
+    // promotions. On failure, detached object ownership remains in the undo
+    // action so the caller can retry.
+    [[nodiscard]] static Result restoreDeletedSelection(
+        Scene& scene, EditorSession& editorSession,
+        editor_undo::DeleteUndoAction& action,
+        const RendererBatchDetachment& detachRenderer,
+        const RendererAttachment& attachRenderer);
 
     // Reparents every applicable top-level selected root beneath the Active
     // GameObject while preserving world transforms and selection state.
